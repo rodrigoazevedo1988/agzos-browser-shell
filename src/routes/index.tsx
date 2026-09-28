@@ -206,7 +206,7 @@ export function AgzosBrowser() {
         </div>
 
         {panel === "privacy" && <PrivacyPanel shield={shield} setShield={setShield} onClose={() => setPanel(null)} />}
-        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(starterTabs[0].id); setAddress(starterTabs[0].url); }} onClose={() => setPanel(null)} />}
+        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(1); setAddress("agzos://inicio"); }} onClose={() => setPanel(null)} />}
         {keyOpen && <KeyPanel copied={copied} onCopy={copyCredential} onClose={() => setKeyOpen(false)} />}
       </section>
     </main>
