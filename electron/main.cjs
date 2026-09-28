@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, session, shell } = require("electron");
 const path = require("node:path");
 
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
