@@ -1,4 +1,12 @@
-import type { Credential, EngineId, Entry, QuickLink, Tab } from "./types";
+import type {
+  ClosedTab,
+  Credential,
+  EngineId,
+  Entry,
+  QuickLink,
+  Tab,
+  TabOrientation,
+} from "./types";
 
 export const homeEntry: Entry = { title: "Nova aba", url: "agzos://inicio", kind: "home" };
 export const starterTabs: Tab[] = [{ id: 1, history: [homeEntry], index: 0 }];
@@ -30,6 +38,8 @@ export function hostOf(url: string): string | null {
   }
 }
 
+export const CLOSED_TABS_LIMIT = 20;
+
 export type PersistedState = {
   dark: boolean;
   tabs: Tab[] | null;
@@ -39,6 +49,8 @@ export type PersistedState = {
   credentials: Credential[] | null;
   links: QuickLink[] | null;
   pausedHosts: string[];
+  orientation: TabOrientation;
+  closedTabs: ClosedTab[];
 };
 
 export function loadPersistedState(): PersistedState {
@@ -51,6 +63,8 @@ export function loadPersistedState(): PersistedState {
     credentials: null,
     links: null,
     pausedHosts: [],
+    orientation: "horizontal",
+    closedTabs: [],
   };
   try {
     state.dark = window.localStorage.getItem("agzos-theme") === "dark";
@@ -68,6 +82,24 @@ export function loadPersistedState(): PersistedState {
     if (Array.isArray(paused)) {
       state.pausedHosts = paused.filter((host): host is string => typeof host === "string");
     }
+    const storedOrientation = window.localStorage.getItem("agzos-tab-orientation");
+    if (storedOrientation === "vertical" || storedOrientation === "horizontal") {
+      state.orientation = storedOrientation;
+    }
+    const closed = JSON.parse(
+      window.localStorage.getItem("agzos-closed-tabs") ?? "null",
+    ) as unknown;
+    if (Array.isArray(closed)) {
+      state.closedTabs = closed
+        .filter(
+          (item): item is ClosedTab =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as ClosedTab).title === "string" &&
+            typeof (item as ClosedTab).url === "string",
+        )
+        .slice(0, CLOSED_TABS_LIMIT);
+    }
   } catch {
     window.localStorage.removeItem("agzos-tabs");
   }
@@ -83,6 +115,8 @@ export function persistBrowserState(state: {
   shield: boolean;
   aiOpen: boolean;
   pausedHosts: string[];
+  orientation: TabOrientation;
+  closedTabs: ClosedTab[];
 }) {
   window.localStorage.setItem("agzos-theme", state.dark ? "dark" : "light");
   window.localStorage.setItem(
@@ -95,4 +129,9 @@ export function persistBrowserState(state: {
   window.localStorage.setItem("agzos-shield", state.shield ? "on" : "off");
   window.localStorage.setItem("agzos-ai", state.aiOpen ? "on" : "off");
   window.localStorage.setItem("agzos-paused-hosts", JSON.stringify(state.pausedHosts));
+  window.localStorage.setItem("agzos-tab-orientation", state.orientation);
+  window.localStorage.setItem(
+    "agzos-closed-tabs",
+    JSON.stringify(state.closedTabs.slice(0, CLOSED_TABS_LIMIT)),
+  );
 }

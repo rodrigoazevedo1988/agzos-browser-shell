@@ -5,6 +5,8 @@ import {
   LockKeyhole,
   Moon,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pin,
   PinOff,
   Plus,
@@ -14,9 +16,11 @@ import {
   Star,
   Sun,
   VenetianMask,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
@@ -31,6 +35,7 @@ import { engineOf } from "./engines";
 import { blockedFor } from "./privacy";
 import { StartPage } from "./start-page";
 import {
+  CLOSED_TABS_LIMIT,
   defaultCredentials,
   defaultLinks,
   entryOf,
@@ -40,8 +45,18 @@ import {
   persistBrowserState,
   starterTabs,
 } from "./storage";
-import type { Credential, EngineId, Entry, QuickLink, Tab } from "./types";
+import { ContextMenu, useContextMenu } from "./tab-menu";
+import type { ContextMenuGroup } from "./tab-menu";
+import { desktopBridge } from "./desktop";
+import type { Credential, EngineId, Entry, QuickLink, Tab, TabOrientation } from "./types";
 import { WebFrame } from "./web-frame";
+
+const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
+
+function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+  return /Mac/i.test(navigator.platform || navigator.userAgent);
+}
 
 export function AgzosBrowser() {
   const [tabs, setTabs] = useState<Tab[]>(starterTabs);
@@ -60,14 +75,29 @@ export function AgzosBrowser() {
   const [engine, setEngine] = useState<EngineId>("duckduckgo");
   const [pausedHosts, setPausedHosts] = useState<string[]>([]);
   const [confirmingClose, setConfirmingClose] = useState<number | null>(null);
+  const [orientation, setOrientation] = useState<TabOrientation>("horizontal");
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [closedTabs, setClosedTabs] = useState<{ title: string; url: string }[]>([]);
+  const [audioPlaying, setAudioPlaying] = useState<number[]>([]);
+  const [viewNav, setViewNav] = useState<{ canBack: boolean; canForward: boolean } | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  const desktop = useMemo(() => desktopBridge(), []);
+  const tabMenu = useContextMenu();
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const isMac = useMemo(isMacPlatform, []);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? starterTabs[0]!,
     [activeId, tabs],
   );
   const current = entryOf(activeTab);
-  const canBack = activeTab.index > 0;
-  const canForward = activeTab.index < activeTab.history.length - 1;
+  const viewDriven = desktop !== null && current.kind === "page";
+  const canBack = viewDriven ? (viewNav?.canBack ?? false) : activeTab.index > 0;
+  const canForward = viewDriven
+    ? (viewNav?.canForward ?? false)
+    : activeTab.index < activeTab.history.length - 1;
   const isFavorite = links.some((link) => link.url === current.url.replace(/^https?:\/\//, ""));
 
   const orderedTabs = useMemo(
@@ -97,11 +127,35 @@ export function AgzosBrowser() {
     if (saved.credentials?.length) setCredentials(saved.credentials);
     if (saved.links) setLinks(saved.links);
     if (saved.pausedHosts.length) setPausedHosts(saved.pausedHosts);
+    setOrientation(saved.orientation);
+    setClosedTabs(saved.closedTabs);
   }, []);
 
   useEffect(() => {
-    persistBrowserState({ dark, tabs, credentials, links, engine, shield, aiOpen, pausedHosts });
-  }, [dark, tabs, credentials, links, engine, shield, aiOpen, pausedHosts]);
+    persistBrowserState({
+      dark,
+      tabs,
+      credentials,
+      links,
+      engine,
+      shield,
+      aiOpen,
+      pausedHosts,
+      orientation,
+      closedTabs,
+    });
+  }, [
+    dark,
+    tabs,
+    credentials,
+    links,
+    engine,
+    shield,
+    aiOpen,
+    pausedHosts,
+    orientation,
+    closedTabs,
+  ]);
 
   const flash = useCallback(() => {
     setLoading(true);
@@ -117,24 +171,57 @@ export function AgzosBrowser() {
 
   const addPrivateTab = useCallback(() => addTab({ private: true }), [addTab]);
 
+  const openPageTab = useCallback((entry: Entry) => {
+    const id = Date.now();
+    setTabs((list) => [...list, { id, history: [entry], index: 0 }]);
+    setActiveId(id);
+    setAddress(entry.url);
+  }, []);
+
   const togglePin = useCallback((id: number) => {
     setTabs((list) => list.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab)));
   }, []);
 
-  const closeTab = useCallback((id: number) => {
-    setTabs((list) => {
-      if (list.length === 1) return list;
-      const index = list.findIndex((tab) => tab.id === id);
-      const remaining = list.filter((tab) => tab.id !== id);
-      setActiveId((active) => {
-        if (active !== id) return active;
-        const next = remaining[Math.max(0, index - 1)] ?? remaining[0]!;
-        setAddress(entryOf(next).url);
-        return next.id;
-      });
-      return remaining;
-    });
+  const toggleMute = useCallback((id: number) => {
+    setTabs((list) => list.map((tab) => (tab.id === id ? { ...tab, muted: !tab.muted } : tab)));
   }, []);
+
+  const pushClosedTab = useCallback((entry: Entry) => {
+    if (entry.kind !== "page") return;
+    setClosedTabs((list) =>
+      [...list, { title: entry.title, url: entry.url }].slice(-CLOSED_TABS_LIMIT),
+    );
+  }, []);
+
+  const reopenClosedTab = useCallback(() => {
+    const last = closedTabs[closedTabs.length - 1];
+    if (!last) return;
+    setClosedTabs((list) => list.slice(0, -1));
+    openPageTab({ title: last.title, url: last.url, kind: "page" });
+  }, [closedTabs, openPageTab]);
+
+  const closeTab = useCallback(
+    (id: number) => {
+      const target = tabs.find((tab) => tab.id === id);
+      if (target) {
+        pushClosedTab(entryOf(target));
+        void desktop?.closeTab(id);
+      }
+      setTabs((list) => {
+        if (list.length === 1) return list;
+        const index = list.findIndex((tab) => tab.id === id);
+        const remaining = list.filter((tab) => tab.id !== id);
+        setActiveId((active) => {
+          if (active !== id) return active;
+          const next = remaining[Math.max(0, index - 1)] ?? remaining[0]!;
+          setAddress(entryOf(next).url);
+          return next.id;
+        });
+        return remaining;
+      });
+    },
+    [desktop, pushClosedTab, tabs],
+  );
 
   const requestCloseTab = useCallback(
     (id: number) => {
@@ -150,7 +237,103 @@ export function AgzosBrowser() {
     [closeTab, confirmingClose, tabs],
   );
 
+  const closeOthers = useCallback(
+    (id: number) => {
+      const doomed = tabs.filter((tab) => tab.id !== id && !tab.pinned);
+      doomed.forEach((tab) => {
+        pushClosedTab(entryOf(tab));
+        void desktop?.closeTab(tab.id);
+      });
+      setTabs((list) => list.filter((tab) => tab.id === id || tab.pinned));
+      if (doomed.some((tab) => tab.id === activeIdRef.current)) {
+        const kept = tabs.find((tab) => tab.id === id);
+        if (kept) {
+          setActiveId(id);
+          setAddress(entryOf(kept).url);
+        }
+      }
+    },
+    [desktop, pushClosedTab, tabs],
+  );
+
+  const closeSide = useCallback(
+    (id: number, direction: 1 | -1) => {
+      const index = tabs.findIndex((tab) => tab.id === id);
+      if (index < 0) return;
+      const doomed = tabs.filter((tab, position) => {
+        if (position === index) return false;
+        const onSide = direction === 1 ? position > index : position < index;
+        return onSide && !(direction === -1 && tab.pinned);
+      });
+      doomed.forEach((tab) => {
+        pushClosedTab(entryOf(tab));
+        void desktop?.closeTab(tab.id);
+      });
+      const doomedIds = new Set(doomed.map((tab) => tab.id));
+      setTabs((list) => list.filter((tab) => !doomedIds.has(tab.id)));
+      if (doomedIds.has(activeIdRef.current)) {
+        const kept = tabs.find((tab) => tab.id === id);
+        if (kept) {
+          setActiveId(id);
+          setAddress(entryOf(kept).url);
+        }
+      }
+    },
+    [desktop, pushClosedTab, tabs],
+  );
+
+  const duplicateTab = useCallback(
+    (id: number) => {
+      const source = tabs.find((tab) => tab.id === id);
+      if (!source) return;
+      const clone: Tab = {
+        id: Date.now(),
+        history: source.history.slice(0, source.index + 1),
+        index: source.index,
+        private: source.private,
+      };
+      setTabs((list) => {
+        const at = list.findIndex((tab) => tab.id === id);
+        return [...list.slice(0, at + 1), clone, ...list.slice(at + 1)];
+      });
+      setActiveId(clone.id);
+      setAddress(entryOf(clone).url);
+    },
+    [tabs],
+  );
+
+  const addTabRightOf = useCallback((id: number, options?: { private?: boolean }) => {
+    const newTab: Tab = {
+      id: Date.now(),
+      history: [homeEntry],
+      index: 0,
+      private: options?.private,
+    };
+    setTabs((list) => {
+      const at = list.findIndex((tab) => tab.id === id);
+      if (at < 0) return [...list, newTab];
+      return [...list.slice(0, at + 1), newTab, ...list.slice(at + 1)];
+    });
+    setActiveId(newTab.id);
+    setAddress(homeEntry.url);
+  }, []);
+
+  const bookmarkAll = useCallback(() => {
+    const pageTabs = tabs.filter((tab) => !tab.private && entryOf(tab).kind === "page");
+    setLinks((list) => {
+      const known = new Set(list.map((link) => link.url));
+      const additions = pageTabs
+        .map((tab) => {
+          const entry = entryOf(tab);
+          return { name: entry.title, url: entry.url.replace(/^https?:\/\//, "") };
+        })
+        .filter((link) => !known.has(link.url));
+      return [...list, ...additions];
+    });
+  }, [tabs]);
+
   function activateTab(tab: Tab) {
+    setViewNav(null);
     setActiveId(tab.id);
     setAddress(entryOf(tab).url);
   }
@@ -192,6 +375,12 @@ export function AgzosBrowser() {
 
   const step = useCallback(
     (delta: number) => {
+      if (viewDriven && desktop) {
+        if (delta < 0) void desktop.goBack(activeId);
+        else void desktop.goForward(activeId);
+        flash();
+        return;
+      }
       setTabs((list) =>
         list.map((tab) => {
           if (tab.id !== activeId) return tab;
@@ -203,7 +392,15 @@ export function AgzosBrowser() {
         }),
       );
     },
-    [activeId, flash],
+    [activeId, desktop, flash, viewDriven],
+  );
+
+  const reloadTab = useCallback(
+    (id: number) => {
+      flash();
+      if (desktop) void desktop.reload(id);
+    },
+    [desktop, flash],
   );
 
   const focusOmnibox = useCallback(() => {
@@ -217,6 +414,16 @@ export function AgzosBrowser() {
       const meta = event.metaKey || event.ctrlKey;
       if (!meta) return;
       const key = event.key.toLowerCase();
+      if (meta && event.shiftKey && key === "t") {
+        event.preventDefault();
+        reopenClosedTab();
+        return;
+      }
+      if (meta && event.shiftKey && key === "d") {
+        event.preventDefault();
+        bookmarkAll();
+        return;
+      }
       if (key === "k" || key === "l") {
         event.preventDefault();
         focusOmnibox();
@@ -228,12 +435,75 @@ export function AgzosBrowser() {
         closeTab(activeId);
       } else if (key === "r") {
         event.preventDefault();
-        flash();
+        reloadTab(activeId);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, addTab, closeTab, flash, focusOmnibox]);
+  }, [activeId, addTab, bookmarkAll, closeTab, focusOmnibox, reloadTab, reopenClosedTab]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    const offTab = desktop.onTabEvent((event) => {
+      if (event.type === "tab-updated") {
+        setTabs((list) =>
+          list.map((tab) => {
+            if (tab.id !== event.id) return tab;
+            const entry = tab.history[tab.index];
+            if (!entry || entry.kind !== "page") return tab;
+            const history = [...tab.history];
+            history[tab.index] = { ...entry, url: event.url, title: event.title || entry.title };
+            return { ...tab, history };
+          }),
+        );
+        if (event.id === activeIdRef.current) {
+          setAddress(event.url);
+          setViewNav({ canBack: event.canBack, canForward: event.canForward });
+        }
+      } else if (event.type === "favicon") {
+        setTabs((list) =>
+          list.map((tab) =>
+            tab.id === event.id ? { ...tab, favicon: event.icon ?? undefined } : tab,
+          ),
+        );
+      } else if (event.type === "audio") {
+        setAudioPlaying((list) =>
+          event.playing ? [...new Set([...list, event.id])] : list.filter((id) => id !== event.id),
+        );
+      } else if (event.type === "muted") {
+        setTabs((list) =>
+          list.map((tab) => (tab.id === event.id ? { ...tab, muted: event.muted } : tab)),
+        );
+      }
+    });
+    const offOpen = desktop.onOpenRequest(({ url }) => {
+      openPageTab({ title: hostOf(url) ?? url, url, kind: "page" });
+    });
+    const offFullscreen = desktop.onFullscreen(({ active }) => setFullscreen(active));
+    const offHotkey = desktop.onHotkey(({ key, shift }) => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: shift ? key.toUpperCase() : key,
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    return () => {
+      offTab();
+      offOpen();
+      offFullscreen();
+      offHotkey();
+    };
+  }, [desktop, openPageTab]);
+
+  useEffect(() => {
+    if (desktop && current.kind === "home") void desktop.setBounds(HIDDEN_RECT);
+  }, [desktop, current.kind]);
+
+  useEffect(() => {
+    if (desktop) void desktop.setPanelOpen(panel !== null);
+  }, [desktop, panel]);
 
   function toggleFavorite() {
     const clean = current.url.replace(/^https?:\/\//, "");
@@ -284,86 +554,280 @@ export function AgzosBrowser() {
     );
   }
 
+  const tabMenuGroups = useCallback(
+    (tab: Tab): ContextMenuGroup[] => {
+      const entry = entryOf(tab);
+      const audioItem =
+        desktop && (audioPlaying.includes(tab.id) || tab.muted)
+          ? [
+              {
+                id: "mute",
+                label: tab.muted ? "Ativar som do site" : "Desativar som do site",
+                onSelect: () => toggleMute(tab.id),
+              },
+            ]
+          : [];
+      return [
+        [
+          {
+            id: "new-tab-right",
+            label: "Nova guia à direita",
+            shortcut: "Ctrl+T",
+            onSelect: () => addTabRightOf(tab.id),
+          },
+          {
+            id: "reopen-closed",
+            label: "Reabrir guia fechada",
+            shortcut: "Ctrl+Shift+T",
+            disabled: closedTabs.length === 0,
+            onSelect: reopenClosedTab,
+          },
+          { id: "duplicate", label: "Duplicar", onSelect: () => duplicateTab(tab.id) },
+        ],
+        "separator",
+        [
+          tab.pinned
+            ? { id: "unpin", label: "Desfixar", onSelect: () => togglePin(tab.id) }
+            : { id: "pin", label: "Fixar", onSelect: () => togglePin(tab.id) },
+          ...audioItem,
+        ],
+        "separator",
+        [
+          {
+            id: "reload",
+            label: "Recarregar",
+            shortcut: "Ctrl+R",
+            onSelect: () => reloadTab(tab.id),
+          },
+          {
+            id: "copy-url",
+            label: "Copiar endereço",
+            onSelect: () => void copyText("copy-url", entry.url),
+          },
+        ],
+        "separator",
+        [
+          {
+            id: "close",
+            label: "Fechar",
+            shortcut: "Ctrl+W",
+            onSelect: () => requestCloseTab(tab.id),
+          },
+          {
+            id: "close-others",
+            label: "Fechar outras guias",
+            onSelect: () => closeOthers(tab.id),
+          },
+          {
+            id: "close-right",
+            label: "Fechar guias à direita",
+            onSelect: () => closeSide(tab.id, 1),
+          },
+          {
+            id: "close-left",
+            label: "Fechar guias à esquerda",
+            onSelect: () => closeSide(tab.id, -1),
+          },
+        ],
+        "separator",
+        [
+          {
+            id: "bookmark-all",
+            label: "Adicionar todas as guias aos favoritos…",
+            shortcut: "Ctrl+Shift+D",
+            onSelect: bookmarkAll,
+          },
+        ],
+        "separator",
+        [
+          orientation === "horizontal"
+            ? {
+                id: "tabs-vertical",
+                label: "Mostrar guias verticalmente",
+                onSelect: () => setOrientation("vertical"),
+              }
+            : {
+                id: "tabs-horizontal",
+                label: "Mostrar guias horizontalmente",
+                onSelect: () => setOrientation("horizontal"),
+              },
+        ],
+      ];
+    },
+    [
+      addTabRightOf,
+      audioPlaying,
+      bookmarkAll,
+      closeOthers,
+      closeSide,
+      closedTabs.length,
+      desktop,
+      duplicateTab,
+      orientation,
+      reloadTab,
+      reopenClosedTab,
+      requestCloseTab,
+      toggleMute,
+      togglePin,
+    ],
+  );
+
+  const stripMenuGroups = useCallback(
+    (): ContextMenuGroup[] => [
+      [
+        {
+          id: "strip-new",
+          label: "Nova guia",
+          shortcut: "Ctrl+T",
+          onSelect: () => addTab(),
+        },
+        {
+          id: "strip-reopen",
+          label: "Reabrir guia fechada",
+          shortcut: "Ctrl+Shift+T",
+          disabled: closedTabs.length === 0,
+          onSelect: reopenClosedTab,
+        },
+      ],
+      "separator",
+      [
+        orientation === "horizontal"
+          ? {
+              id: "strip-vertical",
+              label: "Mostrar guias verticalmente",
+              onSelect: () => setOrientation("vertical"),
+            }
+          : {
+              id: "strip-horizontal",
+              label: "Mostrar guias horizontalmente",
+              onSelect: () => setOrientation("horizontal"),
+            },
+      ],
+    ],
+    [addTab, closedTabs.length, orientation, reopenClosedTab],
+  );
+
+  const openTabMenu = useCallback(
+    (event: React.MouseEvent, tab: Tab) => {
+      event.preventDefault();
+      event.stopPropagation();
+      tabMenu.open(event.clientX, event.clientY, tabMenuGroups(tab));
+    },
+    [tabMenu, tabMenuGroups],
+  );
+
+  const openStripMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      tabMenu.open(event.clientX, event.clientY, stripMenuGroups());
+    },
+    [stripMenuGroups, tabMenu],
+  );
+
+  function renderTab(tab: Tab) {
+    const entry = entryOf(tab);
+    const playing = audioPlaying.includes(tab.id) && !tab.muted;
+    return (
+      <button
+        key={tab.id}
+        type="button"
+        role="tab"
+        aria-selected={tab.id === activeId}
+        onClick={() => activateTab(tab)}
+        onContextMenu={(event) => openTabMenu(event, tab)}
+        className={cn(
+          "browser-tab",
+          tab.id === activeId && "active",
+          tab.pinned && "pinned",
+          tab.private && "private",
+        )}
+      >
+        {tab.private ? (
+          <VenetianMask aria-hidden="true" />
+        ) : tab.favicon ? (
+          <img
+            src={tab.favicon}
+            alt=""
+            onError={(event) => {
+              event.currentTarget.src = symbolUrl;
+            }}
+          />
+        ) : (
+          <img src={symbolUrl} alt="" />
+        )}
+        <span>{entry.title}</span>
+        {playing && <Volume2 aria-hidden="true" className="tab-audio" />}
+        {tab.muted && <VolumeX aria-hidden="true" className="tab-audio muted" />}
+        <span
+          className="tab-pin"
+          role="button"
+          aria-label={tab.pinned ? `Desafixar ${entry.title}` : `Fixar ${entry.title}`}
+          title={tab.pinned ? "Desafixar aba" : "Fixar aba"}
+          onClick={(event) => {
+            event.stopPropagation();
+            togglePin(tab.id);
+          }}
+        >
+          {tab.pinned ? <PinOff /> : <Pin />}
+        </span>
+        <span
+          className={cn("tab-close", confirmingClose === tab.id && "confirm")}
+          role="button"
+          aria-label={`Fechar ${entry.title}`}
+          title={tab.pinned ? "Clique novamente para fechar" : undefined}
+          onClick={(event) => {
+            event.stopPropagation();
+            requestCloseTab(tab.id);
+          }}
+        >
+          <X />
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <main className={cn("browser-stage", dark && "dark")}>
+    <main className={cn("browser-stage", dark && "dark", fullscreen && "fs")}>
       <section className="browser-window" aria-label="Agzos Browser">
         <header className="titlebar">
-          <div className="window-controls" aria-label="Controles da janela">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div className="tabs" role="tablist" aria-label="Abas abertas">
-            {orderedTabs.map((tab) => {
-              const entry = entryOf(tab);
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab.id === activeId}
-                  onClick={() => activateTab(tab)}
-                  className={cn(
-                    "browser-tab",
-                    tab.id === activeId && "active",
-                    tab.pinned && "pinned",
-                    tab.private && "private",
-                  )}
-                >
-                  {tab.private ? (
-                    <VenetianMask aria-hidden="true" />
-                  ) : (
-                    <img src={symbolUrl} alt="" />
-                  )}
-                  <span>{entry.title}</span>
-                  <span
-                    className="tab-pin"
-                    role="button"
-                    aria-label={tab.pinned ? `Desafixar ${entry.title}` : `Fixar ${entry.title}`}
-                    title={tab.pinned ? "Desafixar aba" : "Fixar aba"}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      togglePin(tab.id);
-                    }}
-                  >
-                    {tab.pinned ? <PinOff /> : <Pin />}
-                  </span>
-                  <span
-                    className={cn("tab-close", confirmingClose === tab.id && "confirm")}
-                    role="button"
-                    aria-label={`Fechar ${entry.title}`}
-                    title={tab.pinned ? "Clique novamente para fechar" : undefined}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      requestCloseTab(tab.id);
-                    }}
-                  >
-                    <X />
-                  </span>
-                </button>
-              );
-            })}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => addTab()}
-              title="Nova aba (Ctrl/⌘ T)"
-              aria-label="Nova aba"
-              className="new-tab"
+          {isMac && (
+            <div className="window-controls" aria-label="Controles da janela">
+              <span />
+              <span />
+              <span />
+            </div>
+          )}
+          {orientation === "horizontal" && (
+            <div
+              className="tabs"
+              role="tablist"
+              aria-label="Abas abertas"
+              onContextMenu={openStripMenu}
             >
-              <Plus />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={addPrivateTab}
-              title="Nova aba anônima"
-              aria-label="Nova aba anônima"
-              className="new-tab"
-            >
-              <VenetianMask />
-            </Button>
-          </div>
+              {orderedTabs.map(renderTab)}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => addTab()}
+                title="Nova aba (Ctrl/⌘ T)"
+                aria-label="Nova aba"
+                className="new-tab"
+              >
+                <Plus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={addPrivateTab}
+                title="Nova aba anônima"
+                aria-label="Nova aba anônima"
+                className="new-tab"
+              >
+                <VenetianMask />
+              </Button>
+            </div>
+          )}
+          {orientation === "vertical" && <div className="titlebar-spacer" />}
           <Button
             variant={panel === "settings" ? "default" : "ghost"}
             size="icon"
@@ -402,7 +866,7 @@ export function AgzosBrowser() {
               size="icon"
               title="Recarregar (Ctrl/⌘ R)"
               aria-label="Recarregar"
-              onClick={flash}
+              onClick={() => reloadTab(activeId)}
             >
               <RefreshCw className={cn(loading && "spin")} />
             </Button>
@@ -478,32 +942,91 @@ export function AgzosBrowser() {
           </div>
         </div>
 
-        <div className="workspace">
-          <section className={cn("viewport", activeTab.private && "private")}>
-            {loading && <div className="loading-line" />}
-            {current.kind === "home" ? (
-              <StartPage
-                links={links}
-                engine={engineOf(engine)}
-                blocked={blockedCount}
-                onOpen={openAddress}
-                onAdd={(link) => setLinks((list) => [...list, link])}
-                onRemove={(url) => setLinks((list) => list.filter((link) => link.url !== url))}
-              />
-            ) : (
-              <WebFrame key={current.url} title={current.title} url={current.url} />
-            )}
-          </section>
-          {aiOpen && (
-            <AiSidebar
-              url={current.url}
-              title={current.title}
-              chat={chat}
-              onSend={handleSend}
-              onClear={clearChat}
-              onClose={() => setAiOpen(false)}
-            />
+        <div className="browser-body">
+          {orientation === "vertical" && (
+            <aside
+              className={cn("tabs-rail", railCollapsed && "collapsed")}
+              onContextMenu={openStripMenu}
+            >
+              <div className="rail-head">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setRailCollapsed((value) => !value)}
+                  title={railCollapsed ? "Expandir barra de guias" : "Recolher barra de guias"}
+                  aria-label="Alternar barra de guias"
+                  className="rail-toggle"
+                >
+                  {railCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                </Button>
+                {!railCollapsed && (
+                  <>
+                    <span className="rail-title">Guias</span>
+                    <div className="rail-actions">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => addTab()}
+                        title="Nova aba (Ctrl/⌘ T)"
+                        aria-label="Nova aba"
+                      >
+                        <Plus />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={addPrivateTab}
+                        title="Nova aba anônima"
+                        aria-label="Nova aba anônima"
+                      >
+                        <VenetianMask />
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+              {!railCollapsed && (
+                <div className="rail-tabs" role="tablist" aria-label="Abas verticais">
+                  {orderedTabs.map(renderTab)}
+                </div>
+              )}
+            </aside>
           )}
+          <div className="workspace">
+            <section className={cn("viewport", activeTab.private && "private")}>
+              {loading && <div className="loading-line" />}
+              {current.kind === "home" ? (
+                <StartPage
+                  links={links}
+                  engine={engineOf(engine)}
+                  blocked={blockedCount}
+                  onOpen={openAddress}
+                  onAdd={(link) => setLinks((list) => [...list, link])}
+                  onRemove={(url) => setLinks((list) => list.filter((link) => link.url !== url))}
+                />
+              ) : (
+                <WebFrame
+                  key={activeTab.id}
+                  tabId={activeTab.id}
+                  title={current.title}
+                  url={current.url}
+                  dark={dark}
+                  privateTab={Boolean(activeTab.private)}
+                  muted={Boolean(activeTab.muted)}
+                />
+              )}
+            </section>
+            {aiOpen && (
+              <AiSidebar
+                url={current.url}
+                title={current.title}
+                chat={chat}
+                onSend={handleSend}
+                onClear={clearChat}
+                onClose={() => setAiOpen(false)}
+              />
+            )}
+          </div>
         </div>
 
         {panel === "privacy" && (
@@ -529,9 +1052,11 @@ export function AgzosBrowser() {
             engine={engine}
             setEngine={setEngine}
             onReset={() => {
+              tabs.forEach((tab) => void desktop?.closeTab(tab.id));
               setTabs(starterTabs);
               setActiveId(1);
               setAddress(homeEntry.url);
+              setViewNav(null);
             }}
             onClose={() => setPanel(null)}
           />
@@ -549,6 +1074,14 @@ export function AgzosBrowser() {
           />
         )}
       </section>
+      {tabMenu.menu && (
+        <ContextMenu
+          x={tabMenu.menu.x}
+          y={tabMenu.menu.y}
+          groups={tabMenu.menu.groups}
+          onClose={tabMenu.close}
+        />
+      )}
     </main>
   );
 }

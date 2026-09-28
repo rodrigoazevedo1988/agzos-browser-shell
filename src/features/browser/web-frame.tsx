@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { desktopBridge } from "./desktop";
 
 const embedBlockers = [
   "duckduckgo.com",
@@ -29,9 +30,85 @@ function refusesEmbedding(url: string) {
   }
 }
 
-export function WebFrame({ title, url }: { title: string; url: string }) {
+function NativeView({
+  tabId,
+  url,
+  dark,
+  privateTab,
+  muted,
+}: {
+  tabId: number;
+  url: string;
+  dark: boolean;
+  privateTab: boolean;
+  muted: boolean;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const bridge = desktopBridge();
+
+  useEffect(() => {
+    void bridge?.attachTab(tabId, url, { dark, private: privateTab });
+    void bridge?.activateTab(tabId);
+    void bridge?.muteTab(tabId, muted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId]);
+
+  useEffect(() => {
+    void bridge?.navigate(tabId, url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId, url]);
+
+  useEffect(() => {
+    void bridge?.muteTab(tabId, muted);
+  }, [bridge, tabId, muted]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !bridge) return;
+    const report = () => {
+      const rect = host.getBoundingClientRect();
+      void bridge.setBounds({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(host);
+    window.addEventListener("resize", report);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", report);
+    };
+  }, [bridge]);
+
+  return <div ref={hostRef} className="web-frame native-view" />;
+}
+
+export function WebFrame({
+  tabId,
+  title,
+  url,
+  dark,
+  privateTab,
+  muted,
+}: {
+  tabId: number;
+  title: string;
+  url: string;
+  dark: boolean;
+  privateTab: boolean;
+  muted: boolean;
+}) {
   const [forced, setForced] = useState(false);
+  const native = desktopBridge();
   const blocked = refusesEmbedding(url) && !forced;
+
+  if (native) {
+    return <NativeView tabId={tabId} url={url} dark={dark} privateTab={privateTab} muted={muted} />;
+  }
 
   return (
     <div className="web-frame">
