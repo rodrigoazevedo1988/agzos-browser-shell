@@ -28,6 +28,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 
 - [Login do Google no app desktop](docs/login-google-desktop.md): por que o Google
   recusava o login, como a identidade de Chrome é aplicada e como testar.
+- [Roadmap Opera/Vivaldi](docs/roadmap-opera-vivaldi.md): diagnóstico da v1.3.3 e
+  plano de evolução por fases.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Development
