@@ -203,12 +203,12 @@ export function AgzosBrowser() {
     (raw: string) => {
       const input = raw.trim();
       if (!input) return;
-      const isUrl = input.includes(".") || input.startsWith("http");
-      const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : `Busca: ${input}`;
+      const isUrl = /^https?:\/\//.test(input) || /^[\w-]+(\.[\w-]+)+(\/|$|\?)/.test(input);
+      const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : engineOf(engine).search(input);
       const title = isUrl ? (input.replace(/^https?:\/\//, "").split("/")[0] ?? input) : input;
       pushEntry({ title, url, kind: "page" });
     },
-    [pushEntry],
+    [engine, pushEntry],
   );
 
   const step = useCallback(
