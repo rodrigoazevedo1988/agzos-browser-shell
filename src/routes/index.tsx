@@ -426,25 +426,21 @@ function StartPage({ links, engine, onOpen, onAdd, onRemove }: { links: QuickLin
   );
 }
 
-function WebFrame({ title, url }: { title: string; url: string }) {
-  const [blank, setBlank] = useState(false);
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
+const embedBlockers = ["duckduckgo.com", "yandex.com", "yandex.ru", "google.com", "github.com", "x.com", "twitter.com", "instagram.com", "facebook.com", "notion.so", "figma.com", "linear.app", "youtube.com", "linkedin.com"];
 
-  useEffect(() => {
-    setBlank(false);
-    const timer = window.setTimeout(() => {
-      const frame = frameRef.current;
-      let empty = false;
-      try {
-        const doc = frame?.contentDocument;
-        empty = !!doc && (doc.location?.href === "about:blank" || (doc.body?.childElementCount ?? 0) === 0);
-      } catch {
-        empty = false; // conteúdo de outro site carregou normalmente
-      }
-      setBlank(empty);
-    }, 3000);
-    return () => window.clearTimeout(timer);
-  }, [url]);
+function refusesEmbedding(url: string) {
+  if (typeof navigator !== "undefined" && /electron/i.test(navigator.userAgent)) return false;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return embedBlockers.some((item) => host === item || host.endsWith(`.${item}`));
+  } catch {
+    return false;
+  }
+}
+
+function WebFrame({ title, url }: { title: string; url: string }) {
+  const [forced, setForced] = useState(false);
+  const blocked = refusesEmbedding(url) && !forced;
 
   return (
     <div className="web-frame">
@@ -452,24 +448,24 @@ function WebFrame({ title, url }: { title: string; url: string }) {
         <span>{title}</span>
         <button type="button" onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</button>
       </div>
-      <iframe
-        ref={frameRef}
-        src={url}
-        title={title}
-        referrerPolicy="no-referrer"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-      />
-      {blank && (
+      {blocked ? (
         <div className="frame-fallback">
-          <div className="mock-eyebrow">Visualização bloqueada pelo site</div>
+          <div className="mock-eyebrow">Este site não permite exibição aqui</div>
           <h1>{title}</h1>
-          <p>Este site não permite ser exibido dentro de outro navegador. No aplicativo Agzos para computador ele abre normalmente.</p>
+          <p>Na versão web, alguns sites bloqueiam a exibição dentro de outro navegador. No aplicativo Agzos para computador a página abre normalmente dentro da aba.</p>
           <div className="fallback-actions">
             <Button onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</Button>
-            <Button variant="outline" onClick={() => setBlank(false)}>Tentar novamente aqui</Button>
+            <Button variant="outline" onClick={() => setForced(true)}>Tentar exibir aqui</Button>
           </div>
           <small>{url}</small>
         </div>
+      ) : (
+        <iframe
+          src={url}
+          title={title}
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+        />
       )}
     </div>
   );
