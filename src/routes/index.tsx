@@ -106,6 +106,7 @@ export function AgzosBrowser() {
   const [loading, setLoading] = useState(false);
   const [credentials, setCredentials] = useState<Credential[]>(defaultCredentials);
   const [links, setLinks] = useState<QuickLink[]>(defaultLinks);
+  const [engine, setEngine] = useState<EngineId>("duckduckgo");
 
   const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? starterTabs[0]!, [activeId, tabs]);
   const current = entryOf(activeTab);
