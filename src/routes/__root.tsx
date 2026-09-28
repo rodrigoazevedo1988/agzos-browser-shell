@@ -81,7 +81,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: "Navegação com inteligência, privacidade e controle." },
       { name: "author", content: "Agzos" },
       { property: "og:title", content: "Agzos Browser" },
-      { property: "og:description", content: "Navegação com inteligência, privacidade e controle." },
+      {
+        property: "og:description",
+        content: "Navegação com inteligência, privacidade e controle.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },

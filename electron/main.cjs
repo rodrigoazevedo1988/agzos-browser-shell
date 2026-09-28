@@ -33,7 +33,9 @@ function createWindow() {
   });
 
   window.webContents.on("will-navigate", (event, url) => {
-    const allowed = isDevelopment ? developmentUrl && url.startsWith(developmentUrl) : url.startsWith("file://");
+    const allowed = isDevelopment
+      ? developmentUrl && url.startsWith(developmentUrl)
+      : url.startsWith("file://");
     if (!allowed) event.preventDefault();
   });
 
@@ -50,7 +52,11 @@ function allowEmbedding() {
     const headers = { ...details.responseHeaders };
     for (const key of Object.keys(headers)) {
       const name = key.toLowerCase();
-      if (name === "x-frame-options" || name === "content-security-policy" || name === "content-security-policy-report-only") {
+      if (
+        name === "x-frame-options" ||
+        name === "content-security-policy" ||
+        name === "content-security-policy-report-only"
+      ) {
         delete headers[key];
       }
     }
