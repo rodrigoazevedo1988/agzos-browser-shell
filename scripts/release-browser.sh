@@ -81,8 +81,8 @@ size_of() { du -h "$DEST/$1" | cut -f1; }
 render_version() {
   local dir="$1" tag="$2"
   cat <<EOF
-  <h2>$tag</h2>
-  <a class="dl" href="$dir/Agnos-Browser-win32-x64.zip"><span><strong>Windows</strong><small>portátil x64 — extraia o ZIP e execute <code>AgnosBrowser.exe</code></small></span><span class="size">ZIP · $(size_of "$dir/Agnos-Browser-win32-x64.zip")</span></a>
+  <h2>$tag · <a class="sums" href="$dir/SHA256SUMS.txt">SHA256SUMS.txt</a></h2>
+  <a class="dl" href="$dir/Agnos-Browser-win32-x64.zip"><span><strong>Windows</strong><small>portátil x64 — extraia o ZIP e execute <code>AgzosBrowser.exe</code></small></span><span class="size">ZIP · $(size_of "$dir/Agnos-Browser-win32-x64.zip")</span></a>
   <a class="dl" href="$dir/Agnos-Browser-linux-x64.tar.gz"><span><strong>Linux</strong><small>x64 — extraia e execute <code>agzos-browser</code></small></span><span class="size">TAR.GZ · $(size_of "$dir/Agnos-Browser-linux-x64.tar.gz")</span></a>
   <a class="dl" href="$dir/Agnos-Browser-mac-arm64.dmg"><span><strong>macOS Apple Silicon</strong><small>arm64 — abra o DMG e arraste para Applications</small></span><span class="size">DMG · $(size_of "$dir/Agnos-Browser-mac-arm64.dmg")</span></a>
   <a class="dl" href="$dir/Agnos-Browser-mac-x64.dmg"><span><strong>macOS Intel</strong><small>x64 — abra o DMG e arraste para Applications</small></span><span class="size">DMG · $(size_of "$dir/Agnos-Browser-mac-x64.dmg")</span></a>
@@ -110,6 +110,7 @@ cat <<'HEAD'
   a.dl small{color:#a5a0a0;font-size:11px}
   a.dl .size{color:#D10A11;font-weight:700;font-size:12px;white-space:nowrap}
   h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#8f8a8a;margin:26px 0 10px}
+  a.sums{color:#D10A11;text-transform:none;letter-spacing:0;font-size:11px}
   .note{color:#8f8a8a;font-size:11px;line-height:1.7;margin-top:22px}
   code{background:#1c1a1a;padding:1px 5px;border-radius:4px;font-size:10px}
 </style>
@@ -125,15 +126,13 @@ if [[ -n "$PREVIOUS" ]]; then render_version "$PREVIOUS" "Versão anterior (${PR
 cat <<'FOOT'
   <p class="note">
     Builds não assinados (sem notarização). <strong>Windows</strong>: o SmartScreen pode avisar — "Mais informações" → "Executar assim mesmo". <strong>macOS</strong>: na primeira abertura, clique com o botão direito no app → "Abrir", ou execute <code>xattr -cr "/Applications/Agzos Browser.app"</code>. <strong>Linux</strong>: garanta permissão de execução com <code>chmod +x agzos-browser</code> se necessário.<br><br>
-    Verificação de integridade: <a style="color:#D10A11" href="$NEWEST/SHA256SUMS.txt">SHA256SUMS.txt</a>. Suas abas, credenciais e preferências ficam apenas no seu dispositivo (localStorage).
+    Verificação de integridade: use o <code>SHA256SUMS.txt</code> de cada versão, linkado ao lado do título. Suas abas e preferências ficam apenas no seu dispositivo (localStorage); credenciais do Agzos Key ficam criptografadas (safeStorage).
   </p>
 </main>
 </body>
 </html>
 FOOT
 } > "$DEST/index.html"
-
-sed -i "s|\$NEWEST|$NEWEST|g" "$DEST/index.html"
 
 chown -R www-data:www-data "$DEST"
 echo "Publicado: v$VERSION em $TARGET"

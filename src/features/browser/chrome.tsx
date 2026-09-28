@@ -42,16 +42,16 @@ import {
   homeEntry,
   hostOf,
   loadPersistedState,
+  normalizeUrlKey,
   persistBrowserState,
   starterTabs,
 } from "./storage";
 import { ContextMenu, useContextMenu } from "./tab-menu";
 import type { ContextMenuGroup } from "./tab-menu";
 import { desktopBridge } from "./desktop";
+import type { DesktopPermissionRequest } from "./desktop";
 import type { Credential, EngineId, Entry, QuickLink, Tab, TabOrientation } from "./types";
 import { WebFrame } from "./web-frame";
-
-const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -81,11 +81,17 @@ export function AgzosBrowser() {
   const [audioPlaying, setAudioPlaying] = useState<number[]>([]);
   const [viewNav, setViewNav] = useState<{ canBack: boolean; canForward: boolean } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [crashed, setCrashed] = useState<number[]>([]);
+  const [requestedUrl, setRequestedUrl] = useState<{ id: number; url: string } | null>(null);
+  const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
+  const [rememberPermission, setRememberPermission] = useState(true);
+  const [credentialsReady, setCredentialsReady] = useState(false);
 
   const desktop = useMemo(() => desktopBridge(), []);
   const tabMenu = useContextMenu();
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+  const runActionRef = useRef<(action: string, tabId: number | null) => void>(() => {});
   const isMac = useMemo(isMacPlatform, []);
 
   const activeTab = useMemo(
@@ -98,7 +104,9 @@ export function AgzosBrowser() {
   const canForward = viewDriven
     ? (viewNav?.canForward ?? false)
     : activeTab.index < activeTab.history.length - 1;
-  const isFavorite = links.some((link) => link.url === current.url.replace(/^https?:\/\//, ""));
+  const isFavorite = links.some(
+    (link) => normalizeUrlKey(link.url) === normalizeUrlKey(current.url),
+  );
 
   const orderedTabs = useMemo(
     () => [...tabs].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false)),
@@ -124,38 +132,66 @@ export function AgzosBrowser() {
     if (saved.engine === "duckduckgo" || saved.engine === "yandex") setEngine(saved.engine);
     if (saved.shieldOff) setShield(false);
     if (saved.aiOff) setAiOpen(false);
-    if (saved.credentials?.length) setCredentials(saved.credentials);
     if (saved.links) setLinks(saved.links);
     if (saved.pausedHosts.length) setPausedHosts(saved.pausedHosts);
     setOrientation(saved.orientation);
+    setRailCollapsed(saved.railCollapsed);
     setClosedTabs(saved.closedTabs);
-  }, []);
+    if (desktop) {
+      const legacy = saved.credentials;
+      window.localStorage.removeItem("agzos-credentials");
+      void desktop
+        .keyLoad()
+        .then((stored) => {
+          if (stored?.length) {
+            setCredentials(stored);
+          } else if (legacy?.length) {
+            setCredentials(legacy);
+            void desktop.keySave(legacy);
+          }
+        })
+        .finally(() => setCredentialsReady(true));
+    } else {
+      if (saved.credentials?.length) setCredentials(saved.credentials);
+      setCredentialsReady(true);
+    }
+  }, [desktop]);
 
   useEffect(() => {
     persistBrowserState({
       dark,
       tabs,
-      credentials,
       links,
       engine,
       shield,
       aiOpen,
       pausedHosts,
       orientation,
+      railCollapsed,
       closedTabs,
     });
   }, [
     dark,
     tabs,
-    credentials,
     links,
     engine,
     shield,
     aiOpen,
     pausedHosts,
     orientation,
+    railCollapsed,
     closedTabs,
   ]);
+
+  useEffect(() => {
+    if (desktop || !credentialsReady) return;
+    window.localStorage.setItem("agzos-credentials", JSON.stringify(credentials));
+  }, [credentials, credentialsReady, desktop]);
+
+  useEffect(() => {
+    if (!desktop || !credentialsReady) return;
+    void desktop.keySave(credentials);
+  }, [credentials, credentialsReady, desktop]);
 
   const flash = useCallback(() => {
     setLoading(true);
@@ -203,12 +239,21 @@ export function AgzosBrowser() {
   const closeTab = useCallback(
     (id: number) => {
       const target = tabs.find((tab) => tab.id === id);
-      if (target) {
-        pushClosedTab(entryOf(target));
+      if (!target) return;
+      if (tabs.length === 1) {
         void desktop?.closeTab(id);
+        const replacement: Tab = { id: Date.now(), history: [homeEntry], index: 0 };
+        setTabs([replacement]);
+        setActiveId(replacement.id);
+        setAddress(homeEntry.url);
+        setViewNav(null);
+        setAudioPlaying((list) => list.filter((item) => item !== id));
+        setCrashed((list) => list.filter((item) => item !== id));
+        return;
       }
+      if (!target.private) pushClosedTab(entryOf(target));
+      void desktop?.closeTab(id);
       setTabs((list) => {
-        if (list.length === 1) return list;
         const index = list.findIndex((tab) => tab.id === id);
         const remaining = list.filter((tab) => tab.id !== id);
         setActiveId((active) => {
@@ -258,12 +303,14 @@ export function AgzosBrowser() {
 
   const closeSide = useCallback(
     (id: number, direction: 1 | -1) => {
-      const index = tabs.findIndex((tab) => tab.id === id);
+      const display = [...tabs].sort(
+        (a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false),
+      );
+      const index = display.findIndex((tab) => tab.id === id);
       if (index < 0) return;
-      const doomed = tabs.filter((tab, position) => {
-        if (position === index) return false;
-        const onSide = direction === 1 ? position > index : position < index;
-        return onSide && !(direction === -1 && tab.pinned);
+      const doomed = display.filter((tab, position) => {
+        if (position === index || tab.pinned) return false;
+        return direction === 1 ? position > index : position < index;
       });
       doomed.forEach((tab) => {
         pushClosedTab(entryOf(tab));
@@ -321,13 +368,16 @@ export function AgzosBrowser() {
   const bookmarkAll = useCallback(() => {
     const pageTabs = tabs.filter((tab) => !tab.private && entryOf(tab).kind === "page");
     setLinks((list) => {
-      const known = new Set(list.map((link) => link.url));
-      const additions = pageTabs
-        .map((tab) => {
-          const entry = entryOf(tab);
-          return { name: entry.title, url: entry.url.replace(/^https?:\/\//, "") };
-        })
-        .filter((link) => !known.has(link.url));
+      const known = new Set(list.map((link) => normalizeUrlKey(link.url)));
+      const additions: QuickLink[] = [];
+      for (const tab of pageTabs) {
+        const entry = entryOf(tab);
+        const url = entry.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+        const key = normalizeUrlKey(url);
+        if (known.has(key)) continue;
+        known.add(key);
+        additions.push({ name: entry.title, url });
+      }
       return [...list, ...additions];
     });
   }, [tabs]);
@@ -353,8 +403,9 @@ export function AgzosBrowser() {
         ),
       );
       setAddress(entry.url);
+      if (desktop) setRequestedUrl({ id: activeId, url: entry.url });
     },
-    [activeId, flash],
+    [activeId, desktop, flash],
   );
 
   const openAddress = useCallback(
@@ -474,32 +525,46 @@ export function AgzosBrowser() {
         setTabs((list) =>
           list.map((tab) => (tab.id === event.id ? { ...tab, muted: event.muted } : tab)),
         );
+      } else if (event.type === "crashed") {
+        setCrashed((list) => [...new Set([...list, event.id])]);
       }
     });
     const offOpen = desktop.onOpenRequest(({ url }) => {
       openPageTab({ title: hostOf(url) ?? url, url, kind: "page" });
     });
     const offFullscreen = desktop.onFullscreen(({ active }) => setFullscreen(active));
-    const offHotkey = desktop.onHotkey(({ key, shift }) => {
+    const offHotkey = desktop.onHotkey(({ key, shift, alt, meta, ctrl }) => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: shift ? key.toUpperCase() : key,
-          ctrlKey: true,
+          ctrlKey: ctrl,
+          metaKey: meta,
+          altKey: alt,
+          shiftKey: shift,
           bubbles: true,
         }),
       );
+    });
+    const offMenu = desktop.onTabMenuAction(({ action, tabId }) => {
+      runActionRef.current(action, tabId);
+    });
+    const offPermission = desktop.onRequestPermission((request) => {
+      setPermission(request);
+      setRememberPermission(true);
     });
     return () => {
       offTab();
       offOpen();
       offFullscreen();
       offHotkey();
+      offMenu();
+      offPermission();
     };
   }, [desktop, openPageTab]);
 
   useEffect(() => {
-    if (desktop && current.kind === "home") void desktop.setBounds(HIDDEN_RECT);
-  }, [desktop, current.kind]);
+    if (desktop) void desktop.activateTab(activeId);
+  }, [desktop, activeId]);
 
   useEffect(() => {
     if (desktop) void desktop.setPanelOpen(panel !== null);
@@ -711,17 +776,116 @@ export function AgzosBrowser() {
     (event: React.MouseEvent, tab: Tab) => {
       event.preventDefault();
       event.stopPropagation();
+      if (desktop) {
+        void desktop.showTabMenu({
+          kind: "tab",
+          tabId: tab.id,
+          pinned: Boolean(tab.pinned),
+          muted: Boolean(tab.muted),
+          audio: audioPlaying.includes(tab.id),
+          hasClosed: closedTabs.length > 0,
+          orientation,
+          url: entryOf(tab).url,
+        });
+        return;
+      }
       tabMenu.open(event.clientX, event.clientY, tabMenuGroups(tab));
     },
-    [tabMenu, tabMenuGroups],
+    [audioPlaying, closedTabs.length, desktop, orientation, tabMenu, tabMenuGroups],
   );
 
   const openStripMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
+      if (desktop) {
+        void desktop.showTabMenu({
+          kind: "strip",
+          hasClosed: closedTabs.length > 0,
+          orientation,
+        });
+        return;
+      }
       tabMenu.open(event.clientX, event.clientY, stripMenuGroups());
     },
-    [stripMenuGroups, tabMenu],
+    [closedTabs.length, desktop, orientation, stripMenuGroups, tabMenu],
+  );
+
+  function runTabMenuAction(action: string, tabId: number | null) {
+    switch (action) {
+      case "new-tab-right":
+        if (tabId != null) addTabRightOf(tabId);
+        else addTab();
+        return;
+      case "strip-new":
+        addTab();
+        return;
+      case "reopen-closed":
+      case "strip-reopen":
+        reopenClosedTab();
+        return;
+      case "duplicate":
+        if (tabId != null) duplicateTab(tabId);
+        return;
+      case "pin":
+      case "unpin":
+        if (tabId != null) togglePin(tabId);
+        return;
+      case "mute":
+        if (tabId != null) toggleMute(tabId);
+        return;
+      case "reload":
+        if (tabId != null) reloadTab(tabId);
+        return;
+      case "copy-url":
+        if (tabId != null) {
+          const source = tabs.find((item) => item.id === tabId);
+          if (source) void copyText("copy-url", entryOf(source).url);
+        }
+        return;
+      case "close":
+        if (tabId != null) requestCloseTab(tabId);
+        return;
+      case "close-others":
+        if (tabId != null) closeOthers(tabId);
+        return;
+      case "close-right":
+        if (tabId != null) closeSide(tabId, 1);
+        return;
+      case "close-left":
+        if (tabId != null) closeSide(tabId, -1);
+        return;
+      case "bookmark-all":
+        bookmarkAll();
+        return;
+      case "tabs-vertical":
+      case "strip-vertical":
+        setOrientation("vertical");
+        return;
+      case "tabs-horizontal":
+      case "strip-horizontal":
+        setOrientation("horizontal");
+        return;
+    }
+  }
+  runActionRef.current = runTabMenuAction;
+
+  const answerPermission = useCallback(
+    (allow: boolean) => {
+      if (!permission || !desktop) return;
+      void desktop.respondPermission(permission.id, allow, rememberPermission);
+      setPermission(null);
+    },
+    [desktop, permission, rememberPermission],
+  );
+
+  const recoverCrashedTab = useCallback(
+    (id: number) => {
+      setCrashed((list) => list.filter((item) => item !== id));
+      void desktop?.reload(id);
+      void desktop?.activateTab(id);
+      flash();
+    },
+    [desktop, flash],
   );
 
   function renderTab(tab: Tab) {
@@ -899,7 +1063,7 @@ export function AgzosBrowser() {
             >
               <Star />
             </button>
-            <kbd>⌘ K</kbd>
+            <kbd>{isMac ? "⌘ K" : "Ctrl K"}</kbd>
           </form>
           <div className="toolbar-actions">
             <button
@@ -985,17 +1149,22 @@ export function AgzosBrowser() {
                   </>
                 )}
               </div>
-              {!railCollapsed && (
-                <div className="rail-tabs" role="tablist" aria-label="Abas verticais">
-                  {orderedTabs.map(renderTab)}
-                </div>
-              )}
+              <div className="rail-tabs" role="tablist" aria-label="Abas verticais">
+                {orderedTabs.map(renderTab)}
+              </div>
             </aside>
           )}
           <div className="workspace">
             <section className={cn("viewport", activeTab.private && "private")}>
               {loading && <div className="loading-line" />}
-              {current.kind === "home" ? (
+              {crashed.includes(activeTab.id) ? (
+                <div className="crash-page">
+                  <ShieldCheck aria-hidden="true" />
+                  <h1>Esta guia travou</h1>
+                  <p>O processo desta página parou de responder.</p>
+                  <Button onClick={() => recoverCrashedTab(activeTab.id)}>Recarregar</Button>
+                </div>
+              ) : current.kind === "home" ? (
                 <StartPage
                   links={links}
                   engine={engineOf(engine)}
@@ -1010,6 +1179,7 @@ export function AgzosBrowser() {
                   tabId={activeTab.id}
                   title={current.title}
                   url={current.url}
+                  requestedUrl={requestedUrl?.id === activeTab.id ? requestedUrl.url : undefined}
                   dark={dark}
                   privateTab={Boolean(activeTab.private)}
                   muted={Boolean(activeTab.muted)}
@@ -1057,6 +1227,8 @@ export function AgzosBrowser() {
               setActiveId(1);
               setAddress(homeEntry.url);
               setViewNav(null);
+              setCrashed([]);
+              setRequestedUrl(null);
             }}
             onClose={() => setPanel(null)}
           />
@@ -1074,6 +1246,34 @@ export function AgzosBrowser() {
           />
         )}
       </section>
+      {permission && (
+        <div className="permission-bar" role="alertdialog" aria-label="Pedido de permissão">
+          <ShieldCheck aria-hidden="true" />
+          <span>
+            <strong>{hostOf(permission.origin) ?? permission.origin}</strong> quer usar{" "}
+            {permission.mediaTypes.includes("video") && permission.mediaTypes.includes("audio")
+              ? "a câmera e o microfone"
+              : permission.mediaTypes.includes("video")
+                ? "a câmera"
+                : "o microfone"}
+            .
+          </span>
+          <label className="permission-remember">
+            <input
+              type="checkbox"
+              checked={rememberPermission}
+              onChange={(event) => setRememberPermission(event.target.checked)}
+            />
+            Lembrar
+          </label>
+          <Button size="sm" onClick={() => answerPermission(true)}>
+            Permitir
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => answerPermission(false)}>
+            Bloquear
+          </Button>
+        </div>
+      )}
       {tabMenu.menu && (
         <ContextMenu
           x={tabMenu.menu.x}

@@ -1325,3 +1325,75 @@ button {
   margin: 5px 8px;
   background: var(--border);
 }
+.browser-stage.fs .ai-sidebar {
+  display: none;
+}
+.permission-bar {
+  position: fixed;
+  top: 58px;
+  right: 16px;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, 90vw);
+  padding: 10px 14px;
+  border: 1px solid color-mix(in oklab, var(--primary) 40%, var(--border));
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 16px 40px oklch(0 0 0 / 26%);
+  font-size: 12.5px;
+}
+.permission-bar > svg {
+  width: 18px;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+.permission-bar strong {
+  font-weight: 700;
+}
+.permission-remember {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.crash-page {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px;
+  text-align: center;
+}
+.crash-page > svg {
+  width: 34px;
+  color: var(--primary);
+}
+.crash-page h1 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-weight: 500;
+}
+.crash-page p {
+  margin: 0 0 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.tabs-rail.collapsed .browser-tab > span:not(.tab-audio),
+.tabs-rail.collapsed .tab-pin,
+.tabs-rail.collapsed .tab-close {
+  display: none;
+}
+.tabs-rail.collapsed .browser-tab {
+  justify-content: center;
+  padding: 0;
+}
+.tabs-rail .browser-tab.pinned > span:not(.tab-close):not(.tab-pin) {
+  display: inline;
+}

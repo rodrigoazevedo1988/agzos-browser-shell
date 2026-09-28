@@ -33,17 +33,20 @@ function refusesEmbedding(url: string) {
 function NativeView({
   tabId,
   url,
+  requestedUrl,
   dark,
   privateTab,
   muted,
 }: {
   tabId: number;
   url: string;
+  requestedUrl?: string;
   dark: boolean;
   privateTab: boolean;
   muted: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const lastRequestedRef = useRef<string | null>(requestedUrl ?? url);
   const bridge = desktopBridge();
 
   useEffect(() => {
@@ -54,9 +57,11 @@ function NativeView({
   }, [tabId]);
 
   useEffect(() => {
-    void bridge?.navigate(tabId, url);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, url]);
+    if (!bridge || requestedUrl == null) return;
+    if (lastRequestedRef.current === requestedUrl) return;
+    lastRequestedRef.current = requestedUrl;
+    void bridge.navigate(tabId, requestedUrl);
+  }, [bridge, tabId, requestedUrl]);
 
   useEffect(() => {
     void bridge?.muteTab(tabId, muted);
@@ -91,6 +96,7 @@ export function WebFrame({
   tabId,
   title,
   url,
+  requestedUrl,
   dark,
   privateTab,
   muted,
@@ -98,6 +104,7 @@ export function WebFrame({
   tabId: number;
   title: string;
   url: string;
+  requestedUrl?: string;
   dark: boolean;
   privateTab: boolean;
   muted: boolean;
@@ -107,7 +114,16 @@ export function WebFrame({
   const blocked = refusesEmbedding(url) && !forced;
 
   if (native) {
-    return <NativeView tabId={tabId} url={url} dark={dark} privateTab={privateTab} muted={muted} />;
+    return (
+      <NativeView
+        tabId={tabId}
+        url={url}
+        requestedUrl={requestedUrl}
+        dark={dark}
+        privateTab={privateTab}
+        muted={muted}
+      />
+    );
   }
 
   return (

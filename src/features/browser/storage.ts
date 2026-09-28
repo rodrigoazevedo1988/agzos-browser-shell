@@ -29,13 +29,21 @@ export function entryOf(tab: Tab): Entry {
 }
 
 export function hostOf(url: string): string | null {
+  const target = url.startsWith("view-source:") ? url.slice("view-source:".length) : url;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(target);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
     return parsed.hostname.replace(/^www\./, "");
   } catch {
     return null;
   }
+}
+
+export function normalizeUrlKey(url: string): string {
+  return url
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
 }
 
 export const CLOSED_TABS_LIMIT = 20;
@@ -50,6 +58,7 @@ export type PersistedState = {
   links: QuickLink[] | null;
   pausedHosts: string[];
   orientation: TabOrientation;
+  railCollapsed: boolean;
   closedTabs: ClosedTab[];
 };
 
@@ -64,6 +73,7 @@ export function loadPersistedState(): PersistedState {
     links: null,
     pausedHosts: [],
     orientation: "horizontal",
+    railCollapsed: false,
     closedTabs: [],
   };
   try {
@@ -86,6 +96,7 @@ export function loadPersistedState(): PersistedState {
     if (storedOrientation === "vertical" || storedOrientation === "horizontal") {
       state.orientation = storedOrientation;
     }
+    state.railCollapsed = window.localStorage.getItem("agzos-tab-rail-collapsed") === "1";
     const closed = JSON.parse(
       window.localStorage.getItem("agzos-closed-tabs") ?? "null",
     ) as unknown;
@@ -109,13 +120,13 @@ export function loadPersistedState(): PersistedState {
 export function persistBrowserState(state: {
   dark: boolean;
   tabs: Tab[];
-  credentials: Credential[];
   links: QuickLink[];
   engine: EngineId;
   shield: boolean;
   aiOpen: boolean;
   pausedHosts: string[];
   orientation: TabOrientation;
+  railCollapsed: boolean;
   closedTabs: ClosedTab[];
 }) {
   window.localStorage.setItem("agzos-theme", state.dark ? "dark" : "light");
@@ -123,13 +134,13 @@ export function persistBrowserState(state: {
     "agzos-tabs",
     JSON.stringify(state.tabs.filter((tab) => !tab.private)),
   );
-  window.localStorage.setItem("agzos-credentials", JSON.stringify(state.credentials));
   window.localStorage.setItem("agzos-links", JSON.stringify(state.links));
   window.localStorage.setItem("agzos-engine", state.engine);
   window.localStorage.setItem("agzos-shield", state.shield ? "on" : "off");
   window.localStorage.setItem("agzos-ai", state.aiOpen ? "on" : "off");
   window.localStorage.setItem("agzos-paused-hosts", JSON.stringify(state.pausedHosts));
   window.localStorage.setItem("agzos-tab-orientation", state.orientation);
+  window.localStorage.setItem("agzos-tab-rail-collapsed", state.railCollapsed ? "1" : "0");
   window.localStorage.setItem(
     "agzos-closed-tabs",
     JSON.stringify(state.closedTabs.slice(0, CLOSED_TABS_LIMIT)),

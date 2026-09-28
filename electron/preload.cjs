@@ -19,8 +19,15 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   closeTab: (id) => ipcRenderer.invoke("tab:close", { id }),
   muteTab: (id, muted) => ipcRenderer.invoke("tab:mute", { id, muted }),
   setPanelOpen: (open) => ipcRenderer.invoke("chrome:panel", { open }),
+  showTabMenu: (context) => ipcRenderer.invoke("tabmenu:show", context),
+  respondPermission: (id, allow, remember) =>
+    ipcRenderer.invoke("permission:respond", { id, allow, remember }),
+  keyLoad: () => ipcRenderer.invoke("key:load"),
+  keySave: (list) => ipcRenderer.invoke("key:save", list),
   onTabEvent: subscribe("agzos:tab-event"),
   onOpenRequest: subscribe("agzos:open-request"),
   onFullscreen: subscribe("agzos:fullscreen"),
   onHotkey: subscribe("agzos:hotkey"),
+  onTabMenuAction: subscribe("agzos:tabmenu-action"),
+  onRequestPermission: subscribe("agzos:permission-request"),
 });
