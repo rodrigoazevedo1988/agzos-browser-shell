@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "../../src/styles.css";
-import { AgzosBrowser } from "../../src/routes/index";
+import { AgzosBrowser } from "../../src/features/browser/chrome";
 
 const root = document.getElementById("root");
 
