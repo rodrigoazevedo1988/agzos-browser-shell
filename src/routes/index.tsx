@@ -362,10 +362,11 @@ export function AgzosBrowser() {
   );
 }
 
-function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickLink[]; onOpen: (value: string) => void; onSearch: () => void; onAdd: (link: QuickLink) => void; onRemove: (url: string) => void }) {
+function StartPage({ links, engine, onOpen, onAdd, onRemove }: { links: QuickLink[]; engine: (typeof engines)[number]; onOpen: (value: string) => void; onAdd: (link: QuickLink) => void; onRemove: (url: string) => void }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [query, setQuery] = useState("");
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -377,14 +378,29 @@ function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickL
     setAdding(false);
   }
 
+  function search(event: FormEvent) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    onOpen(query);
+    setQuery("");
+  }
+
   return (
     <div className="start-page">
       <div className="start-content">
         <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
-        <button type="button" className="start-search" onClick={onSearch}>
-          <span>Pesquisar na web</span><span className="search-key">⌘ K</span>
-        </button>
+        <form className="start-search" onSubmit={search}>
+          <Search aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Pesquisar no ${engine.name} ou digitar endereço`}
+            aria-label="Pesquisar na web"
+          />
+          <Button size="sm" type="submit">Pesquisar</Button>
+        </form>
+        <p className="engine-note">Motor de busca: <strong>{engine.name}</strong> · {engine.hint}</p>
         <div className="quick-links">
           {links.map((link) => (
             <div className="quick-link" key={link.url}>
@@ -410,18 +426,47 @@ function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickL
   );
 }
 
-function MockPage({ title, address }: { title: string; address: string }) {
-  const isSearch = address.startsWith("Busca:");
+function WebFrame({ title, url }: { title: string; url: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setBlocked(false);
+    const timer = window.setTimeout(() => setBlocked((value) => (loadedRef.current ? value : true)), 4500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  const loadedRef = useRef(false);
+
+  function onLoad() {
+    loadedRef.current = true;
+    setLoaded(true);
+    setBlocked(false);
+  }
+
   return (
-    <div className="mock-page">
-      <div className="mock-eyebrow">{isSearch ? "Resultados protegidos" : "Visualização segura"}</div>
-      <h1>{isSearch ? `Resultados para “${title}”` : title}</h1>
-      <p>A Agzos protege sua navegação enquanto organiza o conteúdo importante desta página.</p>
-      <div className="result-list">
-        {["Uma visão mais clara para sua pesquisa", "Privacidade que trabalha em silêncio", "Informação sem distrações"].map((item, index) => (
-          <article key={item}><span>0{index + 1}</span><div><small>agzos.com / conteúdo</small><h2>{item}</h2><p>Conteúdo demonstrativo para visualizar a experiência de navegação do Agzos Browser.</p></div></article>
-        ))}
-      </div>
+    <div className="web-frame">
+      <iframe
+        src={url}
+        title={title}
+        onLoad={onLoad}
+        referrerPolicy="no-referrer"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      />
+      {blocked && !loaded && (
+        <div className="frame-fallback">
+          <div className="mock-eyebrow">Visualização bloqueada pelo site</div>
+          <h1>{title}</h1>
+          <p>Este site não permite ser exibido dentro de outro navegador. No aplicativo Agzos para computador ele abre normalmente.</p>
+          <div className="fallback-actions">
+            <Button onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</Button>
+            <Button variant="outline" onClick={() => setBlocked(false)}>Tentar novamente aqui</Button>
+          </div>
+          <small>{url}</small>
+        </div>
+      )}
     </div>
   );
 }
