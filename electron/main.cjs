@@ -44,7 +44,22 @@ function createWindow() {
   }
 }
 
+// Permite que sites reais sejam exibidos dentro das abas do Agzos Browser no desktop.
+function allowEmbedding() {
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    for (const key of Object.keys(headers)) {
+      const name = key.toLowerCase();
+      if (name === "x-frame-options" || name === "content-security-policy" || name === "content-security-policy-report-only") {
+        delete headers[key];
+      }
+    }
+    callback({ responseHeaders: headers });
+  });
+}
+
 app.whenReady().then(() => {
+  allowEmbedding();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
