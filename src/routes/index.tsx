@@ -134,7 +134,18 @@ function AgzosBrowser() {
   }
 
   async function copyCredential(domain: string, password: string) {
-    await navigator.clipboard.writeText(password);
+    try {
+      await navigator.clipboard.writeText(password);
+    } catch {
+      const temporary = document.createElement("textarea");
+      temporary.value = password;
+      temporary.style.position = "fixed";
+      temporary.style.opacity = "0";
+      document.body.appendChild(temporary);
+      temporary.select();
+      document.execCommand("copy");
+      temporary.remove();
+    }
     setCopied(domain);
     window.setTimeout(() => setCopied(null), 1400);
   }
