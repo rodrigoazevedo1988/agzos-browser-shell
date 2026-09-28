@@ -24,7 +24,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import logoUrl from "@/assets/agzos-logo.svg";
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
