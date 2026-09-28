@@ -6,40 +6,66 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   LockKeyhole,
   Moon,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
+  Star,
   Sun,
+  Trash2,
+  Wand2,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import logoUrl from "@/assets/agzos-logo.svg";
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-type Tab = { id: number; title: string; url: string; kind: "home" | "page" };
+type Entry = { title: string; url: string; kind: "home" | "page" };
+type Tab = { id: number; history: Entry[]; index: number };
+type Credential = { domain: string; user: string; password: string };
+type QuickLink = { name: string; url: string };
 
-const starterTabs: Tab[] = [{ id: 1, title: "Nova aba", url: "agzos://inicio", kind: "home" }];
-const credentials = [
-  { domain: "github.com", user: "mrcatofic", password: "agz-Gh8•2mK•93" },
-  { domain: "figma.com", user: "design@agzos.com", password: "fg-4Wn•9Kp•17" },
-  { domain: "notion.so", user: "equipe@agzos.com", password: "nt-7Ra•5Ls•26" },
+const homeEntry: Entry = { title: "Nova aba", url: "agzos://inicio", kind: "home" };
+const starterTabs: Tab[] = [{ id: 1, history: [homeEntry], index: 0 }];
+
+const defaultCredentials: Credential[] = [
+  { domain: "github.com", user: "mrcatofic", password: "agz-Gh8x2mK93" },
+  { domain: "figma.com", user: "design@agzos.com", password: "fg-4Wn9Kp17" },
+  { domain: "notion.so", user: "equipe@agzos.com", password: "nt-7Ra5Ls26" },
 ];
-const quickLinks = [
-  { name: "GitHub", short: "GH" },
-  { name: "Figma", short: "F" },
-  { name: "Notion", short: "N" },
-  { name: "Linear", short: "L" },
-  { name: "Adicionar", short: "+" },
+
+const defaultLinks: QuickLink[] = [
+  { name: "GitHub", url: "github.com" },
+  { name: "Figma", url: "figma.com" },
+  { name: "Notion", url: "notion.so" },
+  { name: "Linear", url: "linear.app" },
 ];
+
+function entryOf(tab: Tab): Entry {
+  return tab.history[tab.index] ?? homeEntry;
+}
+
+function shortOf(name: string) {
+  return name.trim().charAt(0).toUpperCase() || "?";
+}
+
+function generatePassword() {
+  const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
+  const values = new Uint32Array(18);
+  crypto.getRandomValues(values);
+  return Array.from(values, (value) => chars[value % chars.length]).join("");
+}
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -58,90 +84,172 @@ export const Route = createFileRoute("/")({
 export function AgzosBrowser() {
   const [tabs, setTabs] = useState<Tab[]>(starterTabs);
   const [activeId, setActiveId] = useState(1);
-  const [address, setAddress] = useState("agzos://inicio");
+  const [address, setAddress] = useState(homeEntry.url);
   const [aiOpen, setAiOpen] = useState(true);
   const [panel, setPanel] = useState<"key" | "privacy" | "settings" | null>(null);
   const keyOpen = panel === "key";
-  const setKeyOpen = (value: boolean | ((open: boolean) => boolean)) => setPanel((current) => { const next = typeof value === "function" ? value(current === "key") : value; return next ? "key" : current === "key" ? null : current; });
   const [shield, setShield] = useState(true);
   const [dark, setDark] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState(["Olá! Posso resumir, explicar ou responder perguntas sobre esta página."]);
   const [loading, setLoading] = useState(false);
+  const [credentials, setCredentials] = useState<Credential[]>(defaultCredentials);
+  const [links, setLinks] = useState<QuickLink[]>(defaultLinks);
 
-  const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeId) ?? tabs[0], [activeId, tabs]);
+  const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? starterTabs[0]!, [activeId, tabs]);
+  const current = entryOf(activeTab);
+  const canBack = activeTab.index > 0;
+  const canForward = activeTab.index < activeTab.history.length - 1;
+  const isFavorite = links.some((link) => link.url === current.url.replace(/^https?:\/\//, ""));
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("agzos-theme");
-    const savedTabs = window.localStorage.getItem("agzos-tabs");
     if (savedTheme === "dark") setDark(true);
-    if (savedTabs) {
-      try {
-        const parsed = JSON.parse(savedTabs) as Tab[];
-        const firstTab = parsed[0];
-        if (firstTab) {
-          setTabs(parsed);
-          setActiveId(firstTab.id);
-          setAddress(firstTab.url);
-        }
-      } catch {
-        window.localStorage.removeItem("agzos-tabs");
+    try {
+      const savedTabs = JSON.parse(window.localStorage.getItem("agzos-tabs") ?? "null") as Tab[] | null;
+      const first = savedTabs?.[0];
+      if (savedTabs && first?.history?.length) {
+        setTabs(savedTabs);
+        setActiveId(first.id);
+        setAddress(entryOf(first).url);
       }
+    } catch {
+      window.localStorage.removeItem("agzos-tabs");
+    }
+    try {
+      const savedKeys = JSON.parse(window.localStorage.getItem("agzos-credentials") ?? "null") as Credential[] | null;
+      if (savedKeys?.length) setCredentials(savedKeys);
+      const savedLinks = JSON.parse(window.localStorage.getItem("agzos-links") ?? "null") as QuickLink[] | null;
+      if (savedLinks) setLinks(savedLinks);
+    } catch {
+      /* ignora dados inválidos */
     }
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem("agzos-theme", dark ? "dark" : "light");
     window.localStorage.setItem("agzos-tabs", JSON.stringify(tabs));
-  }, [dark, tabs]);
+    window.localStorage.setItem("agzos-credentials", JSON.stringify(credentials));
+    window.localStorage.setItem("agzos-links", JSON.stringify(links));
+  }, [dark, tabs, credentials, links]);
 
-  function addTab() {
+  const flash = useCallback(() => {
+    setLoading(true);
+    window.setTimeout(() => setLoading(false), 500);
+  }, []);
+
+  const addTab = useCallback(() => {
     const id = Date.now();
-    const next = { id, title: "Nova aba", url: "agzos://inicio", kind: "home" as const };
-    setTabs((current) => [...current, next]);
+    setTabs((list) => [...list, { id, history: [homeEntry], index: 0 }]);
     setActiveId(id);
-    setAddress(next.url);
-  }
+    setAddress(homeEntry.url);
+  }, []);
 
-  function closeTab(id: number) {
-    if (tabs.length === 1) return;
-    const index = tabs.findIndex((tab) => tab.id === id);
-    const remaining = tabs.filter((tab) => tab.id !== id);
-    setTabs(remaining);
-    if (activeId === id) {
-      const next = remaining[Math.max(0, index - 1)] ?? remaining[0];
-      if (next) {
-        setActiveId(next.id);
-        setAddress(next.url);
-      }
-    }
-  }
+  const closeTab = useCallback((id: number) => {
+    setTabs((list) => {
+      if (list.length === 1) return list;
+      const index = list.findIndex((tab) => tab.id === id);
+      const remaining = list.filter((tab) => tab.id !== id);
+      setActiveId((active) => {
+        if (active !== id) return active;
+        const next = remaining[Math.max(0, index - 1)] ?? remaining[0]!;
+        setAddress(entryOf(next).url);
+        return next.id;
+      });
+      return remaining;
+    });
+  }, []);
 
   function activateTab(tab: Tab) {
     setActiveId(tab.id);
-    setAddress(tab.url);
+    setAddress(entryOf(tab).url);
   }
 
-  function navigate(event: FormEvent) {
-    event.preventDefault();
-    const input = address.trim();
-    if (!input) return;
-    const isUrl = input.includes(".") || input.startsWith("http");
-    const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : `Busca: ${input}`;
-    const title = isUrl ? (input.replace(/^https?:\/\//, "").split("/")[0] ?? input) : input;
-    setLoading(true);
-    window.setTimeout(() => setLoading(false), 550);
-    setTabs((current) => current.map((tab) => (tab.id === activeId ? { ...tab, title, url, kind: "page" } : tab)));
-    setAddress(url);
+  const pushEntry = useCallback(
+    (entry: Entry) => {
+      flash();
+      setTabs((list) =>
+        list.map((tab) =>
+          tab.id === activeId
+            ? { ...tab, history: [...tab.history.slice(0, tab.index + 1), entry], index: tab.index + 1 }
+            : tab,
+        ),
+      );
+      setAddress(entry.url);
+    },
+    [activeId, flash],
+  );
+
+  const openAddress = useCallback(
+    (raw: string) => {
+      const input = raw.trim();
+      if (!input) return;
+      const isUrl = input.includes(".") || input.startsWith("http");
+      const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : `Busca: ${input}`;
+      const title = isUrl ? (input.replace(/^https?:\/\//, "").split("/")[0] ?? input) : input;
+      pushEntry({ title, url, kind: "page" });
+    },
+    [pushEntry],
+  );
+
+  const step = useCallback(
+    (delta: number) => {
+      setTabs((list) =>
+        list.map((tab) => {
+          if (tab.id !== activeId) return tab;
+          const index = Math.min(Math.max(tab.index + delta, 0), tab.history.length - 1);
+          if (index === tab.index) return tab;
+          setAddress(tab.history[index]!.url);
+          flash();
+          return { ...tab, index };
+        }),
+      );
+    },
+    [activeId, flash],
+  );
+
+  const focusOmnibox = useCallback(() => {
+    const input = document.querySelector<HTMLInputElement>(".omnibox input");
+    input?.focus();
+    input?.select();
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta) return;
+      const key = event.key.toLowerCase();
+      if (key === "k" || key === "l") {
+        event.preventDefault();
+        focusOmnibox();
+      } else if (key === "t") {
+        event.preventDefault();
+        addTab();
+      } else if (key === "w") {
+        event.preventDefault();
+        closeTab(activeId);
+      } else if (key === "r") {
+        event.preventDefault();
+        flash();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeId, addTab, closeTab, flash, focusOmnibox]);
+
+  function toggleFavorite() {
+    const clean = current.url.replace(/^https?:\/\//, "");
+    if (current.kind === "home") return;
+    setLinks((list) => (list.some((link) => link.url === clean) ? list.filter((link) => link.url !== clean) : [...list, { name: current.title, url: clean }]));
   }
 
-  async function copyCredential(domain: string, password: string) {
+  async function copyText(id: string, value: string) {
     try {
-      await navigator.clipboard.writeText(password);
+      await navigator.clipboard.writeText(value);
     } catch {
       const temporary = document.createElement("textarea");
-      temporary.value = password;
+      temporary.value = value;
       temporary.style.position = "fixed";
       temporary.style.opacity = "0";
       document.body.appendChild(temporary);
@@ -149,14 +257,14 @@ export function AgzosBrowser() {
       document.execCommand("copy");
       temporary.remove();
     }
-    setCopied(domain);
+    setCopied(id);
     window.setTimeout(() => setCopied(null), 1400);
   }
 
   function sendMessage(event: FormEvent) {
     event.preventDefault();
     if (!message.trim()) return;
-    setChat((current) => [...current, message, "Esta é uma resposta simulada da Agzos AI para a página atual."]);
+    setChat((list) => [...list, message, "Esta é uma resposta simulada da Agzos AI para a página atual."]);
     setMessage("");
   }
 
@@ -166,33 +274,37 @@ export function AgzosBrowser() {
         <header className="titlebar">
           <div className="window-controls" aria-label="Controles da janela"><span /><span /><span /></div>
           <div className="tabs" role="tablist" aria-label="Abas abertas">
-            {tabs.map((tab) => (
-              <button key={tab.id} type="button" role="tab" aria-selected={tab.id === activeId} onClick={() => activateTab(tab)} className={cn("browser-tab", tab.id === activeId && "active")}>
-                <img src={symbolUrl} alt="" />
-                <span>{tab.title}</span>
-                <span className="tab-close" role="button" aria-label={`Fechar ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }}><X /></span>
-              </button>
-            ))}
-            <Button variant="ghost" size="icon" onClick={addTab} title="Nova aba" aria-label="Nova aba" className="new-tab"><Plus /></Button>
+            {tabs.map((tab) => {
+              const entry = entryOf(tab);
+              return (
+                <button key={tab.id} type="button" role="tab" aria-selected={tab.id === activeId} onClick={() => activateTab(tab)} className={cn("browser-tab", tab.id === activeId && "active")}>
+                  <img src={symbolUrl} alt="" />
+                  <span>{entry.title}</span>
+                  <span className="tab-close" role="button" aria-label={`Fechar ${entry.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }}><X /></span>
+                </button>
+              );
+            })}
+            <Button variant="ghost" size="icon" onClick={addTab} title="Nova aba (Ctrl/⌘ T)" aria-label="Nova aba" className="new-tab"><Plus /></Button>
           </div>
-          <Button variant={panel === "settings" ? "default" : "ghost"} size="icon" title="Configurações" aria-label="Configurações" onClick={() => setPanel((p) => p === "settings" ? null : "settings")}><MoreHorizontal /></Button>
+          <Button variant={panel === "settings" ? "default" : "ghost"} size="icon" title="Configurações" aria-label="Configurações" onClick={() => setPanel((p) => (p === "settings" ? null : "settings"))}><MoreHorizontal /></Button>
         </header>
 
         <div className="toolbar">
           <div className="nav-actions">
-            <Button variant="ghost" size="icon" title="Voltar" aria-label="Voltar"><ArrowLeft /></Button>
-            <Button variant="ghost" size="icon" title="Avançar" aria-label="Avançar"><ArrowRight /></Button>
-            <Button variant="ghost" size="icon" title="Recarregar" aria-label="Recarregar" onClick={() => { setLoading(true); window.setTimeout(() => setLoading(false), 500); }}><RefreshCw className={cn(loading && "spin")} /></Button>
+            <Button variant="ghost" size="icon" title="Voltar" aria-label="Voltar" disabled={!canBack} onClick={() => step(-1)}><ArrowLeft /></Button>
+            <Button variant="ghost" size="icon" title="Avançar" aria-label="Avançar" disabled={!canForward} onClick={() => step(1)}><ArrowRight /></Button>
+            <Button variant="ghost" size="icon" title="Recarregar (Ctrl/⌘ R)" aria-label="Recarregar" onClick={flash}><RefreshCw className={cn(loading && "spin")} /></Button>
           </div>
-          <form className="omnibox" onSubmit={navigate}>
+          <form className="omnibox" onSubmit={(event) => { event.preventDefault(); openAddress(address); }}>
             <LockKeyhole aria-hidden="true" />
             <input value={address} onChange={(event) => setAddress(event.target.value)} aria-label="Pesquisar ou digitar endereço" placeholder="Pesquisar ou digitar endereço" />
+            <button type="button" className={cn("fav-button", isFavorite && "on")} onClick={toggleFavorite} title={isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} aria-label="Favoritar página" aria-pressed={isFavorite}><Star /></button>
             <kbd>⌘ K</kbd>
           </form>
           <div className="toolbar-actions">
-            <button type="button" className="privacy-pill" onClick={() => setPanel((p) => p === "privacy" ? null : "privacy")} title="Rastreadores bloqueados"><ShieldCheck /><strong>{shield ? 12 : 0}</strong><span>bloqueados</span></button>
-            <Button variant={keyOpen ? "default" : "ghost"} size="icon" onClick={() => setKeyOpen((open) => !open)} title="Abrir Agzos Key" aria-label="Abrir Agzos Key"><KeyRound /></Button>
-            <Button variant="ghost" size="icon" onClick={() => setDark((current) => !current)} title={dark ? "Usar tema claro" : "Usar tema escuro"} aria-label={dark ? "Usar tema claro" : "Usar tema escuro"}>{dark ? <Sun /> : <Moon />}</Button>
+            <button type="button" className="privacy-pill" onClick={() => setPanel((p) => (p === "privacy" ? null : "privacy"))} title="Rastreadores bloqueados"><ShieldCheck /><strong>{shield ? 12 : 0}</strong><span>bloqueados</span></button>
+            <Button variant={keyOpen ? "default" : "ghost"} size="icon" onClick={() => setPanel((p) => (p === "key" ? null : "key"))} title="Abrir Agzos Key" aria-label="Abrir Agzos Key"><KeyRound /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setDark((value) => !value)} title={dark ? "Usar tema claro" : "Usar tema escuro"} aria-label={dark ? "Usar tema claro" : "Usar tema escuro"}>{dark ? <Sun /> : <Moon />}</Button>
             <Button variant={aiOpen ? "default" : "ghost"} size="icon" onClick={() => setAiOpen((open) => !open)} title="Alternar Agzos AI" aria-label="Alternar Agzos AI"><Sparkles /></Button>
           </div>
         </div>
@@ -200,31 +312,80 @@ export function AgzosBrowser() {
         <div className="workspace">
           <section className="viewport">
             {loading && <div className="loading-line" />}
-            {activeTab?.kind === "home" ? <StartPage onNavigate={(value) => { setAddress(value); window.setTimeout(() => document.querySelector<HTMLInputElement>(".omnibox input")?.focus(), 0); }} /> : <MockPage title={activeTab?.title ?? "Resultado"} address={activeTab?.url ?? address} />}
+            {current.kind === "home" ? (
+              <StartPage
+                links={links}
+                onOpen={openAddress}
+                onSearch={focusOmnibox}
+                onAdd={(link) => setLinks((list) => [...list, link])}
+                onRemove={(url) => setLinks((list) => list.filter((link) => link.url !== url))}
+              />
+            ) : (
+              <MockPage title={current.title} address={current.url} />
+            )}
           </section>
           {aiOpen && <AiSidebar chat={chat} message={message} setMessage={setMessage} onSubmit={sendMessage} onClose={() => setAiOpen(false)} />}
         </div>
 
         {panel === "privacy" && <PrivacyPanel shield={shield} setShield={setShield} onClose={() => setPanel(null)} />}
-        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(1); setAddress("agzos://inicio"); }} onClose={() => setPanel(null)} />}
-        {keyOpen && <KeyPanel copied={copied} onCopy={copyCredential} onClose={() => setKeyOpen(false)} />}
+        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(1); setAddress(homeEntry.url); }} onClose={() => setPanel(null)} />}
+        {keyOpen && (
+          <KeyPanel
+            credentials={credentials}
+            copied={copied}
+            onCopy={copyText}
+            onAdd={(item) => setCredentials((list) => [...list, item])}
+            onRemove={(domain) => setCredentials((list) => list.filter((item) => item.domain !== domain))}
+            onClose={() => setPanel(null)}
+          />
+        )}
       </section>
     </main>
   );
 }
 
-function StartPage({ onNavigate }: { onNavigate: (value: string) => void }) {
+function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickLink[]; onOpen: (value: string) => void; onSearch: () => void; onAdd: (link: QuickLink) => void; onRemove: (url: string) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const clean = url.trim().replace(/^https?:\/\//, "");
+    if (!clean) return;
+    onAdd({ name: name.trim() || clean, url: clean });
+    setName("");
+    setUrl("");
+    setAdding(false);
+  }
+
   return (
     <div className="start-page">
       <div className="start-content">
         <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
-        <button type="button" className="start-search" onClick={() => onNavigate("")}>
+        <button type="button" className="start-search" onClick={onSearch}>
           <span>Pesquisar na web</span><span className="search-key">⌘ K</span>
         </button>
         <div className="quick-links">
-          {quickLinks.map((link) => <button key={link.name} type="button" onClick={() => onNavigate(link.name.toLowerCase() + ".com")}><span>{link.short}</span><small>{link.name}</small></button>)}
+          {links.map((link) => (
+            <div className="quick-link" key={link.url}>
+              <button type="button" onClick={() => onOpen(link.url)} title={link.url}><span>{shortOf(link.name)}</span><small>{link.name}</small></button>
+              <button type="button" className="quick-remove" onClick={() => onRemove(link.url)} aria-label={`Remover ${link.name}`}><X /></button>
+            </div>
+          ))}
+          <div className="quick-link">
+            <button type="button" onClick={() => setAdding(true)} aria-label="Adicionar atalho"><span>+</span><small>Adicionar</small></button>
+          </div>
         </div>
+        {adding && (
+          <form className="quick-form" onSubmit={submit}>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome" aria-label="Nome do atalho" />
+            <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="site.com" aria-label="Endereço do atalho" />
+            <Button size="sm" type="submit">Salvar</Button>
+            <Button size="sm" variant="ghost" type="button" onClick={() => setAdding(false)}>Cancelar</Button>
+          </form>
+        )}
       </div>
       <div className="privacy-note"><ShieldCheck /><span><strong>Proteção ativa</strong><small>12 rastreadores bloqueados hoje</small></span></div>
     </div>
@@ -264,18 +425,67 @@ function AiSidebar({ chat, message, setMessage, onSubmit, onClose }: { chat: str
   );
 }
 
-function KeyPanel({ copied, onCopy, onClose }: { copied: string | null; onCopy: (domain: string, password: string) => void; onClose: () => void }) {
+function KeyPanel({ credentials, copied, onCopy, onAdd, onRemove, onClose }: { credentials: Credential[]; copied: string | null; onCopy: (id: string, value: string) => void; onAdd: (item: Credential) => void; onRemove: (domain: string) => void; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [visible, setVisible] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [domain, setDomain] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+
+  const filtered = credentials.filter((item) => `${item.domain} ${item.user}`.toLowerCase().includes(query.toLowerCase()));
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!domain.trim() || !password.trim()) return;
+    onAdd({ domain: domain.trim().replace(/^https?:\/\//, ""), user: user.trim(), password });
+    setDomain("");
+    setUser("");
+    setPassword("");
+    setAdding(false);
+  }
+
   return (
     <aside className="key-panel" aria-label="Agzos Key">
       <div className="panel-heading"><div className="panel-title"><span className="key-mark"><KeyRound /></span><div><strong>Agzos Key</strong><small>Cofre local</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar cofre"><X /></Button></div>
+      <div className="key-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar credencial" aria-label="Buscar credencial" /></div>
       <div className="key-domain"><span>Credenciais salvas</span><ChevronDown /></div>
       <div className="credential-list">
-        {credentials.map((item) => <div className="credential" key={item.domain}><div className="domain-icon">{item.domain.charAt(0).toUpperCase()}</div><div className="credential-copy"><strong>{item.domain}</strong><span>{item.user}</span></div><Button variant="ghost" size="icon" onClick={() => onCopy(item.domain, item.password)} title={`Copiar senha de ${item.domain}`} aria-label={`Copiar senha de ${item.domain}`}>{copied === item.domain ? <Check /> : <Copy />}</Button></div>)}
+        {filtered.length === 0 && <p className="key-empty">Nenhuma credencial encontrada.</p>}
+        {filtered.map((item) => (
+          <div className="credential" key={item.domain}>
+            <div className="domain-icon">{item.domain.charAt(0).toUpperCase()}</div>
+            <div className="credential-copy">
+              <strong>{item.domain}</strong>
+              <span>{visible === item.domain ? item.password : item.user}</span>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => setVisible((value) => (value === item.domain ? null : item.domain))} title="Mostrar senha" aria-label={`Mostrar senha de ${item.domain}`}>{visible === item.domain ? <EyeOff /> : <Eye />}</Button>
+            <Button variant="ghost" size="icon" onClick={() => onCopy(item.domain, item.password)} title={`Copiar senha de ${item.domain}`} aria-label={`Copiar senha de ${item.domain}`}>{copied === item.domain ? <Check /> : <Copy />}</Button>
+            <Button variant="ghost" size="icon" onClick={() => onRemove(item.domain)} title="Excluir" aria-label={`Excluir credencial de ${item.domain}`}><Trash2 /></Button>
+          </div>
+        ))}
       </div>
+      {adding ? (
+        <form className="key-form" onSubmit={submit}>
+          <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="site.com" aria-label="Domínio" />
+          <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="usuário ou e-mail" aria-label="Usuário" />
+          <div className="key-password">
+            <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="senha" aria-label="Senha" />
+            <Button type="button" variant="ghost" size="icon" onClick={() => setPassword(generatePassword())} title="Gerar senha forte" aria-label="Gerar senha forte"><Wand2 /></Button>
+          </div>
+          <div className="key-form-actions">
+            <Button size="sm" type="submit">Salvar</Button>
+            <Button size="sm" variant="ghost" type="button" onClick={() => setAdding(false)}>Cancelar</Button>
+          </div>
+        </form>
+      ) : (
+        <div className="settings-actions"><Button variant="outline" size="sm" className="text-xs" onClick={() => setAdding(true)}><Plus /> Nova credencial</Button></div>
+      )}
       <div className="key-footer"><ShieldCheck /><span>Criptografado neste dispositivo</span></div>
     </aside>
   );
 }
+
 const trackers = [
   { name: "Anúncios", count: 5 },
   { name: "Análise e métricas", count: 4 },
@@ -313,6 +523,15 @@ function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, on
       <Toggle label="Tema escuro" checked={dark} onChange={setDark} />
       <Toggle label="Agzos AI visível" hint="Barra lateral de IA" checked={aiOpen} onChange={setAiOpen} />
       <Toggle label="Bloquear rastreadores" hint="Em todos os sites" checked={shield} onChange={setShield} />
+      <div className="settings-shortcuts">
+        <strong>Atalhos</strong>
+        <ul>
+          <li><kbd>⌘/Ctrl K</kbd> Barra de endereços</li>
+          <li><kbd>⌘/Ctrl T</kbd> Nova aba</li>
+          <li><kbd>⌘/Ctrl W</kbd> Fechar aba</li>
+          <li><kbd>⌘/Ctrl R</kbd> Recarregar</li>
+        </ul>
+      </div>
       <div className="settings-actions"><Button variant="outline" size="sm" className="text-xs" onClick={onReset}>Restaurar abas iniciais</Button></div>
       <div className="key-footer"><ShieldCheck /><span>Preferências salvas neste dispositivo</span></div>
     </aside>
