@@ -199,3 +199,28 @@ button { letter-spacing: 0; color: inherit; }
 .switch.on i { transform: translateX(16px); }
 .tracker-count { margin-left: auto; color: var(--primary); font-size: 13px; }
 .settings-actions { padding: 16px 18px; }
+
+.quick-link { position: relative; }
+.quick-link .quick-remove { position: absolute; top: -6px; right: 4px; width: 18px; height: 18px; display: none; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--card); color: var(--muted-foreground); cursor: pointer; }
+.quick-link .quick-remove svg { width: 10px; height: 10px; }
+.quick-link:hover .quick-remove { display: grid; }
+.quick-form { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; }
+.quick-form input { height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: 12px; }
+.fav-button { display: grid; place-items: center; padding: 4px; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.fav-button svg { width: 15px; height: 15px; }
+.fav-button.on { color: var(--primary); }
+.fav-button.on svg { fill: currentColor; }
+.key-search { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.key-search svg { width: 14px; height: 14px; color: var(--muted-foreground); }
+.key-search input { flex: 1; border: 0; background: transparent; color: var(--foreground); font-size: 12px; outline: none; }
+.key-empty { padding: 12px 10px; color: var(--muted-foreground); font-size: 11px; }
+.key-form { display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
+.key-form input { height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 12px; }
+.key-password { display: flex; align-items: center; gap: 6px; }
+.key-password input { flex: 1; }
+.key-form-actions { display: flex; gap: 8px; }
+.settings-shortcuts { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.settings-shortcuts strong { font-size: 12px; }
+.settings-shortcuts ul { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.settings-shortcuts li { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 10px; }
+.settings-shortcuts kbd { padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 9px; }
