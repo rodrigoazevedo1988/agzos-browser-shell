@@ -24,7 +24,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import logoUrl from "@/assets/agzos-logo.svg";
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
@@ -35,6 +35,16 @@ type Entry = { title: string; url: string; kind: "home" | "page" };
 type Tab = { id: number; history: Entry[]; index: number };
 type Credential = { domain: string; user: string; password: string };
 type QuickLink = { name: string; url: string };
+type EngineId = "duckduckgo" | "yandex";
+
+const engines: { id: EngineId; name: string; hint: string; search: (q: string) => string }[] = [
+  { id: "duckduckgo", name: "DuckDuckGo", hint: "Busca sem rastreamento", search: (q) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}` },
+  { id: "yandex", name: "Yandex", hint: "Busca alternativa", search: (q) => `https://yandex.com/search/?text=${encodeURIComponent(q)}` },
+];
+
+function engineOf(id: EngineId) {
+  return engines.find((item) => item.id === id) ?? engines[0]!;
+}
 
 const homeEntry: Entry = { title: "Nova aba", url: "agzos://inicio", kind: "home" };
 const starterTabs: Tab[] = [{ id: 1, history: [homeEntry], index: 0 }];
@@ -96,6 +106,7 @@ export function AgzosBrowser() {
   const [loading, setLoading] = useState(false);
   const [credentials, setCredentials] = useState<Credential[]>(defaultCredentials);
   const [links, setLinks] = useState<QuickLink[]>(defaultLinks);
+  const [engine, setEngine] = useState<EngineId>("duckduckgo");
 
   const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? starterTabs[0]!, [activeId, tabs]);
   const current = entryOf(activeTab);
@@ -117,6 +128,10 @@ export function AgzosBrowser() {
     } catch {
       window.localStorage.removeItem("agzos-tabs");
     }
+    const savedEngine = window.localStorage.getItem("agzos-engine");
+    if (savedEngine === "duckduckgo" || savedEngine === "yandex") setEngine(savedEngine);
+    if (window.localStorage.getItem("agzos-shield") === "off") setShield(false);
+    if (window.localStorage.getItem("agzos-ai") === "off") setAiOpen(false);
     try {
       const savedKeys = JSON.parse(window.localStorage.getItem("agzos-credentials") ?? "null") as Credential[] | null;
       if (savedKeys?.length) setCredentials(savedKeys);
@@ -132,7 +147,10 @@ export function AgzosBrowser() {
     window.localStorage.setItem("agzos-tabs", JSON.stringify(tabs));
     window.localStorage.setItem("agzos-credentials", JSON.stringify(credentials));
     window.localStorage.setItem("agzos-links", JSON.stringify(links));
-  }, [dark, tabs, credentials, links]);
+    window.localStorage.setItem("agzos-engine", engine);
+    window.localStorage.setItem("agzos-shield", shield ? "on" : "off");
+    window.localStorage.setItem("agzos-ai", aiOpen ? "on" : "off");
+  }, [dark, tabs, credentials, links, engine, shield, aiOpen]);
 
   const flash = useCallback(() => {
     setLoading(true);
@@ -185,12 +203,12 @@ export function AgzosBrowser() {
     (raw: string) => {
       const input = raw.trim();
       if (!input) return;
-      const isUrl = input.includes(".") || input.startsWith("http");
-      const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : `Busca: ${input}`;
+      const isUrl = /^https?:\/\//.test(input) || /^[\w-]+(\.[\w-]+)+(\/|$|\?)/.test(input);
+      const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : engineOf(engine).search(input);
       const title = isUrl ? (input.replace(/^https?:\/\//, "").split("/")[0] ?? input) : input;
       pushEntry({ title, url, kind: "page" });
     },
-    [pushEntry],
+    [engine, pushEntry],
   );
 
   const step = useCallback(
@@ -315,20 +333,20 @@ export function AgzosBrowser() {
             {current.kind === "home" ? (
               <StartPage
                 links={links}
+                engine={engineOf(engine)}
                 onOpen={openAddress}
-                onSearch={focusOmnibox}
                 onAdd={(link) => setLinks((list) => [...list, link])}
                 onRemove={(url) => setLinks((list) => list.filter((link) => link.url !== url))}
               />
             ) : (
-              <MockPage title={current.title} address={current.url} />
+              <WebFrame key={current.url} title={current.title} url={current.url} />
             )}
           </section>
           {aiOpen && <AiSidebar chat={chat} message={message} setMessage={setMessage} onSubmit={sendMessage} onClose={() => setAiOpen(false)} />}
         </div>
 
         {panel === "privacy" && <PrivacyPanel shield={shield} setShield={setShield} onClose={() => setPanel(null)} />}
-        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(1); setAddress(homeEntry.url); }} onClose={() => setPanel(null)} />}
+        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} engine={engine} setEngine={setEngine} onReset={() => { setTabs(starterTabs); setActiveId(1); setAddress(homeEntry.url); }} onClose={() => setPanel(null)} />}
         {keyOpen && (
           <KeyPanel
             credentials={credentials}
@@ -344,10 +362,11 @@ export function AgzosBrowser() {
   );
 }
 
-function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickLink[]; onOpen: (value: string) => void; onSearch: () => void; onAdd: (link: QuickLink) => void; onRemove: (url: string) => void }) {
+function StartPage({ links, engine, onOpen, onAdd, onRemove }: { links: QuickLink[]; engine: (typeof engines)[number]; onOpen: (value: string) => void; onAdd: (link: QuickLink) => void; onRemove: (url: string) => void }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [query, setQuery] = useState("");
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -359,14 +378,29 @@ function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickL
     setAdding(false);
   }
 
+  function search(event: FormEvent) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    onOpen(query);
+    setQuery("");
+  }
+
   return (
     <div className="start-page">
       <div className="start-content">
         <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
-        <button type="button" className="start-search" onClick={onSearch}>
-          <span>Pesquisar na web</span><span className="search-key">⌘ K</span>
-        </button>
+        <form className="start-search" onSubmit={search}>
+          <Search aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Pesquisar no ${engine.name} ou digitar endereço`}
+            aria-label="Pesquisar na web"
+          />
+          <Button size="sm" type="submit">Pesquisar</Button>
+        </form>
+        <p className="engine-note">Motor de busca: <strong>{engine.name}</strong> · {engine.hint}</p>
         <div className="quick-links">
           {links.map((link) => (
             <div className="quick-link" key={link.url}>
@@ -392,18 +426,47 @@ function StartPage({ links, onOpen, onSearch, onAdd, onRemove }: { links: QuickL
   );
 }
 
-function MockPage({ title, address }: { title: string; address: string }) {
-  const isSearch = address.startsWith("Busca:");
+const embedBlockers = ["duckduckgo.com", "yandex.com", "yandex.ru", "google.com", "github.com", "x.com", "twitter.com", "instagram.com", "facebook.com", "notion.so", "figma.com", "linear.app", "youtube.com", "linkedin.com"];
+
+function refusesEmbedding(url: string) {
+  if (typeof navigator !== "undefined" && /electron/i.test(navigator.userAgent)) return false;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return embedBlockers.some((item) => host === item || host.endsWith(`.${item}`));
+  } catch {
+    return false;
+  }
+}
+
+function WebFrame({ title, url }: { title: string; url: string }) {
+  const [forced, setForced] = useState(false);
+  const blocked = refusesEmbedding(url) && !forced;
+
   return (
-    <div className="mock-page">
-      <div className="mock-eyebrow">{isSearch ? "Resultados protegidos" : "Visualização segura"}</div>
-      <h1>{isSearch ? `Resultados para “${title}”` : title}</h1>
-      <p>A Agzos protege sua navegação enquanto organiza o conteúdo importante desta página.</p>
-      <div className="result-list">
-        {["Uma visão mais clara para sua pesquisa", "Privacidade que trabalha em silêncio", "Informação sem distrações"].map((item, index) => (
-          <article key={item}><span>0{index + 1}</span><div><small>agzos.com / conteúdo</small><h2>{item}</h2><p>Conteúdo demonstrativo para visualizar a experiência de navegação do Agzos Browser.</p></div></article>
-        ))}
+    <div className="web-frame">
+      <div className="frame-bar">
+        <span>{title}</span>
+        <button type="button" onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</button>
       </div>
+      {blocked ? (
+        <div className="frame-fallback">
+          <div className="mock-eyebrow">Este site não permite exibição aqui</div>
+          <h1>{title}</h1>
+          <p>Na versão web, alguns sites bloqueiam a exibição dentro de outro navegador. No aplicativo Agzos para computador a página abre normalmente dentro da aba.</p>
+          <div className="fallback-actions">
+            <Button onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</Button>
+            <Button variant="outline" onClick={() => setForced(true)}>Tentar exibir aqui</Button>
+          </div>
+          <small>{url}</small>
+        </div>
+      ) : (
+        <iframe
+          src={url}
+          title={title}
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+        />
+      )}
     </div>
   );
 }
@@ -516,10 +579,20 @@ function PrivacyPanel({ shield, setShield, onClose }: { shield: boolean; setShie
   );
 }
 
-function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, onReset, onClose }: { dark: boolean; setDark: (value: boolean) => void; aiOpen: boolean; setAiOpen: (value: boolean) => void; shield: boolean; setShield: (value: boolean) => void; onReset: () => void; onClose: () => void }) {
+function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, engine, setEngine, onReset, onClose }: { dark: boolean; setDark: (value: boolean) => void; aiOpen: boolean; setAiOpen: (value: boolean) => void; shield: boolean; setShield: (value: boolean) => void; engine: EngineId; setEngine: (value: EngineId) => void; onReset: () => void; onClose: () => void }) {
   return (
     <aside className="key-panel" aria-label="Configurações">
       <div className="panel-heading"><div className="panel-title"><span className="key-mark"><MoreHorizontal /></span><div><strong>Configurações</strong><small>Preferências do navegador</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar configurações"><X /></Button></div>
+      <div className="key-domain"><span>Motor de busca</span></div>
+      <div className="engine-choice">
+        {engines.map((item) => (
+          <button key={item.id} type="button" className={cn("engine-option", engine === item.id && "selected")} aria-pressed={engine === item.id} onClick={() => setEngine(item.id)}>
+            <Search />
+            <span><strong>{item.name}</strong><small>{item.hint}</small></span>
+            {engine === item.id && <Check />}
+          </button>
+        ))}
+      </div>
       <Toggle label="Tema escuro" checked={dark} onChange={setDark} />
       <Toggle label="Agzos AI visível" hint="Barra lateral de IA" checked={aiOpen} onChange={setAiOpen} />
       <Toggle label="Bloquear rastreadores" hint="Em todos os sites" checked={shield} onChange={setShield} />
