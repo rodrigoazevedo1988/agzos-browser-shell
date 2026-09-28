@@ -24,6 +24,12 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 - **Stay in sync**: every change made in Lovable is committed straight to this repository.
 - **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
 
+## Desktop (Electron)
+
+- [Login do Google no app desktop](docs/login-google-desktop.md): por que o Google
+  recusava o login, como a identidade de Chrome é aplicada e como testar.
+- Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
+
 ## Development
 
 Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
