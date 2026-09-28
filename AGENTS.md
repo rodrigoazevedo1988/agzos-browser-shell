@@ -8,3 +8,7 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Project architecture
+
+- Keep this MVP frontend-only with mocked browser data persisted in localStorage, because real sync, accounts, and desktop SQLite will be integrated later.
