@@ -313,7 +313,7 @@ function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, on
       <Toggle label="Tema escuro" checked={dark} onChange={setDark} />
       <Toggle label="Agzos AI visível" hint="Barra lateral de IA" checked={aiOpen} onChange={setAiOpen} />
       <Toggle label="Bloquear rastreadores" hint="Em todos os sites" checked={shield} onChange={setShield} />
-      <div className="settings-actions"><Button variant="outline" onClick={onReset}>Restaurar abas iniciais</Button></div>
+      <div className="settings-actions"><Button variant="outline" size="sm" className="text-xs" onClick={onReset}>Restaurar abas iniciais</Button></div>
       <div className="key-footer"><ShieldCheck /><span>Preferências salvas neste dispositivo</span></div>
     </aside>
   );
