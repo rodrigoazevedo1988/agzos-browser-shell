@@ -429,16 +429,17 @@ function StartPage({ links, engine, onOpen, onAdd, onRemove }: { links: QuickLin
 function WebFrame({ title, url }: { title: string; url: string }) {
   const [loaded, setLoaded] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const loadedRef = useRef(false);
 
   useEffect(() => {
+    loadedRef.current = false;
     setLoaded(false);
     setBlocked(false);
-    const timer = window.setTimeout(() => setBlocked((value) => (loadedRef.current ? value : true)), 4500);
+    const timer = window.setTimeout(() => {
+      if (!loadedRef.current) setBlocked(true);
+    }, 4500);
     return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
-
-  const loadedRef = useRef(false);
 
   function onLoad() {
     loadedRef.current = true;
