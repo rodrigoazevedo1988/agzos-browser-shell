@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
     ipcRenderer.invoke("permission:respond", { id, allow, remember }),
   keyLoad: () => ipcRenderer.invoke("key:load"),
   keySave: (list) => ipcRenderer.invoke("key:save", list),
+  openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   onTabEvent: subscribe("agzos:tab-event"),
   onOpenRequest: subscribe("agzos:open-request"),
   onFullscreen: subscribe("agzos:fullscreen"),

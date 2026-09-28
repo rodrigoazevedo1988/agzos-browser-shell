@@ -82,6 +82,7 @@ export function AgzosBrowser() {
   const [viewNav, setViewNav] = useState<{ canBack: boolean; canForward: boolean } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [crashed, setCrashed] = useState<number[]>([]);
+  const [loginRejected, setLoginRejected] = useState<Record<number, string>>({});
   const [requestedUrl, setRequestedUrl] = useState<{ id: number; url: string } | null>(null);
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
   const [rememberPermission, setRememberPermission] = useState(true);
@@ -527,6 +528,13 @@ export function AgzosBrowser() {
         );
       } else if (event.type === "crashed") {
         setCrashed((list) => [...new Set([...list, event.id])]);
+      } else if (event.type === "login-rejected") {
+        setLoginRejected((map) => {
+          const next = { ...map };
+          if (event.rejected && event.continueUrl) next[event.id] = event.continueUrl;
+          else delete next[event.id];
+          return next;
+        });
       }
     });
     const offOpen = desktop.onOpenRequest(({ url }) => {
@@ -1157,7 +1165,29 @@ export function AgzosBrowser() {
           <div className="workspace">
             <section className={cn("viewport", activeTab.private && "private")}>
               {loading && <div className="loading-line" />}
-              {crashed.includes(activeTab.id) ? (
+              {loginRejected[activeTab.id] ? (
+                <div className="crash-page">
+                  <ShieldCheck aria-hidden="true" />
+                  <h1>O Google recusou o login nesta guia</h1>
+                  <p>
+                    O Google bloqueia alguns logins feitos em navegadores que ele não reconhece.
+                    Você pode continuar pelo navegador padrão do sistema ou voltar e tentar de novo.
+                  </p>
+                  <div className="fallback-actions">
+                    <Button
+                      onClick={() => {
+                        const target = loginRejected[activeTab.id];
+                        if (target) void desktop?.openExternal(target);
+                      }}
+                    >
+                      Entrar pelo navegador do sistema
+                    </Button>
+                    <Button variant="outline" onClick={() => void desktop?.goBack(activeTab.id)}>
+                      Voltar
+                    </Button>
+                  </div>
+                </div>
+              ) : crashed.includes(activeTab.id) ? (
                 <div className="crash-page">
                   <ShieldCheck aria-hidden="true" />
                   <h1>Esta guia travou</h1>

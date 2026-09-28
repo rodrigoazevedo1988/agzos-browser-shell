@@ -25,13 +25,191 @@ const views = new Map();
 const pendingPermissions = new Map();
 const rememberedMedia = new Map();
 const crashedViews = new Set();
+const rejectedLoginViews = new Set();
 let mainWindow = null;
 let activeTabId = null;
 let lastRect = null;
 let panelOpen = false;
 let fullscreenActive = false;
 let permissionSeq = 0;
-let cleanUserAgent = "";
+
+// Identidade de Chrome estável: o Google rejeita login quando o user-agent ou os
+// Client Hints denunciam Electron/app embutido, ou quando os dois não batem entre si.
+const CHROME_VERSION = process.versions.chrome;
+const CHROME_MAJOR = CHROME_VERSION.split(".")[0];
+
+function chromePlatform() {
+  if (process.platform === "darwin") {
+    return {
+      token: "Macintosh; Intel Mac OS X 10_15_7",
+      name: "macOS",
+      version: process.getSystemVersion(),
+    };
+  }
+  if (process.platform === "win32") {
+    const build = Number(process.getSystemVersion().split(".")[2] ?? 0);
+    return {
+      token: "Windows NT 10.0; Win64; x64",
+      name: "Windows",
+      version: build >= 22000 ? "15.0.0" : "10.0.0",
+    };
+  }
+  return { token: "X11; Linux x86_64", name: "Linux", version: "" };
+}
+
+// Mesmo algoritmo de GREASE do Chromium, para as marcas saírem idênticas às do Chrome real.
+function chromeBrands(version) {
+  const seed = Number(CHROME_MAJOR);
+  const chars = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+  const greaseVersion = ["8", "99", "24"][seed % 3];
+  const orders = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const order = orders[seed % 6];
+  const list = [];
+  list[order[0]] = {
+    brand: `Not${chars[seed % 11]}A${chars[(seed + 1) % 11]}Brand`,
+    version: version === CHROME_MAJOR ? greaseVersion : `${greaseVersion}.0.0.0`,
+  };
+  list[order[1]] = { brand: "Chromium", version };
+  list[order[2]] = { brand: "Google Chrome", version };
+  return list;
+}
+
+const PLATFORM = chromePlatform();
+// Chrome real usa o UA reduzido (MAJOR.0.0.0); a versão completa só vai nos Client Hints.
+const CLEAN_USER_AGENT = `Mozilla/5.0 (${PLATFORM.token}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+const BRANDS = chromeBrands(CHROME_MAJOR);
+const FULL_VERSION_LIST = chromeBrands(CHROME_VERSION);
+const brandHeader = (list) =>
+  list.map(({ brand, version }) => `"${brand}";v="${version}"`).join(", ");
+const ARCHITECTURE = process.arch === "arm64" ? "arm" : "x86";
+// O Electron não envia Client Hints; o Chrome manda estes em toda requisição HTTPS.
+const LOW_ENTROPY_HINTS = {
+  "sec-ch-ua": brandHeader(BRANDS),
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": `"${PLATFORM.name}"`,
+};
+// E estes só quando o site pede via Accept-CH (o accounts.google.com pede).
+const HIGH_ENTROPY_HINTS = {
+  "sec-ch-ua-arch": `"${ARCHITECTURE}"`,
+  "sec-ch-ua-bitness": '"64"',
+  "sec-ch-ua-full-version": `"${CHROME_VERSION}"`,
+  "sec-ch-ua-full-version-list": brandHeader(FULL_VERSION_LIST),
+  "sec-ch-ua-model": '""',
+  "sec-ch-ua-platform-version": `"${PLATFORM.version}"`,
+  "sec-ch-ua-wow64": "?0",
+  "sec-ch-ua-form-factors": '"Desktop"',
+};
+const acceptedHints = new Map();
+
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+function rememberAcceptedHints(details) {
+  if (details.resourceType !== "mainFrame" || !details.url.startsWith("https://")) return;
+  const header = Object.entries(details.responseHeaders ?? {}).find(
+    ([key]) => key.toLowerCase() === "accept-ch",
+  );
+  if (!header) return;
+  const names = header[1]
+    .join(",")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name in HIGH_ENTROPY_HINTS);
+  const origin = originOf(details.url);
+  if (origin) acceptedHints.set(origin, new Set(names));
+}
+
+function withClientHints(details) {
+  const headers = details.requestHeaders;
+  if (!details.url.startsWith("https://")) return headers;
+  const keys = new Map(Object.keys(headers).map((key) => [key.toLowerCase(), key]));
+  const set = (name, value) => {
+    headers[keys.get(name) ?? name] = value;
+  };
+  for (const [name, value] of Object.entries(LOW_ENTROPY_HINTS)) set(name, value);
+  for (const name of acceptedHints.get(originOf(details.url)) ?? []) {
+    set(name, HIGH_ENTROPY_HINTS[name]);
+  }
+  return headers;
+}
+const USER_AGENT_METADATA = {
+  brands: BRANDS,
+  fullVersionList: FULL_VERSION_LIST,
+  platform: PLATFORM.name,
+  platformVersion: PLATFORM.version,
+  architecture: ARCHITECTURE,
+  bitness: "64",
+  model: "",
+  mobile: false,
+  wow64: false,
+};
+
+app.userAgentFallback = CLEAN_USER_AGENT;
+
+// Cobre toda session, inclusive a partição em memória das abas anônimas e
+// requisições que não passam pela emulação da aba (service workers).
+app.on("session-created", (ses) => {
+  ses.setUserAgent(CLEAN_USER_AGENT);
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    rememberAcceptedHints(details);
+    callback({});
+  });
+  ses.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback({ requestHeaders: withClientHints(details) });
+  });
+});
+
+// Emulation.setUserAgentOverride alinha navigator.userAgent e navigator.userAgentData
+// (inclusive getHighEntropyValues) antes de qualquer script da página rodar.
+// Não aguardar o comando: numa webContents que ainda não navegou ele só responde
+// depois da primeira navegação, e o override já vale para ela.
+function applyChromeIdentity(contents) {
+  contents.setUserAgent(CLEAN_USER_AGENT);
+  try {
+    if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+    contents.debugger
+      .sendCommand("Emulation.setUserAgentOverride", {
+        userAgent: CLEAN_USER_AGENT,
+        userAgentMetadata: USER_AGENT_METADATA,
+      })
+      .catch(() => {});
+  } catch {
+    // Sem CDP ainda valem o UA limpo e os Client Hints injetados pela session.
+  }
+}
+
+function isGoogleRejectedUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === "accounts.google.com" && /\/signin\/rejected\/?$/.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rejectedContinueUrl(url) {
+  try {
+    const target = new URL(url).searchParams.get("continue");
+    if (target && /^https?:\/\//.test(target)) return target;
+  } catch {
+    // Cai no endereço padrão abaixo.
+  }
+  return "https://accounts.google.com/";
+}
 
 function sendToChrome(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -50,7 +228,8 @@ function fullRect() {
 function applyLayout() {
   if (fullscreenActive) return;
   for (const [id, entry] of views) {
-    const active = id === activeTabId && !panelOpen && !crashedViews.has(id);
+    const active =
+      id === activeTabId && !panelOpen && !crashedViews.has(id) && !rejectedLoginViews.has(id);
     const rect = active && lastRect ? lastRect : HIDDEN_RECT;
     entry.view.setBounds(rect);
   }
@@ -61,10 +240,23 @@ function notifyTabState(id) {
   if (!entry || entry.view.webContents.isDestroyed()) return;
   const contents = entry.view.webContents;
   crashedViews.delete(id);
+  const url = contents.getURL();
+  const rejected = isGoogleRejectedUrl(url);
+  if (rejected !== rejectedLoginViews.has(id)) {
+    if (rejected) rejectedLoginViews.add(id);
+    else rejectedLoginViews.delete(id);
+    applyLayout();
+    sendToChrome("agzos:tab-event", {
+      type: "login-rejected",
+      id,
+      rejected,
+      continueUrl: rejected ? rejectedContinueUrl(url) : null,
+    });
+  }
   sendToChrome("agzos:tab-event", {
     type: "tab-updated",
     id,
-    url: contents.getURL(),
+    url,
     title: contents.getTitle(),
     canBack: contents.navigationHistory.canGoBack(),
     canForward: contents.navigationHistory.canGoForward(),
@@ -285,6 +477,28 @@ function wireShortcuts(contents) {
   });
 }
 
+// Como no Chrome: window.open com features (width/height…) vira popup de verdade,
+// mantendo window.opener e a mesma session — é o que os fluxos OAuth ("Fazer login
+// com Google", Apple, Microsoft…) precisam para devolver o resultado à página de origem.
+// O resto abre como nova guia.
+function wirePopups(contents) {
+  contents.setWindowOpenHandler(({ url, disposition }) => {
+    if (disposition === "new-window") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: "#FFFFFF" },
+      };
+    }
+    if (isWebUrl(url)) openInNewTab(url);
+    return { action: "deny" };
+  });
+  contents.on("did-create-window", (child) => {
+    const popup = child.webContents;
+    wirePopups(popup);
+    wireShortcuts(popup);
+  });
+}
+
 function wireView(id, view) {
   const contents = view.webContents;
 
@@ -317,10 +531,7 @@ function wireView(id, view) {
     event.preventDefault();
     buildPageContextMenu(contents, params).popup({ window: mainWindow });
   });
-  contents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) openInNewTab(url);
-    return { action: "deny" };
-  });
+  wirePopups(contents);
   contents.on("render-process-gone", () => {
     crashedViews.add(id);
     if (!fullscreenActive) view.setBounds(HIDDEN_RECT);
@@ -399,7 +610,6 @@ function registerIpc() {
     view.setBackgroundColor(options?.dark ? "#0E0E0E" : "#FFFDFD");
     views.set(id, { view });
     mainWindow.contentView.addChildView(view);
-    view.webContents.session.setUserAgent(cleanUserAgent);
     allowMediaPermissions(view.webContents.session);
     wireView(id, view);
     if (isWebUrl(url)) void view.webContents.loadURL(url);
@@ -444,6 +654,7 @@ function registerIpc() {
     const entry = views.get(id);
     if (!entry) return;
     crashedViews.delete(id);
+    rejectedLoginViews.delete(id);
     mainWindow.contentView.removeChildView(entry.view);
     entry.view.webContents.close();
     views.delete(id);
@@ -490,11 +701,17 @@ function registerIpc() {
       return { ok: false };
     }
   });
+
+  ipcMain.handle("shell:openExternal", (_event, url) => {
+    if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
+  });
 }
 
 app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");
 
 app.on("web-contents-created", (_event, contents) => {
+  // Antes da primeira navegação de qualquer guia ou popup (inclusive OAuth).
+  applyChromeIdentity(contents);
   if (!app.isPackaged) return;
   contents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return;
@@ -510,11 +727,6 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 app.whenReady().then(() => {
-  cleanUserAgent = app.userAgentFallback
-    .replace(/\sElectron\/[\d.]+/i, "")
-    .replace(/\sAgzosBrowser\/[\d.]+/i, "");
-  session.defaultSession.setUserAgent(cleanUserAgent);
-
   if (!isDevelopment) Menu.setApplicationMenu(null);
 
   registerIpc();

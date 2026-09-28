@@ -12,7 +12,8 @@ export type DesktopTabEvent =
   | { type: "favicon"; id: number; icon: string | null }
   | { type: "audio"; id: number; playing: boolean }
   | { type: "muted"; id: number; muted: boolean }
-  | { type: "crashed"; id: number };
+  | { type: "crashed"; id: number }
+  | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null };
 
 export type DesktopRect = { x: number; y: number; width: number; height: number };
 
@@ -52,6 +53,7 @@ export type DesktopBridge = {
   respondPermission(id: string, allow: boolean, remember: boolean): Promise<void>;
   keyLoad(): Promise<Credential[] | null>;
   keySave(list: Credential[]): Promise<{ ok: boolean }>;
+  openExternal(url: string): Promise<void>;
   onTabEvent(callback: (event: DesktopTabEvent) => void): () => void;
   onOpenRequest(callback: (payload: { url: string }) => void): () => void;
   onFullscreen(callback: (payload: { active: boolean }) => void): () => void;
