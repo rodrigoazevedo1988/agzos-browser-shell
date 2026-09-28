@@ -11,7 +11,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "desktop:dev": "electron . --dev-url=http://localhost:8080",
-    "desktop:build": "vite build && node electron/prepare-build.cjs",
+    "desktop:build": "vite build --config electron/vite.config.mjs && node electron/prepare-build.cjs",
     "desktop:start": "electron .",
     "desktop:package:linux": "bun run desktop:build && electron-packager . \"Agzos Browser\" --platform=linux --arch=x64 --out=electron-release --overwrite --ignore='^/node_modules' --ignore='^/src' --ignore='^/public' --ignore='^/electron-release' --ignore='^/.output' --ignore='^/.git'",
     "lint": "eslint .",
