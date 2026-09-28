@@ -60,7 +60,10 @@ export function AgzosBrowser() {
   const [activeId, setActiveId] = useState(1);
   const [address, setAddress] = useState("agzos://inicio");
   const [aiOpen, setAiOpen] = useState(true);
-  const [keyOpen, setKeyOpen] = useState(false);
+  const [panel, setPanel] = useState<"key" | "privacy" | "settings" | null>(null);
+  const keyOpen = panel === "key";
+  const setKeyOpen = (value: boolean | ((open: boolean) => boolean)) => setPanel((current) => { const next = typeof value === "function" ? value(current === "key") : value; return next ? "key" : current === "key" ? null : current; });
+  const [shield, setShield] = useState(true);
   const [dark, setDark] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -172,7 +175,7 @@ export function AgzosBrowser() {
             ))}
             <Button variant="ghost" size="icon" onClick={addTab} title="Nova aba" aria-label="Nova aba" className="new-tab"><Plus /></Button>
           </div>
-          <Button variant="ghost" size="icon" title="Menu" aria-label="Menu"><MoreHorizontal /></Button>
+          <Button variant={panel === "settings" ? "default" : "ghost"} size="icon" title="Configurações" aria-label="Configurações" onClick={() => setPanel((p) => p === "settings" ? null : "settings")}><MoreHorizontal /></Button>
         </header>
 
         <div className="toolbar">
@@ -187,7 +190,7 @@ export function AgzosBrowser() {
             <kbd>⌘ K</kbd>
           </form>
           <div className="toolbar-actions">
-            <button type="button" className="privacy-pill" onClick={() => setKeyOpen(false)} title="Proteção de privacidade ativa"><ShieldCheck /><strong>12</strong><span>bloqueados</span></button>
+            <button type="button" className="privacy-pill" onClick={() => setPanel((p) => p === "privacy" ? null : "privacy")} title="Rastreadores bloqueados"><ShieldCheck /><strong>{shield ? 12 : 0}</strong><span>bloqueados</span></button>
             <Button variant={keyOpen ? "default" : "ghost"} size="icon" onClick={() => setKeyOpen((open) => !open)} title="Abrir Agzos Key" aria-label="Abrir Agzos Key"><KeyRound /></Button>
             <Button variant="ghost" size="icon" onClick={() => setDark((current) => !current)} title={dark ? "Usar tema claro" : "Usar tema escuro"} aria-label={dark ? "Usar tema claro" : "Usar tema escuro"}>{dark ? <Sun /> : <Moon />}</Button>
             <Button variant={aiOpen ? "default" : "ghost"} size="icon" onClick={() => setAiOpen((open) => !open)} title="Alternar Agzos AI" aria-label="Alternar Agzos AI"><Sparkles /></Button>
@@ -202,6 +205,8 @@ export function AgzosBrowser() {
           {aiOpen && <AiSidebar chat={chat} message={message} setMessage={setMessage} onSubmit={sendMessage} onClose={() => setAiOpen(false)} />}
         </div>
 
+        {panel === "privacy" && <PrivacyPanel shield={shield} setShield={setShield} onClose={() => setPanel(null)} />}
+        {panel === "settings" && <SettingsPanel dark={dark} setDark={setDark} aiOpen={aiOpen} setAiOpen={setAiOpen} shield={shield} setShield={setShield} onReset={() => { setTabs(starterTabs); setActiveId(starterTabs[0].id); setAddress(starterTabs[0].url); }} onClose={() => setPanel(null)} />}
         {keyOpen && <KeyPanel copied={copied} onCopy={copyCredential} onClose={() => setKeyOpen(false)} />}
       </section>
     </main>
@@ -268,6 +273,48 @@ function KeyPanel({ copied, onCopy, onClose }: { copied: string | null; onCopy: 
         {credentials.map((item) => <div className="credential" key={item.domain}><div className="domain-icon">{item.domain.charAt(0).toUpperCase()}</div><div className="credential-copy"><strong>{item.domain}</strong><span>{item.user}</span></div><Button variant="ghost" size="icon" onClick={() => onCopy(item.domain, item.password)} title={`Copiar senha de ${item.domain}`} aria-label={`Copiar senha de ${item.domain}`}>{copied === item.domain ? <Check /> : <Copy />}</Button></div>)}
       </div>
       <div className="key-footer"><ShieldCheck /><span>Criptografado neste dispositivo</span></div>
+    </aside>
+  );
+}
+const trackers = [
+  { name: "Anúncios", count: 5 },
+  { name: "Análise e métricas", count: 4 },
+  { name: "Redes sociais", count: 2 },
+  { name: "Impressão digital", count: 1 },
+];
+
+function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="setting-row">
+      <span><strong>{label}</strong>{hint && <small>{hint}</small>}</span>
+      <button type="button" role="switch" aria-checked={checked} className={cn("switch", checked && "on")} onClick={() => onChange(!checked)}><i /></button>
+    </label>
+  );
+}
+
+function PrivacyPanel({ shield, setShield, onClose }: { shield: boolean; setShield: (value: boolean) => void; onClose: () => void }) {
+  return (
+    <aside className="key-panel" aria-label="Rastreadores bloqueados">
+      <div className="panel-heading"><div className="panel-title"><span className="ai-mark"><ShieldCheck /></span><div><strong>Proteção de privacidade</strong><small>{shield ? "12 bloqueados nesta página" : "Proteção desativada"}</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar proteção"><X /></Button></div>
+      <Toggle label="Bloquear rastreadores" hint="Neste site" checked={shield} onChange={setShield} />
+      <div className="key-domain"><span>Bloqueados por tipo</span></div>
+      <div className="credential-list">
+        {trackers.map((t) => <div className="credential" key={t.name}><div className="credential-copy"><strong>{t.name}</strong></div><strong className="tracker-count">{shield ? t.count : 0}</strong></div>)}
+      </div>
+      <div className="key-footer"><ShieldCheck /><span>Números simulados nesta demonstração</span></div>
+    </aside>
+  );
+}
+
+function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, onReset, onClose }: { dark: boolean; setDark: (value: boolean) => void; aiOpen: boolean; setAiOpen: (value: boolean) => void; shield: boolean; setShield: (value: boolean) => void; onReset: () => void; onClose: () => void }) {
+  return (
+    <aside className="key-panel" aria-label="Configurações">
+      <div className="panel-heading"><div className="panel-title"><span className="key-mark"><MoreHorizontal /></span><div><strong>Configurações</strong><small>Preferências do navegador</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar configurações"><X /></Button></div>
+      <Toggle label="Tema escuro" checked={dark} onChange={setDark} />
+      <Toggle label="Agzos AI visível" hint="Barra lateral de IA" checked={aiOpen} onChange={setAiOpen} />
+      <Toggle label="Bloquear rastreadores" hint="Em todos os sites" checked={shield} onChange={setShield} />
+      <div className="settings-actions"><Button variant="outline" onClick={onReset}>Restaurar abas iniciais</Button></div>
+      <div className="key-footer"><ShieldCheck /><span>Preferências salvas neste dispositivo</span></div>
     </aside>
   );
 }

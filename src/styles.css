@@ -189,4 +189,13 @@ button { letter-spacing: 0; color: inherit; }
   .key-panel { right: 10px; }
 }
 
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.setting-row > span { display: flex; flex-direction: column; }
+.setting-row strong { font-size: 12px; }
+.setting-row small { color: var(--muted-foreground); font-size: 10px; }
+.switch { position: relative; width: 36px; height: 20px; flex: 0 0 36px; border: 0; border-radius: 999px; background: var(--border); cursor: pointer; transition: background .2s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary-foreground); transition: transform .2s; }
+.switch.on { background: var(--primary); }
+.switch.on i { transform: translateX(16px); }
+.tracker-count { margin-left: auto; color: var(--primary); font-size: 13px; }
+.settings-actions { padding: 16px 18px; }
