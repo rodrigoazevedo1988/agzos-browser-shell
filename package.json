@@ -1,5 +1,7 @@
 {
   "name": "tanstack_start_ts",
+  "productName": "Agzos Browser",
+  "main": "electron/main.cjs",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -8,6 +10,10 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "desktop:dev": "electron . --dev-url=http://localhost:8080",
+    "desktop:build": "vite build --config electron/vite.config.mjs && node electron/prepare-build.cjs",
+    "desktop:start": "electron .",
+    "desktop:package:linux": "bun run desktop:build && electron-packager . \"Agzos Browser\" --platform=linux --arch=x64 --out=electron-release --overwrite --ignore='^/node_modules' --ignore='^/src' --ignore='^/public' --ignore='^/electron-release' --ignore='^/.output' --ignore='^/.git'",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
@@ -70,6 +76,7 @@
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
+    "@electron/packager": "^20.3.0",
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "^2.24.0",
     "@types/node": "^22.16.5",
@@ -82,6 +89,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
+    "electron": "^44.4.5",
     "globals": "^15.15.0",
     "nitro": "3.0.260603-beta",
     "prettier": "^3.7.3",

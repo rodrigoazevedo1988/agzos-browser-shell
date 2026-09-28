@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import logoAsset from "@/assets/agzos-logo.svg.asset.json";
-import symbolAsset from "@/assets/agzos-symbol-red.svg.asset.json";
+import logoUrl from "@/assets/agzos-logo.svg";
+import symbolUrl from "@/assets/agzos-symbol-red.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/")({
   component: AgzosBrowser,
 });
 
-function AgzosBrowser() {
+export function AgzosBrowser() {
   const [tabs, setTabs] = useState<Tab[]>(starterTabs);
   const [activeId, setActiveId] = useState(1);
   const [address, setAddress] = useState("agzos://inicio");
@@ -165,7 +165,7 @@ function AgzosBrowser() {
           <div className="tabs" role="tablist" aria-label="Abas abertas">
             {tabs.map((tab) => (
               <button key={tab.id} type="button" role="tab" aria-selected={tab.id === activeId} onClick={() => activateTab(tab)} className={cn("browser-tab", tab.id === activeId && "active")}>
-                <img src={symbolAsset.url} alt="" />
+                <img src={symbolUrl} alt="" />
                 <span>{tab.title}</span>
                 <span className="tab-close" role="button" aria-label={`Fechar ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }}><X /></span>
               </button>
@@ -212,7 +212,7 @@ function StartPage({ onNavigate }: { onNavigate: (value: string) => void }) {
   return (
     <div className="start-page">
       <div className="start-content">
-        <img className="brand-logo" src={logoAsset.url} alt="Agzos" />
+        <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
         <button type="button" className="start-search" onClick={() => onNavigate("")}>
           <span>Pesquisar na web</span><span className="search-key">⌘ K</span>
