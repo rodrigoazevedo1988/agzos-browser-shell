@@ -35,6 +35,16 @@ type Entry = { title: string; url: string; kind: "home" | "page" };
 type Tab = { id: number; history: Entry[]; index: number };
 type Credential = { domain: string; user: string; password: string };
 type QuickLink = { name: string; url: string };
+type EngineId = "duckduckgo" | "yandex";
+
+const engines: { id: EngineId; name: string; hint: string; search: (q: string) => string }[] = [
+  { id: "duckduckgo", name: "DuckDuckGo", hint: "Busca sem rastreamento", search: (q) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}` },
+  { id: "yandex", name: "Yandex", hint: "Busca alternativa", search: (q) => `https://yandex.com/search/?text=${encodeURIComponent(q)}` },
+];
+
+function engineOf(id: EngineId) {
+  return engines.find((item) => item.id === id) ?? engines[0]!;
+}
 
 const homeEntry: Entry = { title: "Nova aba", url: "agzos://inicio", kind: "home" };
 const starterTabs: Tab[] = [{ id: 1, history: [homeEntry], index: 0 }];
