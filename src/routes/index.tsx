@@ -128,6 +128,10 @@ export function AgzosBrowser() {
     } catch {
       window.localStorage.removeItem("agzos-tabs");
     }
+    const savedEngine = window.localStorage.getItem("agzos-engine");
+    if (savedEngine === "duckduckgo" || savedEngine === "yandex") setEngine(savedEngine);
+    if (window.localStorage.getItem("agzos-shield") === "off") setShield(false);
+    if (window.localStorage.getItem("agzos-ai") === "off") setAiOpen(false);
     try {
       const savedKeys = JSON.parse(window.localStorage.getItem("agzos-credentials") ?? "null") as Credential[] | null;
       if (savedKeys?.length) setCredentials(savedKeys);
@@ -143,7 +147,10 @@ export function AgzosBrowser() {
     window.localStorage.setItem("agzos-tabs", JSON.stringify(tabs));
     window.localStorage.setItem("agzos-credentials", JSON.stringify(credentials));
     window.localStorage.setItem("agzos-links", JSON.stringify(links));
-  }, [dark, tabs, credentials, links]);
+    window.localStorage.setItem("agzos-engine", engine);
+    window.localStorage.setItem("agzos-shield", shield ? "on" : "off");
+    window.localStorage.setItem("agzos-ai", aiOpen ? "on" : "off");
+  }, [dark, tabs, credentials, links, engine, shield, aiOpen]);
 
   const flash = useCallback(() => {
     setLoading(true);
