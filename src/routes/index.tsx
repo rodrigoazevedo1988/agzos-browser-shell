@@ -427,43 +427,46 @@ function StartPage({ links, engine, onOpen, onAdd, onRemove }: { links: QuickLin
 }
 
 function WebFrame({ title, url }: { title: string; url: string }) {
-  const [loaded, setLoaded] = useState(false);
-  const [blocked, setBlocked] = useState(false);
-  const loadedRef = useRef(false);
+  const [blank, setBlank] = useState(false);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
-    loadedRef.current = false;
-    setLoaded(false);
-    setBlocked(false);
+    setBlank(false);
     const timer = window.setTimeout(() => {
-      if (!loadedRef.current) setBlocked(true);
-    }, 4500);
+      const frame = frameRef.current;
+      let empty = false;
+      try {
+        const doc = frame?.contentDocument;
+        empty = !!doc && (doc.location?.href === "about:blank" || (doc.body?.childElementCount ?? 0) === 0);
+      } catch {
+        empty = false; // conteúdo de outro site carregou normalmente
+      }
+      setBlank(empty);
+    }, 3000);
     return () => window.clearTimeout(timer);
   }, [url]);
 
-  function onLoad() {
-    loadedRef.current = true;
-    setLoaded(true);
-    setBlocked(false);
-  }
-
   return (
     <div className="web-frame">
+      <div className="frame-bar">
+        <span>{title}</span>
+        <button type="button" onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</button>
+      </div>
       <iframe
+        ref={frameRef}
         src={url}
         title={title}
-        onLoad={onLoad}
         referrerPolicy="no-referrer"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
       />
-      {blocked && !loaded && (
+      {blank && (
         <div className="frame-fallback">
           <div className="mock-eyebrow">Visualização bloqueada pelo site</div>
           <h1>{title}</h1>
           <p>Este site não permite ser exibido dentro de outro navegador. No aplicativo Agzos para computador ele abre normalmente.</p>
           <div className="fallback-actions">
             <Button onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Abrir em nova janela</Button>
-            <Button variant="outline" onClick={() => setBlocked(false)}>Tentar novamente aqui</Button>
+            <Button variant="outline" onClick={() => setBlank(false)}>Tentar novamente aqui</Button>
           </div>
           <small>{url}</small>
         </div>
