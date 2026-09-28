@@ -333,13 +333,13 @@ export function AgzosBrowser() {
             {current.kind === "home" ? (
               <StartPage
                 links={links}
+                engine={engineOf(engine)}
                 onOpen={openAddress}
-                onSearch={focusOmnibox}
                 onAdd={(link) => setLinks((list) => [...list, link])}
                 onRemove={(url) => setLinks((list) => list.filter((link) => link.url !== url))}
               />
             ) : (
-              <MockPage title={current.title} address={current.url} />
+              <WebFrame key={current.url} title={current.title} url={current.url} />
             )}
           </section>
           {aiOpen && <AiSidebar chat={chat} message={message} setMessage={setMessage} onSubmit={sendMessage} onClose={() => setAiOpen(false)} />}
