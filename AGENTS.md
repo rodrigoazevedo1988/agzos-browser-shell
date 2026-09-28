@@ -12,3 +12,4 @@
 ## Project architecture
 
 - Keep this MVP frontend-only with mocked browser data persisted in localStorage, because real sync, accounts, and desktop SQLite will be integrated later.
+- Keep Electron isolated under `electron/`, load a prepared static bundle from `dist/`, and preserve context isolation with Node integration disabled for desktop security.
