@@ -171,10 +171,85 @@ app.on("session-created", (ses) => {
   });
 });
 
+// Roda no mundo principal de cada página, antes dos scripts dela. O detector de
+// "navegador não seguro" do Google recusa o login quando window.chrome vem sem
+// app/csi/loadTimes (como no Electron) e quando Notification.permission nasce
+// "granted"; aqui ficam iguais ao Chromium/Chrome. As funções se apresentam como nativas.
+function chromePageShim() {
+  const native = new WeakSet();
+  const originalToString = Function.prototype.toString;
+  const toString = function toString() {
+    return native.has(this)
+      ? `function ${this.name}() { [native code] }`
+      : originalToString.call(this);
+  };
+  native.add(toString);
+  Function.prototype.toString = toString;
+  const nativeFn = (name, impl) => {
+    Object.defineProperty(impl, "name", { value: name });
+    native.add(impl);
+    return impl;
+  };
+
+  if (window.chrome && !("app" in window.chrome)) {
+    const start = performance.timeOrigin / 1000;
+    const navigation = () => performance.getEntriesByType("navigation")[0];
+    window.chrome.app = {
+      isInstalled: false,
+      InstallState: {
+        DISABLED: "disabled",
+        INSTALLED: "installed",
+        NOT_INSTALLED: "not_installed",
+      },
+      RunningState: { CANNOT_RUN: "cannot_run", READY_TO_RUN: "ready_to_run", RUNNING: "running" },
+      getDetails: nativeFn("getDetails", () => null),
+      getIsInstalled: nativeFn("getIsInstalled", () => false),
+      installState: nativeFn("installState", (callback) => callback?.("not_installed")),
+      runningState: nativeFn("runningState", () => "cannot_run"),
+    };
+    window.chrome.csi = nativeFn("csi", () => ({
+      startE: Math.round(performance.timeOrigin),
+      onloadT: Math.round(performance.timeOrigin + (navigation()?.domContentLoadedEventEnd ?? 0)),
+      pageT: performance.now(),
+      tran: 15,
+    }));
+    window.chrome.loadTimes = nativeFn("loadTimes", () => {
+      const entry = navigation();
+      const protocol = entry?.nextHopProtocol || "http/1.1";
+      const multiplexed = protocol === "h2" || protocol === "h3";
+      return {
+        requestTime: start,
+        startLoadTime: start,
+        commitLoadTime: start + (entry?.responseStart ?? 0) / 1000,
+        finishDocumentLoadTime: start + (entry?.domContentLoadedEventEnd ?? 0) / 1000,
+        finishLoadTime: start + (entry?.loadEventEnd ?? 0) / 1000,
+        firstPaintTime:
+          start + (performance.getEntriesByName("first-paint")[0]?.startTime ?? 0) / 1000,
+        firstPaintAfterLoadTime: 0,
+        navigationType: "Other",
+        wasFetchedViaSpdy: multiplexed,
+        wasNpnNegotiated: multiplexed,
+        npnNegotiatedProtocol: multiplexed ? protocol : "unknown",
+        wasAlternateProtocolAvailable: false,
+        connectionInfo: protocol,
+      };
+    });
+  }
+
+  if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+    Object.defineProperty(Notification, "permission", {
+      get: nativeFn("get permission", () => "default"),
+      configurable: true,
+    });
+  }
+}
+
+const PAGE_SHIM_SOURCE = `(${chromePageShim.toString()})();`;
+
 // Emulation.setUserAgentOverride alinha navigator.userAgent e navigator.userAgentData
 // (inclusive getHighEntropyValues) antes de qualquer script da página rodar.
-// Não aguardar o comando: numa webContents que ainda não navegou ele só responde
-// depois da primeira navegação, e o override já vale para ela.
+// Não aguardar os comandos: numa webContents que ainda não navegou eles só respondem
+// depois da primeira navegação, e já valem para ela.
 function applyChromeIdentity(contents) {
   contents.setUserAgent(CLEAN_USER_AGENT);
   try {
@@ -183,6 +258,12 @@ function applyChromeIdentity(contents) {
       .sendCommand("Emulation.setUserAgentOverride", {
         userAgent: CLEAN_USER_AGENT,
         userAgentMetadata: USER_AGENT_METADATA,
+      })
+      .catch(() => {});
+    contents.debugger
+      .sendCommand("Page.addScriptToEvaluateOnNewDocument", {
+        source: PAGE_SHIM_SOURCE,
+        runImmediately: true,
       })
       .catch(() => {});
   } catch {

@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-VERSION="1.3.2"
+VERSION="1.3.3"
 
 cd /var/www/agzos-browser
-sed -i "s/\"version\": \"1.3.1\"/\"version\": \"$VERSION\"/" package.json
+sed -i -E "s/\"version\": \"[0-9.]+\"/\"version\": \"$VERSION\"/" package.json
 bun run desktop:build
 
 SCRATCH="/tmp/electron-build"
@@ -20,7 +20,7 @@ for f in electron-v44.4.5-win32-x64.zip electron-v44.4.5-linux-x64.zip electron-
 done
 
 APPJSON="{ \"name\": \"agzos-browser\", \"productName\": \"Agzos Browser\", \"version\": \"$VERSION\", \"main\": \"electron/main.cjs\", \"private\": true }"
-ARTIFACTS="/var/www/agzosagency/browser-artifacts-v132"
+ARTIFACTS="/var/www/agzosagency/browser-artifacts-v${VERSION//./}"
 mkdir -p "$ARTIFACTS"
 # zip/xorriso reaproveitam arquivos existentes; recomeça do zero a cada build.
 rm -f "$ARTIFACTS"/Agnos-Browser-*
