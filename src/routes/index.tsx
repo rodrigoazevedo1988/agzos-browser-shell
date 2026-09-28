@@ -76,10 +76,11 @@ function AgzosBrowser() {
     if (savedTabs) {
       try {
         const parsed = JSON.parse(savedTabs) as Tab[];
-        if (parsed.length) {
+        const firstTab = parsed[0];
+        if (firstTab) {
           setTabs(parsed);
-          setActiveId(parsed[0].id);
-          setAddress(parsed[0].url);
+          setActiveId(firstTab.id);
+          setAddress(firstTab.url);
         }
       } catch {
         window.localStorage.removeItem("agzos-tabs");
@@ -125,7 +126,7 @@ function AgzosBrowser() {
     if (!input) return;
     const isUrl = input.includes(".") || input.startsWith("http");
     const url = isUrl ? (input.startsWith("http") ? input : `https://${input}`) : `Busca: ${input}`;
-    const title = isUrl ? input.replace(/^https?:\/\//, "").split("/")[0] : input;
+    const title = isUrl ? (input.replace(/^https?:\/\//, "").split("/")[0] ?? input) : input;
     setLoading(true);
     window.setTimeout(() => setLoading(false), 550);
     setTabs((current) => current.map((tab) => (tab.id === activeId ? { ...tab, title, url, kind: "page" } : tab)));
@@ -253,7 +254,7 @@ function KeyPanel({ copied, onCopy, onClose }: { copied: string | null; onCopy: 
       <div className="panel-heading"><div className="panel-title"><span className="key-mark"><KeyRound /></span><div><strong>Agzos Key</strong><small>Cofre local</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar cofre"><X /></Button></div>
       <div className="key-domain"><span>Credenciais salvas</span><ChevronDown /></div>
       <div className="credential-list">
-        {credentials.map((item) => <div className="credential" key={item.domain}><div className="domain-icon">{item.domain[0].toUpperCase()}</div><div className="credential-copy"><strong>{item.domain}</strong><span>{item.user}</span></div><Button variant="ghost" size="icon" onClick={() => onCopy(item.domain, item.password)} title={`Copiar senha de ${item.domain}`} aria-label={`Copiar senha de ${item.domain}`}>{copied === item.domain ? <Check /> : <Copy />}</Button></div>)}
+        {credentials.map((item) => <div className="credential" key={item.domain}><div className="domain-icon">{item.domain.charAt(0).toUpperCase()}</div><div className="credential-copy"><strong>{item.domain}</strong><span>{item.user}</span></div><Button variant="ghost" size="icon" onClick={() => onCopy(item.domain, item.password)} title={`Copiar senha de ${item.domain}`} aria-label={`Copiar senha de ${item.domain}`}>{copied === item.domain ? <Check /> : <Copy />}</Button></div>)}
       </div>
       <div className="key-footer"><ShieldCheck /><span>Criptografado neste dispositivo</span></div>
     </aside>
