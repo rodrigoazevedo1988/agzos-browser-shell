@@ -580,10 +580,20 @@ function PrivacyPanel({ shield, setShield, onClose }: { shield: boolean; setShie
   );
 }
 
-function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, onReset, onClose }: { dark: boolean; setDark: (value: boolean) => void; aiOpen: boolean; setAiOpen: (value: boolean) => void; shield: boolean; setShield: (value: boolean) => void; onReset: () => void; onClose: () => void }) {
+function SettingsPanel({ dark, setDark, aiOpen, setAiOpen, shield, setShield, engine, setEngine, onReset, onClose }: { dark: boolean; setDark: (value: boolean) => void; aiOpen: boolean; setAiOpen: (value: boolean) => void; shield: boolean; setShield: (value: boolean) => void; engine: EngineId; setEngine: (value: EngineId) => void; onReset: () => void; onClose: () => void }) {
   return (
     <aside className="key-panel" aria-label="Configurações">
       <div className="panel-heading"><div className="panel-title"><span className="key-mark"><MoreHorizontal /></span><div><strong>Configurações</strong><small>Preferências do navegador</small></div></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar configurações"><X /></Button></div>
+      <div className="key-domain"><span>Motor de busca</span></div>
+      <div className="engine-choice">
+        {engines.map((item) => (
+          <button key={item.id} type="button" className={cn("engine-option", engine === item.id && "selected")} aria-pressed={engine === item.id} onClick={() => setEngine(item.id)}>
+            <Search />
+            <span><strong>{item.name}</strong><small>{item.hint}</small></span>
+            {engine === item.id && <Check />}
+          </button>
+        ))}
+      </div>
       <Toggle label="Tema escuro" checked={dark} onChange={setDark} />
       <Toggle label="Agzos AI visível" hint="Barra lateral de IA" checked={aiOpen} onChange={setAiOpen} />
       <Toggle label="Bloquear rastreadores" hint="Em todos os sites" checked={shield} onChange={setShield} />
