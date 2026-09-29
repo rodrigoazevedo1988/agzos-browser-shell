@@ -22,6 +22,7 @@ const adblockModule = require(path.join(electronDir, "adblock.cjs")) as {
   siteHostOf: (url: string) => string | null;
   listsFromEnv: (value: string | undefined) => { ads: string[]; privacy: string[] };
   domainOf: (hostname: string) => string;
+  isAuthFlow: (pageUrl: string, requestUrl: string) => boolean;
 };
 const { uniquePath } = require(path.join(electronDir, "downloads.cjs")) as {
   uniquePath: (dir: string, filename: string, taken?: Set<string>) => string;
@@ -37,6 +38,14 @@ type Adblock = {
     sourceUrl?: string;
     tabId?: number;
   }): boolean;
+  decide(request: {
+    url: string;
+    resourceType: string;
+    pageUrl?: string;
+    sourceUrl?: string;
+    tabId?: number;
+  }): { cancel?: boolean; redirectURL?: string } | null;
+  scriptletsFor(url: string): string[];
   cosmeticCss(
     url: string,
     dom?: { classes?: string[]; ids?: string[] } | null,
@@ -109,6 +118,24 @@ describe("adblock.cjs (funções puras)", () => {
     expect(adblockModule.siteHostOf("agzos://inicio")).toBeNull();
   });
 
+  it("login (Google, Apple, Microsoft) nunca passa pelo filtro", () => {
+    // O antifraude do login do Google usa play.google.com/log e gen_204; sem eles recusa.
+    const signin = "https://accounts.google.com/v3/signin/identifier?continue=x";
+    expect(adblockModule.isAuthFlow(signin, "https://play.google.com/log?format=json")).toBe(true);
+    expect(
+      adblockModule.isAuthFlow("https://site.test/", "https://accounts.google.com/gsi/client"),
+    ).toBe(true);
+    expect(
+      adblockModule.isAuthFlow("https://login.microsoftonline.com/x", "https://a.test/t.js"),
+    ).toBe(true);
+    expect(
+      adblockModule.isAuthFlow("https://site.test/", "https://play.google.com/log?format=json"),
+    ).toBe(false);
+    expect(
+      adblockModule.isAuthFlow("https://evilaccounts.google.com.test/", "https://x.test/"),
+    ).toBe(false);
+  });
+
   it("domínio registrável aproximado", () => {
     expect(adblockModule.domainOf("www.uol.com.br")).toBe("uol.com.br");
     expect(adblockModule.domainOf("news.bbc.co.uk")).toBe("bbc.co.uk");
@@ -119,6 +146,7 @@ describe("adblock.cjs (funções puras)", () => {
     expect(adblockModule.listsFromEnv('{"ads":["http://x/a.txt"]}')).toEqual({
       ads: ["http://x/a.txt"],
       privacy: [],
+      resources: null,
     });
     expect(adblockModule.listsFromEnv("{quebrado").ads.length).toBeGreaterThan(0);
   });
@@ -131,8 +159,28 @@ describe("adblock.cjs (motor real)", () => {
   }, 60_000);
 
   const lists: Record<string, string> = {
-    "ads.txt": "||ads.exemplo.test^\n/banner-anuncio.\n##.caixa-anuncio\n",
-    "privacy.txt": "||rastreio.exemplo.test^\n",
+    "ads.txt":
+      "||ads.exemplo.test^\n/banner-anuncio.\n##.caixa-anuncio\n" +
+      "site.test##+js(agzos-teste)\n/substituto.js$script,redirect=noopjs\n",
+    "privacy.txt": "||rastreio.exemplo.test^\n||play.google.com/log^\n",
+    "resources.json": JSON.stringify({
+      scriptlets: [
+        {
+          name: "agzos-teste.js",
+          aliases: [],
+          body: "function agzosTeste(){window.__agzos = 1;}",
+          dependencies: [],
+        },
+      ],
+      redirects: [
+        {
+          name: "noop.js",
+          aliases: ["noopjs"],
+          body: "(function(){})();",
+          contentType: "application/javascript",
+        },
+      ],
+    }),
   };
 
   function create(userDataDir: string) {
@@ -145,7 +193,7 @@ describe("adblock.cjs (motor real)", () => {
         setMeta: (key: string, value: unknown) => meta.set(key, value),
       },
       fetchText: async (url: string) => lists[url]!,
-      lists: { ads: ["ads.txt"], privacy: ["privacy.txt"] },
+      lists: { ads: ["ads.txt"], privacy: ["privacy.txt"], resources: "resources.json" },
       emitPage: (id: number, info: { count: number }) => pages.push([id, info.count]),
       emitStats: () => {},
     });
@@ -195,6 +243,27 @@ describe("adblock.cjs (motor real)", () => {
 
     adblock.resetPage(7);
     expect(adblock.pageInfo(7).count).toBe(0);
+
+    // Scriptlets do site, $redirect com substituto e login do Google liberado.
+    expect(adblock.scriptletsFor(page).join("")).toContain("window.__agzos = 1");
+    expect(adblock.scriptletsFor("https://outro.test/")).toEqual([]);
+    expect(adblock.decide(request("https://cdn.test/substituto.js"))).toEqual({ cancel: true });
+    expect(
+      adblock.decide({
+        url: "https://play.google.com/log?format=json",
+        resourceType: "xhr",
+        pageUrl: "https://accounts.google.com/v3/signin/identifier",
+        sourceUrl: "https://accounts.google.com/v3/signin/identifier",
+      }),
+    ).toBeNull();
+    expect(
+      adblock.decide({
+        url: "https://play.google.com/log?format=json",
+        resourceType: "xhr",
+        pageUrl: page,
+        sourceUrl: page,
+      }),
+    ).toEqual({ cancel: true });
     adblock.close();
   });
 
@@ -212,7 +281,7 @@ describe("adblock.cjs (motor real)", () => {
         fetched += 1;
         return "";
       },
-      lists: { ads: ["ads.txt"], privacy: ["privacy.txt"] },
+      lists: { ads: ["ads.txt"], privacy: ["privacy.txt"], resources: "resources.json" },
       emitPage: () => {},
       emitStats: () => {},
     });

@@ -4,7 +4,7 @@ set -e
 VERSION="1.3.5"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
-ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs tab-preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -81,6 +81,20 @@ with open(path, "wb") as f:
     plistlib.dump(data, f)
 PY
 
+  # Os helpers do Electron vêm sem CFBundleExecutable. O codesign da Apple deduz o
+  # executável pelo nome, o rcodesign não: sem a chave ele sela o bundle mas assina o
+  # binário como Mach-O avulso (sem Info.plist/recursos) e o Gatekeeper acusa "danificado".
+  python3 - "$APP" <<'PY'
+import glob, os, plistlib, sys
+for path in glob.glob(os.path.join(sys.argv[1], "Contents/Frameworks/*.app/Contents/Info.plist")):
+    with open(path, "rb") as f:
+        data = plistlib.load(f)
+    if "CFBundleExecutable" not in data:
+        data["CFBundleExecutable"] = data["CFBundleName"]
+        with open(path, "wb") as f:
+            plistlib.dump(data, f)
+PY
+
   mkdir -p "$APP/Contents/Resources/app/electron"
   for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" "$APP/Contents/Resources/app/electron/"; done
   cp -r /var/www/agzos-browser/dist "$APP/Contents/Resources/app/dist"
@@ -91,8 +105,14 @@ PY
   # O Electron vem só "linker-signed", sem selo do bundle; depois de mexer no
   # Info.plist e em Resources, o Gatekeeper do Apple Silicon acusa "danificado".
   # Assinatura ad-hoc (rcodesign) sela o bundle inteiro, helpers incluídos.
-  rcodesign sign "$APP" >/dev/null 2>&1
+  rcodesign sign "$APP" > "mac-$arch/sign.log" 2>&1
   [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || { echo "Falha ao assinar $APP" >&2; exit 1; }
+  # Todo helper precisa ser assinado como executável principal do próprio bundle.
+  if grep -q "could not find main executable" "mac-$arch/sign.log"; then
+    grep "could not find main executable" "mac-$arch/sign.log" >&2
+    echo "Assinatura incompleta em $APP (o Gatekeeper acusaria \"danificado\")" >&2
+    exit 1
+  fi
 
   (cd mac-$arch && zip -qry9 "$ARTIFACTS/Agnos-Browser-mac-$arch.app.zip" "Agzos Browser.app")
   

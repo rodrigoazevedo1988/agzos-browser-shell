@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   goBack: (id) => ipcRenderer.invoke("tab:back", { id }),
   goForward: (id) => ipcRenderer.invoke("tab:forward", { id }),
   reload: (id, ignoreCache = false) => ipcRenderer.invoke("tab:reload", { id, ignoreCache }),
+  snapshotTab: (id) => ipcRenderer.invoke("tab:snapshot", { id }),
   captureTab: (id) => ipcRenderer.invoke("tab:capture", { id }),
   zoom: (id, direction) => ipcRenderer.invoke("tab:zoom", { id, direction }),
   findStart: (id, text, options) =>

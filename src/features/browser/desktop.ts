@@ -83,6 +83,8 @@ export type DesktopBridge = {
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;
   reload(id: number, ignoreCache?: boolean): Promise<void>;
+  /** Foto em tamanho real da aba visível (fica no lugar dela com painel aberto). */
+  snapshotTab(id: number): Promise<string | null>;
   /** Tira a miniatura da aba visível (seletor do Ctrl+Tab). */
   captureTab(id: number): Promise<void>;
   /** 1 aumenta, -1 diminui, 0 volta a 100 %. */

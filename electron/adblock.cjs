@@ -1,7 +1,8 @@
 // Bloqueio real de anúncios e rastreadores (NAV-001). Dois motores do
-// @ghostery/adblocker: "ads" (EasyList + EasyList Brasil, com CSS de ocultação) e
-// "privacy" (EasyPrivacy). As listas são baixadas no primeiro uso e a cada 7 dias,
-// compiladas numa worker thread e guardadas em cache em userData/adblock/.
+// @ghostery/adblocker: "ads" (EasyList, EasyList Brasil e as listas do uBlock Origin, com
+// CSS de ocultação e scriptlets) e "privacy" (EasyPrivacy + privacidade do uBO). As listas
+// são baixadas no primeiro uso e a cada 7 dias, compiladas numa worker thread e guardadas
+// em cache em userData/adblock/.
 const fs = require("node:fs");
 const path = require("node:path");
 const { Worker } = require("node:worker_threads");
@@ -13,12 +14,31 @@ const RETRY_MS = 30 * 60 * 1000;
 const EMIT_DELAY_MS = 200;
 const MAX_HOSTS_PER_PAGE = 200;
 
+// Espelho das listas do uBlock Origin mantido pelo Ghostery (mesmo formato que o motor
+// entende). As listas do uBO trazem os scriptlets do YouTube (json-prune de adPlacements
+// etc.): anúncio de vídeo vem do mesmo servidor do vídeo e não dá para barrar só por rede.
+const UBO = "https://raw.githubusercontent.com/ghostery/adblocker/master/packages/adblocker/assets";
 const DEFAULT_LISTS = {
   ads: [
     "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easylist.txt",
     "https://raw.githubusercontent.com/easylistbrasil/easylistbrasil/filtro/easylistbrasil.txt",
+    `${UBO}/ublock-origin/filters.txt`,
+    `${UBO}/ublock-origin/filters-2020.txt`,
+    `${UBO}/ublock-origin/filters-2021.txt`,
+    `${UBO}/ublock-origin/filters-2022.txt`,
+    `${UBO}/ublock-origin/filters-2023.txt`,
+    `${UBO}/ublock-origin/filters-2024.txt`,
+    `${UBO}/ublock-origin/quick-fixes.txt`,
+    `${UBO}/ublock-origin/unbreak.txt`,
+    `${UBO}/ublock-origin/badware.txt`,
+    `${UBO}/peter-lowe/serverlist.txt`,
   ],
-  privacy: ["https://raw.githubusercontent.com/easylist/easylist/gh-pages/easyprivacy.txt"],
+  privacy: [
+    "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easyprivacy.txt",
+    `${UBO}/ublock-origin/privacy.txt`,
+  ],
+  // Código dos scriptlets e dos redirecionamentos (+js(...), $redirect=...).
+  resources: `${UBO}/ublock-origin/resources.json`,
 };
 const CATEGORY_LABEL = { ads: "Anúncios", privacy: "Rastreadores" };
 // Verifica rastreadores primeiro: o mesmo host costuma estar nas duas listas.
@@ -56,8 +76,43 @@ function siteHostOf(url) {
   }
 }
 
+// Login nunca passa pelo filtro: o antifraude do Google usa a própria telemetria
+// (play.google.com/log, google.com/gen_204…) para avaliar o navegador, e sem ela recusa
+// o login ("navegador não seguro"). Vale para a página de login e para quem ela chama.
+const AUTH_HOSTS = [
+  "accounts.google.com",
+  "accounts.youtube.com",
+  "myaccount.google.com",
+  "appleid.apple.com",
+  "idmsa.apple.com",
+  "login.microsoftonline.com",
+  "login.live.com",
+  "account.live.com",
+];
+
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isAuthHost(hostname) {
+  return (
+    hostname !== null &&
+    AUTH_HOSTS.some((auth) => hostname === auth || hostname.endsWith(`.${auth}`))
+  );
+}
+
+/** Página de login ou requisição para um serviço de conta: nunca bloqueia. */
+function isAuthFlow(pageUrl, requestUrl) {
+  return isAuthHost(hostnameOf(pageUrl)) || isAuthHost(hostnameOf(requestUrl));
+}
+
 function isAllowedSite(config, pageUrl) {
   if (!config.enabled) return true;
+  if (isAuthHost(hostnameOf(pageUrl))) return true;
   const host = siteHostOf(pageUrl);
   return host !== null && config.pausedHosts.has(host);
 }
@@ -68,7 +123,8 @@ function listsFromEnv(value) {
     const parsed = JSON.parse(value);
     const pick = (key) =>
       Array.isArray(parsed[key]) ? parsed[key].filter((url) => typeof url === "string") : [];
-    return { ads: pick("ads"), privacy: pick("privacy") };
+    const resources = typeof parsed.resources === "string" ? parsed.resources : null;
+    return { ads: pick("ads"), privacy: pick("privacy"), resources };
   } catch {
     return DEFAULT_LISTS;
   }
@@ -127,9 +183,9 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
     }
   }
 
-  function compile(texts) {
+  function compile(texts, resources) {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(WORKER_FILE, { workerData: { lists: texts } });
+      const worker = new Worker(WORKER_FILE, { workerData: { lists: texts, resources } });
       worker.once("message", resolve);
       worker.once("error", reject);
       worker.once("exit", (code) => {
@@ -148,7 +204,8 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
           const urls = listUrls[category] ?? [];
           texts[category] = await Promise.all(urls.map((url) => fetchText(url)));
         }
-        const compiled = await compile(texts);
+        const resources = listUrls.resources ? await fetchText(listUrls.resources) : null;
+        const compiled = await compile(texts, resources);
         fs.mkdirSync(cacheDir, { recursive: true });
         for (const category of CATEGORY_ORDER) {
           if (!compiled[category]) continue;
@@ -234,12 +291,13 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
    * Decide uma requisição. `pageUrl` é a URL da aba (allowlist); `tabId` só serve para a
    * contagem. Devolve true se deve ser cancelada.
    */
-  function shouldBlock({ url, resourceType, pageUrl, sourceUrl, tabId }) {
-    if (resourceType === "mainFrame") return false;
+  function decide({ url, resourceType, pageUrl, sourceUrl, tabId }) {
+    if (resourceType === "mainFrame") return null;
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      if (!url.startsWith("ws://") && !url.startsWith("wss://")) return false;
+      if (!url.startsWith("ws://") && !url.startsWith("wss://")) return null;
     }
-    if (!vendor || isAllowedSite(config, pageUrl ?? sourceUrl ?? "")) return false;
+    if (!vendor || isAllowedSite(config, pageUrl ?? sourceUrl ?? "")) return null;
+    if (isAuthFlow(sourceUrl ?? "", url)) return null;
     const request = vendor.Request.fromRawDetails({
       url,
       type: requestTypeOf(resourceType),
@@ -249,12 +307,37 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
       const engine = engines[category];
       if (!engine) continue;
       const result = engine.match(request);
-      if (result.match && !result.redirect) {
-        countBlocked(tabId, url, category);
-        return true;
-      }
+      if (!result.match) continue;
+      countBlocked(tabId, url, category);
+      // $redirect também cancela: o Chromium recusa redirecionar subrecursos para data:
+      // (o substituto do uBO precisaria de um protocolo próprio).
+      return { cancel: true };
     }
-    return false;
+    return null;
+  }
+
+  /** Scriptlets (+js) da página, para rodar no mundo da página antes dos scripts dela. */
+  function scriptletsFor(pageUrl) {
+    const engine = engines.ads;
+    if (!engine || !vendor || !/^https?:\/\//.test(pageUrl) || isAllowedSite(config, pageUrl)) {
+      return [];
+    }
+    try {
+      const hostname = new URL(pageUrl).hostname;
+      const { scripts } = engine.getCosmeticsFilters({
+        url: pageUrl,
+        hostname,
+        domain: domainOf(hostname),
+        getBaseRules: false,
+        getInjectionRules: true,
+        getExtendedRules: false,
+        getRulesFromHostname: true,
+        getRulesFromDOM: false,
+      });
+      return Array.isArray(scripts) ? scripts : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -291,7 +374,9 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
   return {
     start,
     update,
-    shouldBlock,
+    decide,
+    shouldBlock: (details) => decide(details) !== null,
+    scriptletsFor,
     cosmeticCss,
     statsInfo,
     pageInfo,
@@ -355,6 +440,7 @@ module.exports = {
   requestTypeOf,
   siteHostOf,
   isAllowedSite,
+  isAuthFlow,
   listsFromEnv,
   domainOf,
   DEFAULT_LISTS,

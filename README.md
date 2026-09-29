@@ -33,6 +33,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 - [PRD v1.4 — Fundação](docs/prd/v1.4-fundacao.md): store, SQLite e testes.
 - [PRD v1.5 — Navegador de verdade](docs/prd/v1.5-navegador.md): adblock real, downloads,
   buscar na página, zoom por site e atalhos.
+- [PRD v1.5.1 — Correções](docs/prd/v1.5.1-correcoes.md): login do Google com adblock,
+  DMG "danificado", YouTube, layout no Mac.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

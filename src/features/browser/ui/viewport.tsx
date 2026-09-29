@@ -16,6 +16,7 @@ export function Viewport({
   tab,
   loading,
   blockedToday,
+  snapshot,
   desktop,
   onOpen,
   onAddLink,
@@ -26,6 +27,8 @@ export function Viewport({
   tab: Tab;
   loading: boolean;
   blockedToday: number | null;
+  /** Foto da página enquanto o WebContentsView está escondido (painel aberto). */
+  snapshot: string | null;
   desktop: DesktopBridge | null;
   onOpen: (value: string) => void;
   onAddLink: (link: QuickLink) => void;
@@ -94,6 +97,7 @@ export function Viewport({
     <section className={cn("viewport", tab.private && "private")}>
       {loading && <div className="loading-line" />}
       {content}
+      {snapshot && <img className="view-snapshot" src={snapshot} alt="" aria-hidden="true" />}
     </section>
   );
 }
