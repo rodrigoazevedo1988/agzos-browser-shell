@@ -212,3 +212,43 @@ test("migra as chaves da 1.3 no primeiro load", async ({ page }) => {
   const keys = await page.evaluate(() => Object.keys(window.localStorage).sort());
   expect(keys).toEqual(["agzos-credentials", "agzos-state"]);
 });
+
+test("1.5: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1 e Ctrl+9 trocam de guia", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  await page.keyboard.press("Control+t");
+  const active = page.locator(".tabs .browser-tab.active");
+  await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+Tab");
+  await expect(active).toContainText("github.com");
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+2");
+  await expect(active).toContainText("linear.app");
+  await page.keyboard.press("Control+9");
+  await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+1");
+  await expect(active).toContainText("github.com");
+});
+
+test("1.5: Ctrl+D favorita, Alt+← volta", async ({ page }) => {
+  await go(page, "linear.app/team");
+  await page.keyboard.press("Control+d");
+  await expect(page.getByLabel("Favoritar página")).toHaveAttribute("aria-pressed", "true");
+  await go(page, "figma.com/files");
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(omnibox(page)).toHaveValue("https://linear.app/team");
+});
+
+test("1.5: na web, privacidade e downloads explicam que o recurso é do app", async ({ page }) => {
+  await expect(page.getByText(/anúncios e rastreadores bloqueados hoje/)).toBeVisible();
+  await page.locator(".privacy-pill").click();
+  await expect(
+    page.getByText("O bloqueio real funciona no app Agzos para computador"),
+  ).toBeVisible();
+  await page.keyboard.press("Control+j");
+  await expect(page.getByText("Downloads funcionam no app Agzos para computador.")).toBeVisible();
+  // Sem downloads, o botão da barra não aparece (a barra fica igual à 1.4).
+  await expect(page.getByRole("button", { name: "Downloads", exact: true })).toHaveCount(0);
+});

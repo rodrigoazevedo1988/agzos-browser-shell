@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Download,
   KeyRound,
   LockKeyhole,
   Moon,
@@ -11,7 +12,7 @@ import {
   Sun,
   VenetianMask,
 } from "lucide-react";
-import { forwardRef } from "react";
+import { forwardRef, type CSSProperties } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,10 @@ export type ToolbarProps = {
   loading: boolean;
   favorite: boolean;
   blockedCount: number;
+  /** Zoom da aba ativa (1 = 100 %). */
+  zoom: number;
+  /** Botão de downloads: só aparece quando há algum na lista. */
+  downloads: { visible: boolean; open: boolean; active: number; fraction: number | null };
   keyOpen: boolean;
   dark: boolean;
   aiOpen: boolean;
@@ -35,6 +40,8 @@ export type ToolbarProps = {
   onSubmit: (value: string) => void;
   onToggleFavorite: () => void;
   onTogglePrivacy: () => void;
+  onResetZoom: () => void;
+  onToggleDownloads: () => void;
   onToggleKey: () => void;
   onToggleDark: () => void;
   onToggleAi: () => void;
@@ -94,6 +101,17 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
             aria-label="Pesquisar ou digitar endereço"
             placeholder="Pesquisar ou digitar endereço"
           />
+          {Math.abs(props.zoom - 1) > 0.001 && (
+            <button
+              type="button"
+              className="zoom-pill"
+              onClick={props.onResetZoom}
+              title="Voltar ao tamanho padrão (Ctrl/⌘ 0)"
+              aria-label={`Zoom ${Math.round(props.zoom * 100)} %, voltar para 100 %`}
+            >
+              {Math.round(props.zoom * 100)}%
+            </button>
+          )}
           <button
             type="button"
             className={cn("fav-button", props.favorite && "on")}
@@ -117,6 +135,25 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
             <strong>{props.blockedCount}</strong>
             <span>bloqueados</span>
           </button>
+          {props.downloads.visible && (
+            <Button
+              variant={props.downloads.open ? "default" : "ghost"}
+              size="icon"
+              className={cn("downloads-button", props.downloads.active > 0 && "active")}
+              onClick={props.onToggleDownloads}
+              title="Downloads (Ctrl/⌘ J)"
+              aria-label="Downloads"
+              style={
+                props.downloads.fraction !== null
+                  ? ({
+                      "--download-progress": `${Math.round(props.downloads.fraction * 360)}deg`,
+                    } as CSSProperties)
+                  : undefined
+              }
+            >
+              <Download />
+            </Button>
+          )}
           <Button
             variant={props.keyOpen ? "default" : "ghost"}
             size="icon"

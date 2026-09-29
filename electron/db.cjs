@@ -11,7 +11,37 @@ const MIGRATIONS = [
       updated_at INTEGER NOT NULL
     )`,
   },
+  {
+    version: 2,
+    name: "downloads",
+    sql: `CREATE TABLE downloads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      path TEXT NOT NULL,
+      mime TEXT NOT NULL DEFAULT '',
+      total_bytes INTEGER NOT NULL DEFAULT 0,
+      received_bytes INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER
+    )`,
+  },
+  {
+    version: 3,
+    name: "site_settings",
+    sql: `CREATE TABLE site_settings (
+      host TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (host, key)
+    )`,
+  },
 ];
+
+const DOWNLOAD_STATES = ["progressing", "completed", "cancelled", "interrupted"];
+const DOWNLOAD_LIMIT = 200;
 
 // Seções do snapshot da casca que o renderer pode ler e gravar (ver persistence/snapshot.ts).
 const STATE_SECTIONS = ["version", "prefs", "session", "links", "closedTabs"];
@@ -59,6 +89,26 @@ function openDatabase(file) {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   );
 
+  const upsertSetting = db.prepare(
+    `INSERT INTO site_settings (host, key, value, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(host, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  );
+  const selectSetting = db.prepare("SELECT value FROM site_settings WHERE host = ? AND key = ?");
+  const deleteSetting = db.prepare("DELETE FROM site_settings WHERE host = ? AND key = ?");
+  const insertDownload = db.prepare(
+    `INSERT INTO downloads (url, filename, path, mime, total_bytes, received_bytes, state, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const updateDownload = db.prepare(
+    `UPDATE downloads SET filename = ?, path = ?, total_bytes = ?, received_bytes = ?, state = ?,
+       ended_at = ? WHERE id = ?`,
+  );
+
+  // Download que estava em andamento quando o app fechou não tem como continuar.
+  db.prepare(
+    "UPDATE downloads SET state = 'interrupted', ended_at = ? WHERE state = 'progressing'",
+  ).run(Date.now());
+
   return {
     schemaVersion() {
       return db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
@@ -98,6 +148,71 @@ function openDatabase(file) {
         throw error;
       }
       return true;
+    },
+    /** Valores internos do main (fora das seções do renderer). */
+    getMeta(key) {
+      const row = db.prepare("SELECT value FROM kv WHERE key = ?").get(`meta:${key}`);
+      if (!row) return null;
+      try {
+        return JSON.parse(row.value);
+      } catch {
+        return null;
+      }
+    },
+    setMeta(key, value) {
+      upsert.run(`meta:${key}`, JSON.stringify(value), Date.now());
+    },
+    getSiteSetting(host, key) {
+      const row = selectSetting.get(host, key);
+      if (!row) return null;
+      try {
+        return JSON.parse(row.value);
+      } catch {
+        return null;
+      }
+    },
+    setSiteSetting(host, key, value) {
+      if (value === null || value === undefined) deleteSetting.run(host, key);
+      else upsertSetting.run(host, key, JSON.stringify(value), Date.now());
+    },
+    listDownloads() {
+      return db
+        .prepare(
+          `SELECT id, url, filename, path, mime, total_bytes AS totalBytes,
+             received_bytes AS receivedBytes, state, started_at AS startedAt, ended_at AS endedAt
+           FROM downloads ORDER BY id DESC LIMIT ?`,
+        )
+        .all(DOWNLOAD_LIMIT);
+    },
+    addDownload(record) {
+      const result = insertDownload.run(
+        record.url,
+        record.filename,
+        record.path,
+        record.mime ?? "",
+        record.totalBytes ?? 0,
+        record.receivedBytes ?? 0,
+        DOWNLOAD_STATES.includes(record.state) ? record.state : "progressing",
+        record.startedAt ?? Date.now(),
+      );
+      return Number(result.lastInsertRowid);
+    },
+    updateDownload(id, record) {
+      updateDownload.run(
+        record.filename,
+        record.path,
+        record.totalBytes ?? 0,
+        record.receivedBytes ?? 0,
+        DOWNLOAD_STATES.includes(record.state) ? record.state : "interrupted",
+        record.endedAt ?? null,
+        id,
+      );
+    },
+    removeDownload(id) {
+      db.prepare("DELETE FROM downloads WHERE id = ?").run(id);
+    },
+    clearDownloads() {
+      db.prepare("DELETE FROM downloads WHERE state != 'progressing'").run();
     },
     close() {
       db.close();

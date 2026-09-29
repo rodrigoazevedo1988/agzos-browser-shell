@@ -20,7 +20,8 @@ export function StartPage({
 }: {
   links: QuickLink[];
   engine: (typeof engines)[number];
-  blocked: number;
+  /** Bloqueios reais de hoje; null com o escudo desligado. */
+  blocked: number | null;
   onOpen: (value: string) => void;
   onAdd: (link: QuickLink) => void;
   onRemove: (url: string) => void;
@@ -117,8 +118,12 @@ export function StartPage({
       <div className="privacy-note">
         <ShieldCheck />
         <span>
-          <strong>Proteção ativa</strong>
-          <small>{blocked} rastreadores bloqueados hoje</small>
+          <strong>{blocked === null ? "Proteção desativada" : "Proteção ativa"}</strong>
+          <small>
+            {blocked === null
+              ? "Ative o escudo para bloquear anúncios e rastreadores"
+              : `${blocked} ${blocked === 1 ? "anúncio ou rastreador bloqueado" : "anúncios e rastreadores bloqueados"} hoje`}
+          </small>
         </span>
       </div>
     </div>

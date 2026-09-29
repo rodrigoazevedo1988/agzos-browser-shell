@@ -74,7 +74,7 @@ export function SettingsPanel({
         onChange={setAiOpen}
       />
       <Toggle
-        label="Bloquear rastreadores"
+        label="Bloquear anúncios e rastreadores"
         hint="Em todos os sites"
         checked={shield}
         onChange={setShield}
@@ -93,6 +93,18 @@ export function SettingsPanel({
           </li>
           <li>
             <kbd>⌘/Ctrl R</kbd> Recarregar
+          </li>
+          <li>
+            <kbd>Ctrl Tab</kbd> Próxima aba
+          </li>
+          <li>
+            <kbd>⌘/Ctrl F</kbd> Buscar na página
+          </li>
+          <li>
+            <kbd>⌘/Ctrl J</kbd> Downloads
+          </li>
+          <li>
+            <kbd>⌘/Ctrl + −</kbd> Zoom
           </li>
         </ul>
       </div>

@@ -26,9 +26,27 @@ export type CommandId =
   | "tabs.bookmark-all"
   | "tabs.vertical"
   | "tabs.horizontal"
+  | "tab.next"
+  | "tab.previous"
+  | `tab.select-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`
+  | "tab.select-last"
+  | "nav.back"
+  | "nav.forward"
+  | "tab.reload-hard"
+  | "window.fullscreen"
+  | "page.favorite"
+  | "page.find"
+  | "downloads.toggle"
+  | "zoom.in"
+  | "zoom.out"
+  | "zoom.reset"
   | "omnibox.focus";
 
-export type Shortcut = { key: string; shift?: boolean };
+/**
+ * `key` é o `KeyboardEvent.key` em minúsculas. `mod` (Ctrl ou ⌘) vale true quando omitido.
+ * O main (electron/main.cjs, FORWARDED_SHORTCUTS) repassa exatamente estes atalhos.
+ */
+export type Shortcut = { key: string; shift?: boolean; alt?: boolean; mod?: boolean };
 /** De onde veio o comando: atalho de teclado ou menu/botão. */
 export type CommandSource = "keyboard" | "menu";
 
@@ -41,6 +59,10 @@ export type CommandContext = {
     reload: (tabId: number) => void;
     requestClose: (tabId: number) => void;
     copy: (id: string, value: string) => void;
+    /** delta -1 volta, 1 avança (histórico da aba ativa). */
+    step: (delta: -1 | 1) => void;
+    openFind: () => void;
+    toggleDownloads: () => void;
   };
 };
 
@@ -55,6 +77,19 @@ export type Command = {
 
 const tabById = (ctx: CommandContext, tabId: number) =>
   ctx.state.tabs.find((tab) => tab.id === tabId);
+
+/** Recursos que só existem com um WebContentsView de verdade (app desktop, aba com página). */
+const onDesktopPage = (ctx: CommandContext, tabId: number) => {
+  const tab = tabById(ctx, tabId);
+  return ctx.desktop !== null && tab !== undefined && entryOf(tab).kind === "page";
+};
+
+const selectCommands: Command[] = ([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => ({
+  id: `tab.select-${n}` as const,
+  label: `Ir para a guia ${n}`,
+  shortcuts: [{ key: String(n) }],
+  run: ({ dispatch }) => dispatch({ type: "tab/activate-index", index: n - 1 }),
+}));
 
 export const commands: Command[] = [
   {
@@ -103,8 +138,18 @@ export const commands: Command[] = [
   {
     id: "tab.reload",
     label: "Recarregar",
-    shortcuts: [{ key: "r" }],
+    shortcuts: [{ key: "r" }, { key: "f5", mod: false }],
     run: ({ ui }, tabId) => ui.reload(tabId),
+  },
+  {
+    id: "tab.reload-hard",
+    label: "Recarregar sem cache",
+    shortcuts: [
+      { key: "r", shift: true },
+      { key: "f5", shift: true, mod: false },
+    ],
+    run: ({ desktop, ui }, tabId) =>
+      desktop ? void desktop.reload(tabId, true) : ui.reload(tabId),
   },
   {
     id: "tab.copy-url",
@@ -156,6 +201,86 @@ export const commands: Command[] = [
     run: ({ dispatch }) => dispatch({ type: "prefs/set", patch: { orientation: "horizontal" } }),
   },
   {
+    id: "tab.next",
+    label: "Próxima guia",
+    shortcuts: [{ key: "tab" }, { key: "pagedown" }],
+    run: ({ dispatch }) => dispatch({ type: "tab/activate-relative", delta: 1 }),
+  },
+  {
+    id: "tab.previous",
+    label: "Guia anterior",
+    shortcuts: [{ key: "tab", shift: true }, { key: "pageup" }],
+    run: ({ dispatch }) => dispatch({ type: "tab/activate-relative", delta: -1 }),
+  },
+  ...selectCommands,
+  {
+    id: "tab.select-last",
+    label: "Ir para a última guia",
+    shortcuts: [{ key: "9" }],
+    run: ({ dispatch }) => dispatch({ type: "tab/activate-index", index: -1 }),
+  },
+  {
+    id: "nav.back",
+    label: "Voltar",
+    shortcuts: [{ key: "arrowleft", alt: true, mod: false }, { key: "[" }],
+    run: ({ ui }) => ui.step(-1),
+  },
+  {
+    id: "nav.forward",
+    label: "Avançar",
+    shortcuts: [{ key: "arrowright", alt: true, mod: false }, { key: "]" }],
+    run: ({ ui }) => ui.step(1),
+  },
+  {
+    id: "window.fullscreen",
+    label: "Tela cheia",
+    shortcuts: [{ key: "f11", mod: false }],
+    // Na web o F11 fica com o próprio navegador.
+    enabled: ({ desktop }) => desktop !== null,
+    run: ({ desktop }) => void desktop?.toggleFullscreen(),
+  },
+  {
+    id: "page.favorite",
+    label: "Adicionar aos favoritos",
+    shortcuts: [{ key: "d" }],
+    run: ({ dispatch }) => dispatch({ type: "links/toggle-current" }),
+  },
+  {
+    id: "page.find",
+    label: "Buscar na página",
+    shortcuts: [{ key: "f" }],
+    // Na web o Ctrl+F fica com o próprio navegador (o iframe não deixa buscar dentro).
+    enabled: onDesktopPage,
+    run: ({ ui }) => ui.openFind(),
+  },
+  {
+    id: "downloads.toggle",
+    label: "Downloads",
+    shortcuts: [{ key: "j" }],
+    run: ({ ui }) => ui.toggleDownloads(),
+  },
+  {
+    id: "zoom.in",
+    label: "Aumentar zoom",
+    shortcuts: [{ key: "=" }, { key: "+" }, { key: "=", shift: true }, { key: "+", shift: true }],
+    enabled: onDesktopPage,
+    run: ({ desktop }, tabId) => void desktop?.zoom(tabId, 1),
+  },
+  {
+    id: "zoom.out",
+    label: "Diminuir zoom",
+    shortcuts: [{ key: "-" }],
+    enabled: onDesktopPage,
+    run: ({ desktop }, tabId) => void desktop?.zoom(tabId, -1),
+  },
+  {
+    id: "zoom.reset",
+    label: "Tamanho padrão",
+    shortcuts: [{ key: "0" }],
+    enabled: onDesktopPage,
+    run: ({ desktop }, tabId) => void desktop?.zoom(tabId, 0),
+  },
+  {
     id: "omnibox.focus",
     label: "Ir para a barra de endereço",
     shortcuts: [{ key: "l" }, { key: "k" }],
@@ -169,28 +294,55 @@ export function commandById(id: string): Command | undefined {
   return byId.get(id as CommandId);
 }
 
-/** Resolve Ctrl/⌘ + tecla (com ou sem Shift) para um comando. Alt nunca é atalho. */
-export function commandForKey(input: {
-  key: string;
-  ctrl: boolean;
-  meta: boolean;
-  shift: boolean;
-  alt: boolean;
-}): Command | undefined {
-  if (input.alt || !(input.ctrl || input.meta)) return undefined;
-  const key = input.key.toLowerCase();
+export type KeyInput = { key: string; ctrl: boolean; meta: boolean; shift: boolean; alt: boolean };
+
+/** Forma canônica do atalho ("mod+shift+t"), a mesma de FORWARDED_SHORTCUTS no main. */
+export function shortcutCombo(shortcut: Shortcut): string {
+  const parts = [];
+  if (shortcut.mod !== false) parts.push("mod");
+  if (shortcut.alt) parts.push("alt");
+  if (shortcut.shift) parts.push("shift");
+  parts.push(shortcut.key);
+  return parts.join("+");
+}
+
+/** Resolve a tecla pressionada para um comando, com os modificadores exatos. */
+export function commandForKey(input: KeyInput): Command | undefined {
+  const combo = shortcutCombo({
+    key: input.key.toLowerCase(),
+    shift: input.shift,
+    alt: input.alt,
+    mod: input.ctrl || input.meta,
+  });
   return commands.find((command) =>
-    command.shortcuts?.some(
-      (shortcut) => shortcut.key === key && Boolean(shortcut.shift) === input.shift,
-    ),
+    command.shortcuts?.some((shortcut) => shortcutCombo(shortcut) === combo),
   );
 }
+
+const KEY_LABELS: Record<string, string> = {
+  tab: "Tab",
+  pagedown: "PgDn",
+  pageup: "PgUp",
+  arrowleft: "←",
+  arrowright: "→",
+};
 
 export function shortcutLabel(command: Command, mac: boolean): string | undefined {
   const shortcut = command.shortcuts?.[0];
   if (!shortcut) return undefined;
-  const parts = [mac ? "⌘" : "Ctrl", shortcut.shift ? "Shift" : null, shortcut.key.toUpperCase()];
+  const parts = [
+    shortcut.mod === false ? null : mac ? "⌘" : "Ctrl",
+    shortcut.alt ? (mac ? "⌥" : "Alt") : null,
+    shortcut.shift ? "Shift" : null,
+    KEY_LABELS[shortcut.key] ?? shortcut.key.toUpperCase(),
+  ];
   return parts.filter(Boolean).join(mac ? " " : "+");
+}
+
+/** Comando habilitado para o alvo (atalho desabilitado não deve engolir a tecla). */
+export function isEnabled(ctx: CommandContext, command: Command, tabId?: number | null) {
+  const target = tabId ?? activeTabOf(ctx.state).id;
+  return !command.enabled || command.enabled(ctx, target);
 }
 
 export function runCommand(

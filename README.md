@@ -31,6 +31,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 - [Roadmap Opera/Vivaldi](docs/roadmap-opera-vivaldi.md): diagnóstico da v1.3.3 e
   plano de evolução por fases.
 - [PRD v1.4 — Fundação](docs/prd/v1.4-fundacao.md): store, SQLite e testes.
+- [PRD v1.5 — Navegador de verdade](docs/prd/v1.5-navegador.md): adblock real, downloads,
+  buscar na página, zoom por site e atalhos.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

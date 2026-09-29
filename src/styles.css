@@ -257,6 +257,69 @@ button {
   font-size: 11px;
   color: var(--muted-foreground);
 }
+.zoom-pill {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.zoom-pill:hover {
+  color: var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 40%, var(--border));
+}
+.downloads-button {
+  position: relative;
+}
+.downloads-button.active::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: conic-gradient(var(--primary) var(--download-progress, 90deg), transparent 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  pointer-events: none;
+}
+.downloads-button.active:not([style])::after {
+  animation: spin 1.1s linear infinite;
+}
+.find-bar {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+.find-bar > svg {
+  width: 14px;
+  color: var(--primary);
+}
+.find-bar input {
+  width: min(320px, 40vw);
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 13px;
+}
+.find-bar input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+.find-status {
+  min-width: 96px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .browser-body {
   flex: 1;
   display: flex;
@@ -1396,4 +1459,95 @@ button {
 }
 .tabs-rail .browser-tab.pinned > span:not(.tab-close):not(.tab-pin) {
   display: inline;
+}
+
+.downloads-panel {
+  right: 108px;
+}
+.download-list {
+  max-height: min(420px, 60vh);
+  overflow: auto;
+}
+.download-item .domain-icon svg {
+  width: 15px;
+  height: 15px;
+  color: var(--primary);
+}
+.download-item.failed .domain-icon svg {
+  color: var(--muted-foreground);
+}
+.download-name {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.download-name {
+  cursor: pointer;
+}
+button.download-name:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.download-item.failed .download-name {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+.download-progress {
+  position: relative;
+  height: 3px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+.download-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.25s;
+}
+.download-progress.indeterminate i {
+  animation: loading 0.9s ease-in-out infinite alternate;
+}
+.download-actions {
+  display: flex;
+  align-items: center;
+}
+.download-actions button {
+  width: 28px;
+  height: 28px;
+}
+.download-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.lists-update {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.lists-update:hover {
+  color: var(--primary);
+}
+.lists-update svg {
+  width: 13px;
+}
+.downloads-panel .settings-actions {
+  padding: 10px 16px 14px;
+}
+.downloads-panel .settings-actions button {
+  height: 28px;
+  font-size: 11px;
 }

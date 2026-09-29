@@ -19,6 +19,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
+      # Bundle do motor de filtros usado pelos testes do adblock.
+      - run: bun run desktop:vendor
       - run: bun run test
       - run: bun run build
 
