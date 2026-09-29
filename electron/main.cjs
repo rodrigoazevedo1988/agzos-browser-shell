@@ -13,14 +13,18 @@ const {
 const path = require("node:path");
 const fs = require("node:fs");
 const { openDatabase } = require("./db.cjs");
-const { createAdblock, listsFromEnv, COLLECT_DOM_SOURCE } = require("./adblock.cjs");
+const {
+  createAdblock,
+  listsFromEnv,
+  COLLECT_DOM_SOURCE,
+  AUTH_PATH_SOURCE,
+} = require("./adblock.cjs");
 const { createDownloadManager } = require("./downloads.cjs");
 const { nextZoom, zoomHostOf } = require("./zoom.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
 const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
-const TAB_PRELOAD = path.join(__dirname, "tab-preload.cjs");
 
 // Exceção não tratada no main vira log: o diálogo padrão do Electron é modal e, na
 // saída do app, seguraria o processo aberto.
@@ -228,12 +232,6 @@ app.on("session-created", (ses) => {
   ses.webRequest.onBeforeRequest((details, callback) => {
     callback(requestDecision(details) ?? {});
   });
-  // Scriptlets do adblock no início de cada página (ver tab-preload.cjs).
-  try {
-    ses.registerPreloadScript({ type: "frame", id: "agzos-adblock", filePath: TAB_PRELOAD });
-  } catch {
-    // Session sem suporte (não deveria acontecer no Electron 44): segue sem scriptlets.
-  }
   ses.webRequest.onHeadersReceived((details, callback) => {
     rememberAcceptedHints(details);
     callback({});
@@ -330,6 +328,11 @@ function applyChromeIdentity(contents) {
   contents.setUserAgent(CLEAN_USER_AGENT);
   try {
     if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+    // Sem o domínio Page habilitado, o Chromium aplica os scripts de
+    // addScriptToEvaluateOnNewDocument só ao primeiro documento: numa recarga ou
+    // navegação na mesma guia (google.com → accounts.google.com) window.chrome voltava
+    // vazio e o Google recusava o login.
+    contents.debugger.sendCommand("Page.enable").catch(() => {});
     contents.debugger
       .sendCommand("Emulation.setUserAgentOverride", {
         userAgent: CLEAN_USER_AGENT,
@@ -733,7 +736,8 @@ const COSMETIC_WORLD_ID = 1717;
 async function applyCosmetics(contents, base) {
   if (!adblock || contents.isDestroyed()) return;
   const url = contents.getURL();
-  if (!/^https?:\/\//.test(url)) return;
+  // Login, site pausado ou escudo desligado: a página fica intocada (nem leitura do DOM).
+  if (!/^https?:\/\//.test(url) || !adblock.appliesTo(url)) return;
   let dom = null;
   try {
     dom = await contents.executeJavaScriptInIsolatedWorld(COSMETIC_WORLD_ID, [
@@ -790,6 +794,117 @@ function scheduleThumbnail(id, delay) {
   );
 }
 
+// Scriptlets do adblock (+js, ex.: YouTube). Entram pelo mesmo canal da identidade de
+// Chrome (CDP), só nas páginas com regras: nada de preload em todas as páginas, que
+// mudava o ambiente das páginas de login e fazia o Google recusar o navegador.
+// Scriptlets por aba: hostname → { id, pid, settled }. O Chromium descarta os scripts
+// registrados enquanto uma navegação troca de processo; então há duas fases:
+// - "early" (antes do loadURL / início da navegação): runImmediately, pega esta carga;
+// - "settled" (did-finish-load): registro definitivo para as próximas cargas do site,
+//   refeito se o processo da aba mudou.
+// Cada script roda só no documento principal do site, e nunca numa página de login.
+const scriptletRegistry = new WeakMap();
+const MAX_SCRIPTLET_SITES = 30;
+
+function scriptletSource(host, scripts) {
+  return `if (window.top === window && location.hostname === ${JSON.stringify(host)} &&
+    !new RegExp(${JSON.stringify(AUTH_PATH_SOURCE)}, "i").test(location.pathname)) {
+${scripts.join("\n;\n")}
+}`;
+}
+
+/** Devolve uma promessa que resolve quando o registro (se houver) foi confirmado. */
+function ensureScriptlets(contents, url, phase) {
+  if (!adblock || contents.isDestroyed() || !contents.debugger.isAttached()) return null;
+  let host;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    host = parsed.hostname;
+  } catch {
+    return null;
+  }
+  const registry = scriptletRegistry.get(contents) ?? new Map();
+  scriptletRegistry.set(contents, registry);
+  const pid = contents.getOSProcessId();
+  const current = registry.get(host);
+  if (current?.settled && current.pid === pid) return null;
+  if (phase === "early" && current && !current.settled) return null;
+  if (!current && registry.size >= MAX_SCRIPTLET_SITES) return null;
+  const scripts = adblock.scriptletsFor(url);
+  if (!scripts.length) {
+    registry.set(host, { id: null, pid, settled: true });
+    return null;
+  }
+  const entry = { id: null, pid, settled: phase === "settled" };
+  registry.set(host, entry);
+  // O comando sai já (sem esperar: numa aba nova ele só responde depois da primeira
+  // navegação). O registro anterior, se houver, sai quando o novo for confirmado.
+  return contents.debugger
+    .sendCommand("Page.addScriptToEvaluateOnNewDocument", {
+      source: scriptletSource(host, scripts),
+      runImmediately: phase === "early",
+    })
+    .then(({ identifier }) => {
+      if (current?.id && !contents.isDestroyed() && contents.debugger.isAttached()) {
+        void contents.debugger
+          .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier: current.id })
+          .catch(() => {});
+      }
+      entry.id = identifier;
+    })
+    .catch(() => {
+      // Sem CDP a página só fica sem os scriptlets.
+    });
+}
+
+let lastShieldConfig = "";
+
+/** Aplica escudo/sites pausados; só mexe nos scriptlets quando algo mudou de fato. */
+function applyShieldConfig(prefs) {
+  const config = shieldConfigOf(prefs);
+  const key = JSON.stringify([config.enabled, [...config.pausedHosts].sort()]);
+  adblock?.setConfig(config);
+  if (key === lastShieldConfig) return;
+  const first = lastShieldConfig === "";
+  lastShieldConfig = key;
+  if (!first) resetScriptlets();
+}
+
+/**
+ * Carrega a URL depois de registrar os scriptlets do site (se houver), para eles rodarem
+ * antes dos scripts da página já na primeira carga. Numa guia que ainda não navegou o
+ * CDP só confirma depois da navegação: aí o prazo (500 ms) é o tempo de o comando ser
+ * processado. Numa guia existente a confirmação chega em milissegundos.
+ */
+async function loadWithScriptlets(contents, url) {
+  const fresh = contents.getURL() === "";
+  const registering = ensureScriptlets(contents, url, "early");
+  if (registering) {
+    await Promise.race([
+      registering,
+      new Promise((resolve) => setTimeout(resolve, fresh ? 500 : 1000)),
+    ]);
+  }
+  if (!contents.isDestroyed()) await contents.loadURL(url).catch(() => {});
+}
+
+/** Escudo, sites pausados ou listas mudaram: os scriptlets registrados saem. */
+function resetScriptlets() {
+  for (const { view } of views.values()) {
+    const contents = view.webContents;
+    const registry = scriptletRegistry.get(contents);
+    if (!registry || contents.isDestroyed()) continue;
+    scriptletRegistry.delete(contents);
+    for (const { id: identifier } of registry.values()) {
+      if (!identifier || !contents.debugger.isAttached()) continue;
+      void contents.debugger
+        .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier })
+        .catch(() => {});
+    }
+  }
+}
+
 function privateSession() {
   return session.fromPartition(PRIVATE_PARTITION);
 }
@@ -841,8 +956,14 @@ function wireView(id, view) {
   const contents = view.webContents;
 
   contents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame && !details.isSameDocument) adblock?.resetPage(id);
+    if (!details.isMainFrame || details.isSameDocument) return;
+    adblock?.resetPage(id);
+    ensureScriptlets(contents, details.url, "early");
   });
+  contents.on("did-redirect-navigation", (details) => {
+    if (details.isMainFrame) ensureScriptlets(contents, details.url, "early");
+  });
+  contents.on("did-finish-load", () => ensureScriptlets(contents, contents.getURL(), "settled"));
   contents.on("dom-ready", () => void applyCosmetics(contents, true));
   contents.on("did-finish-load", () => void applyCosmetics(contents, false));
   contents.on("found-in-page", (_event, result) => {
@@ -972,7 +1093,11 @@ function registerIpc() {
     mainWindow.contentView.addChildView(view);
     allowMediaPermissions(view.webContents.session);
     wireView(id, view);
-    if (isWebUrl(url)) void view.webContents.loadURL(url);
+    if (isWebUrl(url)) {
+      // O comando CDP sai antes do loadURL (sem esperar: numa aba nova ele só responde
+      // depois da primeira navegação, e já vale para ela).
+      void loadWithScriptlets(view.webContents, url);
+    }
   });
 
   ipcMain.handle("tab:activate", (_event, { id }) => {
@@ -1012,7 +1137,7 @@ function registerIpc() {
     if (!entry || !isWebUrl(url)) return;
     const contents = entry.view.webContents;
     if (contents.getURL() === url) return;
-    void contents.loadURL(url);
+    void loadWithScriptlets(contents, url);
   });
 
   ipcMain.handle("tab:back", (_event, { id }) => {
@@ -1062,14 +1187,7 @@ function registerIpc() {
 
   // Mudança no escudo vale na hora (o state:save tem debounce).
   ipcMain.handle("adblock:config", (_event, config) => {
-    adblock?.setConfig(shieldConfigOf(config));
-  });
-
-  // Chamada síncrona do tab-preload: precisa responder antes dos scripts da página.
-  ipcMain.on("adblock:scriptlets", (event, url) => {
-    const fromShell = mainWindow && event.sender === mainWindow.webContents;
-    event.returnValue =
-      !adblock || fromShell || typeof url !== "string" ? [] : adblock.scriptletsFor(url);
+    applyShieldConfig(config);
   });
 
   ipcMain.handle("adblock:stats", () =>
@@ -1166,7 +1284,7 @@ function registerIpc() {
   ipcMain.handle("state:save", (_event, sections) => {
     // O escudo segue as preferências salvas (liga/desliga e sites pausados).
     if (sections && typeof sections === "object" && sections.prefs) {
-      adblock?.setConfig(shieldConfigOf(sections.prefs));
+      applyShieldConfig(sections.prefs);
     }
     if (!database) return { ok: false };
     try {
@@ -1251,10 +1369,11 @@ function startServices() {
     lists: listsFromEnv(process.env.AGZOS_FILTER_LISTS),
     emitPage: (id, info) => sendToChrome("agzos:tab-event", { type: "blocked", id, ...info }),
     emitStats: (stats) => sendToChrome("agzos:adblock-stats", stats),
+    onEnginesChanged: resetScriptlets,
   });
   try {
     // O escudo já nasce com a configuração salva, antes da primeira aba carregar.
-    adblock.setConfig(shieldConfigOf(database?.loadState().prefs));
+    applyShieldConfig(database?.loadState().prefs);
   } catch {
     // Sem estado salvo: escudo ligado, nenhum site pausado.
   }

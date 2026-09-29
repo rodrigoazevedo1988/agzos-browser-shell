@@ -1,7 +1,7 @@
 // Bloqueio real de anúncios e rastreadores (NAV-001). Dois motores do
 // @ghostery/adblocker: "ads" (EasyList, EasyList Brasil e as listas do uBlock Origin, com
 // CSS de ocultação e scriptlets) e "privacy" (EasyPrivacy + privacidade do uBO). As listas
-// são baixadas no primeiro uso e a cada 7 dias, compiladas numa worker thread e guardadas
+// são baixadas no primeiro uso e renovadas a cada 24 h, compiladas numa worker thread e guardadas
 // em cache em userData/adblock/.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -9,36 +9,44 @@ const { Worker } = require("node:worker_threads");
 
 const VENDOR_FILE = path.join(__dirname, "adblocker.vendor.cjs");
 const WORKER_FILE = path.join(__dirname, "adblock-worker.cjs");
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// As regras do YouTube mudam quase toda semana: listas com mais de 24 h são renovadas.
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RETRY_MS = 30 * 60 * 1000;
 const EMIT_DELAY_MS = 200;
 const MAX_HOSTS_PER_PAGE = 200;
 
-// Espelho das listas do uBlock Origin mantido pelo Ghostery (mesmo formato que o motor
-// entende). As listas do uBO trazem os scriptlets do YouTube (json-prune de adPlacements
-// etc.): anúncio de vídeo vem do mesmo servidor do vídeo e não dá para barrar só por rede.
-const UBO = "https://raw.githubusercontent.com/ghostery/adblocker/master/packages/adblocker/assets";
+// Listas oficiais do uBlock Origin (uAssets): trazem as regras do YouTube (scriptlets
+// json-prune, trusted-replace-* contra o anúncio inserido pelo servidor…). Anúncio de
+// vídeo vem do mesmo servidor do vídeo e não dá para barrar só por rede. As regras do
+// YouTube mudam quase toda semana; o espelho do Ghostery atrasa, então as listas vêm
+// direto do uBO. O código dos scriptlets vem do resources.json do Ghostery (formato que
+// o motor entende; os nomes batem com os usados nas listas).
+const UBO = "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters";
+const GHOSTERY =
+  "https://raw.githubusercontent.com/ghostery/adblocker/master/packages/adblocker/assets";
 const DEFAULT_LISTS = {
   ads: [
     "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easylist.txt",
     "https://raw.githubusercontent.com/easylistbrasil/easylistbrasil/filtro/easylistbrasil.txt",
-    `${UBO}/ublock-origin/filters.txt`,
-    `${UBO}/ublock-origin/filters-2020.txt`,
-    `${UBO}/ublock-origin/filters-2021.txt`,
-    `${UBO}/ublock-origin/filters-2022.txt`,
-    `${UBO}/ublock-origin/filters-2023.txt`,
-    `${UBO}/ublock-origin/filters-2024.txt`,
-    `${UBO}/ublock-origin/quick-fixes.txt`,
-    `${UBO}/ublock-origin/unbreak.txt`,
-    `${UBO}/ublock-origin/badware.txt`,
-    `${UBO}/peter-lowe/serverlist.txt`,
+    `${UBO}/filters.txt`,
+    `${UBO}/filters-2020.txt`,
+    `${UBO}/filters-2021.txt`,
+    `${UBO}/filters-2022.txt`,
+    `${UBO}/filters-2023.txt`,
+    `${UBO}/filters-2024.txt`,
+    `${UBO}/filters-2025.txt`,
+    `${UBO}/filters-2026.txt`,
+    `${UBO}/quick-fixes.txt`,
+    `${UBO}/unbreak.txt`,
+    `${UBO}/badware.txt`,
+    `${GHOSTERY}/peter-lowe/serverlist.txt`,
   ],
   privacy: [
     "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easyprivacy.txt",
-    `${UBO}/ublock-origin/privacy.txt`,
+    `${UBO}/privacy.txt`,
   ],
   // Código dos scriptlets e dos redirecionamentos (+js(...), $redirect=...).
-  resources: `${UBO}/ublock-origin/resources.json`,
+  resources: `${GHOSTERY}/ublock-origin/resources.json`,
 };
 const CATEGORY_LABEL = { ads: "Anúncios", privacy: "Rastreadores" };
 // Verifica rastreadores primeiro: o mesmo host costuma estar nas duas listas.
@@ -79,16 +87,32 @@ function siteHostOf(url) {
 // Login nunca passa pelo filtro: o antifraude do Google usa a própria telemetria
 // (play.google.com/log, google.com/gen_204…) para avaliar o navegador, e sem ela recusa
 // o login ("navegador não seguro"). Vale para a página de login e para quem ela chama.
-const AUTH_HOSTS = [
+// Provedores de identidade conhecidos (o domínio inteiro é tratado como login).
+const AUTH_DOMAINS = [
   "accounts.google.com",
   "accounts.youtube.com",
   "myaccount.google.com",
   "appleid.apple.com",
   "idmsa.apple.com",
   "login.microsoftonline.com",
+  "login.microsoft.com",
   "login.live.com",
   "account.live.com",
+  "okta.com",
+  "oktapreview.com",
+  "auth0.com",
+  "onelogin.com",
+  "duosecurity.com",
+  "amazoncognito.com",
+  "clerk.accounts.dev",
+  "sso.acesso.gov.br",
 ];
+// Subdomínios que por convenção só servem login/SSO (login.site.com, auth.site.com…).
+const AUTH_SUBDOMAIN =
+  /^(accounts?|login|logon|signin|sign-in|auth|oauth|sso|id|identity|secure-login)\./i;
+// Caminhos de login em qualquer site (facebook.com/login, github.com/login/oauth…).
+const AUTH_PATH =
+  /^\/(?:[\w-]+\/)?(?:login|log-in|logon|signin|sign-in|signup|oauth2?|authorize|auth|sso|saml2?|openid|session|sessions|account\/login|u\/login|v\d\/signin)(?:[/?#.]|$)/i;
 
 function hostnameOf(url) {
   try {
@@ -99,20 +123,34 @@ function hostnameOf(url) {
 }
 
 function isAuthHost(hostname) {
-  return (
-    hostname !== null &&
-    AUTH_HOSTS.some((auth) => hostname === auth || hostname.endsWith(`.${auth}`))
-  );
+  if (hostname === null) return false;
+  if (AUTH_DOMAINS.some((auth) => hostname === auth || hostname.endsWith(`.${auth}`))) return true;
+  return AUTH_SUBDOMAIN.test(hostname);
+}
+
+/**
+ * URL de login/SSO: nenhum recurso do Agzos mexe nela (filtro de rede, scriptlets, CSS,
+ * leitura do DOM). Antifraudes de login (Google, Microsoft…) recusam o navegador quando
+ * a própria telemetria some ou o ambiente da página muda.
+ */
+function isAuthUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    return isAuthHost(parsed.hostname) || AUTH_PATH.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 }
 
 /** Página de login ou requisição para um serviço de conta: nunca bloqueia. */
 function isAuthFlow(pageUrl, requestUrl) {
-  return isAuthHost(hostnameOf(pageUrl)) || isAuthHost(hostnameOf(requestUrl));
+  return isAuthUrl(pageUrl) || isAuthHost(hostnameOf(requestUrl));
 }
 
 function isAllowedSite(config, pageUrl) {
   if (!config.enabled) return true;
-  if (isAuthHost(hostnameOf(pageUrl))) return true;
+  if (isAuthUrl(pageUrl)) return true;
   const host = siteHostOf(pageUrl);
   return host !== null && config.pausedHosts.has(host);
 }
@@ -136,7 +174,15 @@ function today() {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, lists }) {
+function createAdblock({
+  userDataDir,
+  database,
+  fetchText,
+  emitPage,
+  emitStats,
+  lists,
+  onEnginesChanged = () => {},
+}) {
   let vendor = null;
   try {
     vendor = require(VENDOR_FILE);
@@ -219,6 +265,7 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
           JSON.stringify({ engineVersion: vendor.ENGINE_VERSION, listsKey, updatedAt }),
         );
         emitStats(statsInfo());
+        onEnginesChanged();
         return true;
       } catch (error) {
         console.error("Agzos: não foi possível atualizar as listas de filtros.", error);
@@ -233,9 +280,20 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
     return updating;
   }
 
+  let ageTimer = null;
+  const stale = () => !updatedAt || Date.now() - updatedAt > MAX_AGE_MS;
+
   function start() {
     const cached = loadCache();
-    if (!cached || !updatedAt || Date.now() - updatedAt > MAX_AGE_MS) void update();
+    if (!cached || stale()) void update();
+    // Navegador fica aberto por dias: confere a idade das listas de hora em hora.
+    ageTimer = setInterval(
+      () => {
+        if (stale()) void update();
+      },
+      60 * 60 * 1000,
+    );
+    ageTimer.unref?.();
   }
 
   function flushStats() {
@@ -375,6 +433,8 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
     start,
     update,
     decide,
+    /** O adblock mexe nesta página? (escudo ligado, site não pausado, não é login) */
+    appliesTo: (pageUrl) => Boolean(vendor) && !isAllowedSite(config, pageUrl),
     shouldBlock: (details) => decide(details) !== null,
     scriptletsFor,
     cosmeticCss,
@@ -401,6 +461,7 @@ function createAdblock({ userDataDir, database, fetchText, emitPage, emitStats, 
     },
     close() {
       clearTimeout(retryTimer);
+      clearInterval(ageTimer);
       if (statsTimer) {
         clearTimeout(statsTimer);
         flushStats();
@@ -441,6 +502,8 @@ module.exports = {
   siteHostOf,
   isAllowedSite,
   isAuthFlow,
+  isAuthUrl,
+  AUTH_PATH_SOURCE: AUTH_PATH.source,
   listsFromEnv,
   domainOf,
   DEFAULT_LISTS,

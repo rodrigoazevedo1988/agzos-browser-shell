@@ -29,6 +29,12 @@ Em `app.on("web-contents-created")`, toda webContents (guias, aba anônima, popu
 OAuth e a própria interface) passa por `applyChromeIdentity()`, que conecta o
 debugger (CDP) e envia dois comandos **antes da primeira navegação**:
 
+0. **`Page.enable`**. Sem o domínio `Page` habilitado, o Chromium aplica os scripts de
+   `addScriptToEvaluateOnNewDocument` **só ao primeiro documento** da guia. Da 1.3.3 à
+   1.3.6 isso fazia o login funcionar apenas quando o Google era a primeira página da
+   guia (ou num popup); entrando pelo "Fazer login" do google.com, na mesma guia,
+   `window.chrome.app` chegava vazio e o Google recusava. O teste e2e "identidade de
+   Chrome vale em toda carga da guia" cobre recarga, mesma origem e outra origem.
 1. **`Page.addScriptToEvaluateOnNewDocument` com `chromePageShim()`**: roda no mundo
    principal de cada documento, antes dos scripts da página. Preenche
    `window.chrome.app/csi/loadTimes` e faz `Notification.permission` responder
@@ -109,6 +115,14 @@ Depois, com uma conta real no app instalado: login em aba normal e anônima, e
 definida em `VERSION`, atualiza o `package.json` e publica com
 `scripts/release-browser.sh` em `https://agzosagency.com.br/browser/`, que mantém só
 as duas versões mais recentes.
+
+## Nada de preload nem scripts extras nas páginas de login
+
+Desde a 1.3.7 o Agzos não registra preload nas páginas das guias. Os scriptlets do
+adblock entram pelo mesmo canal do shim (CDP), só nos sites com regras, e nunca em URLs
+de login (`isAuthUrl`: `accounts.*`, `login.*`, `auth.*`, `sso.*`, caminhos `/login`,
+`/signin`, `/oauth`, `/authorize`, `/saml`… e provedores como Google, Apple, Microsoft,
+Okta, Auth0, gov.br). Nessas páginas também não roda a leitura do DOM do CSS de ocultação.
 
 ## Adblock (desde a 1.3.5)
 
