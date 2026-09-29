@@ -23,6 +23,7 @@ const adblockModule = require(path.join(electronDir, "adblock.cjs")) as {
   listsFromEnv: (value: string | undefined) => { ads: string[]; privacy: string[] };
   domainOf: (hostname: string) => string;
   isAuthFlow: (pageUrl: string, requestUrl: string) => boolean;
+  isAuthUrl: (url: string) => boolean;
 };
 const { uniquePath } = require(path.join(electronDir, "downloads.cjs")) as {
   uniquePath: (dir: string, filename: string, taken?: Set<string>) => string;
@@ -134,6 +135,23 @@ describe("adblock.cjs (funções puras)", () => {
     expect(
       adblockModule.isAuthFlow("https://evilaccounts.google.com.test/", "https://x.test/"),
     ).toBe(false);
+  });
+
+  it.each([
+    ["https://accounts.google.com/v3/signin/identifier", true],
+    ["https://www.facebook.com/login/", true],
+    ["https://github.com/login/oauth/authorize?client_id=x", true],
+    ["https://login.empresa.com.br/", true],
+    ["https://auth.openai.com/log-in", true],
+    ["https://app.site.com/auth/callback?code=1", true],
+    ["https://empresa.okta.com/app/x", true],
+    ["https://sso.acesso.gov.br/login", true],
+    ["https://www.youtube.com/watch?v=1", false],
+    ["https://www.google.com/search?q=login", false],
+    ["https://www.uol.com.br/esporte/", false],
+    ["https://loginhistory.com.br/", false],
+  ])("login/SSO em qualquer site: %s → %s", (url, expected) => {
+    expect(adblockModule.isAuthUrl(url)).toBe(expected);
   });
 
   it("domínio registrável aproximado", () => {

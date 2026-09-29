@@ -35,6 +35,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   buscar na página, zoom por site e atalhos.
 - [PRD v1.5.1 — Correções](docs/prd/v1.5.1-correcoes.md): login do Google com adblock,
   DMG "danificado", YouTube, layout no Mac.
+- [PRD v1.5.2 — Login do Google e YouTube](docs/prd/v1.5.2-login-youtube.md): identidade de
+  Chrome em toda carga da guia, logins intocados, listas oficiais do uBlock Origin.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

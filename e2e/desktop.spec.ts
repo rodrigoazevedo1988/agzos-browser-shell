@@ -54,6 +54,10 @@ const PAGES: Record<string, string> = {
   "/scriptlet": `<!doctype html><meta http-equiv="Content-Security-Policy"
     content="script-src 'nonce-agzos'"><title>Scriptlet</title>
     <script nonce="agzos">window.viuScriptlet = window.__agzosScriptlet === true;</script>`,
+  // Página de login: mesmas regras casariam, mas o Agzos não pode tocar nela.
+  "/login": `<!doctype html><title>Entrar</title>
+    <div class="caixa-anuncio">caixa</div>
+    <script>window.viuScriptlet = window.__agzosScriptlet === true;</script>`,
   "/busca": `<!doctype html><title>Busca</title>
     <p>agzos um</p><p>outro texto</p><p>agzos dois</p><p>mais agzos três</p>`,
   "/baixar": `<!doctype html><title>Baixar</title><a href="/arquivo/relatorio.txt">relatório</a>`,
@@ -102,6 +106,14 @@ test.beforeAll(async () => {
         }
       }, 120);
       request.on("close", () => clearInterval(timer));
+      return;
+    }
+    // Latência de site real (a página nunca chega antes do CDP registrar os scriptlets).
+    if (url === "/scriptlet") {
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(PAGES[url]);
+      }, 150);
       return;
     }
     const html = PAGES[url];
@@ -587,7 +599,15 @@ test("scriptlets (+js) rodam antes dos scripts da página, mesmo com CSP de nonc
     await waitForFilters(window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Scriptlet");
-    await expect.poll(() => inTab(app, url, "window.viuScriptlet")).toBe(true);
+    // Primeira carga numa guia nova: o scriptlet roda (quase sempre antes do HTML; o CDP
+    // de uma guia que ainda não navegou às vezes só o aplica depois).
+    await expect.poll(() => inTab(app, url, "window.__agzosScriptlet === true")).toBe(true);
+    // Da carga seguinte em diante: sempre antes de qualquer script da página.
+    for (let i = 0; i < 2; i++) {
+      await window.getByRole("button", { name: "Recarregar" }).click();
+      await window.waitForTimeout(700);
+      await expect.poll(() => inTab(app, url, "window.viuScriptlet")).toBe(true);
+    }
   } finally {
     await app.close();
   }
@@ -620,6 +640,71 @@ test("painel aberto mostra a foto da página no lugar (não fica preto)", async 
       .toBe(0);
     await window.keyboard.press("Escape");
     await expect(photo).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("páginas de login ficam intocadas: sem scriptlet, sem CSS de ocultação", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/login`;
+  try {
+    await waitForFilters(window);
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Entrar");
+    await window.waitForTimeout(800);
+    expect(
+      await inTab(
+        app,
+        url,
+        `({ scriptlet: window.viuScriptlet,
+            caixa: getComputedStyle(document.querySelector(".caixa-anuncio")).display })`,
+      ),
+    ).toEqual({ scriptlet: false, caixa: "block" });
+  } finally {
+    await app.close();
+  }
+});
+
+test("identidade de Chrome vale em toda carga da guia (recarga, mesma origem, outra origem)", async () => {
+  // Regressão da 1.3.3–1.3.6: o shim só valia na primeira carga da guia; entrar pelo
+  // "Fazer login" do google.com (navegação na mesma guia) chegava sem window.chrome.app
+  // e o Google recusava o login.
+  const { app, window } = await launch(tempProfile());
+  const identity = (needle: string) =>
+    app.evaluate(
+      ({ webContents }, text) =>
+        webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL().includes(text))!
+          .executeJavaScript(
+            "[typeof chrome.app, typeof chrome.csi, typeof chrome.loadTimes, " +
+              "navigator.userAgentData.brands.some((b) => b.brand === 'Google Chrome')].join()",
+          ),
+      needle,
+    );
+  const expected = "object,function,function,true";
+  try {
+    await go(window, `${origin}/id1`);
+    await expect(tabs(window).first()).toContainText("Página ID1");
+    expect(await identity("/id1")).toBe(expected);
+
+    await window.getByRole("button", { name: "Recarregar" }).click();
+    await window.waitForTimeout(800);
+    expect(await identity("/id1")).toBe(expected);
+
+    await go(window, `${origin}/id2`);
+    await expect(tabs(window).first()).toContainText("Página ID2");
+    expect(await identity("/id2")).toBe(expected);
+
+    const other = origin.replace("127.0.0.1", "localhost");
+    await go(window, `${other}/id3`);
+    await expect(tabs(window).first()).toContainText("Página ID3");
+    expect(await identity("/id3")).toBe(expected);
+
+    await window.getByRole("button", { name: "Voltar" }).click();
+    await expect(tabs(window).first()).toContainText("Página ID2");
+    expect(await identity("/id2")).toBe(expected);
   } finally {
     await app.close();
   }
