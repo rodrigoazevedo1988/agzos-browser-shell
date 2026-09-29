@@ -11,10 +11,14 @@ const {
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const { openDatabase } = require("./db.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
 const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
+
+// Testes e2e isolam o perfil numa pasta temporária.
+if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_DATA);
 
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
 const developmentUrl = process.argv
@@ -32,6 +36,7 @@ let lastRect = null;
 let panelOpen = false;
 let fullscreenActive = false;
 let permissionSeq = 0;
+let database = null;
 
 // Identidade de Chrome estável: o Google rejeita login quando o user-agent ou os
 // Client Hints denunciam Electron/app embutido, ou quando os dois não batem entre si.
@@ -422,34 +427,34 @@ function buildTabContextMenu(context) {
 
   if (kind === "strip") {
     return Menu.buildFromTemplate([
-      action("strip-new", "Nova guia", { accelerator: "CmdOrCtrl+T" }),
-      action("strip-reopen", "Reabrir guia fechada", {
+      action("tab.new", "Nova guia", { accelerator: "CmdOrCtrl+T" }),
+      action("tab.reopen-closed", "Reabrir guia fechada", {
         accelerator: "CmdOrCtrl+Shift+T",
         enabled: Boolean(hasClosed),
       }),
       { type: "separator" },
       orientation === "vertical"
-        ? action("strip-horizontal", "Mostrar guias horizontalmente")
-        : action("strip-vertical", "Mostrar guias verticalmente"),
+        ? action("tabs.horizontal", "Mostrar guias horizontalmente")
+        : action("tabs.vertical", "Mostrar guias verticalmente"),
     ]);
   }
 
   const items = [
-    action("new-tab-right", "Nova guia à direita", { accelerator: "CmdOrCtrl+T" }),
-    action("reopen-closed", "Reabrir guia fechada", {
+    action("tab.new-right", "Nova guia à direita"),
+    action("tab.reopen-closed", "Reabrir guia fechada", {
       accelerator: "CmdOrCtrl+Shift+T",
       enabled: Boolean(hasClosed),
     }),
-    action("duplicate", "Duplicar"),
+    action("tab.duplicate", "Duplicar"),
     { type: "separator" },
-    pinned ? action("unpin", "Desfixar") : action("pin", "Fixar"),
+    action("tab.toggle-pin", pinned ? "Desfixar" : "Fixar"),
   ];
   if (audio || muted) {
-    items.push(action("mute", muted ? "Ativar som do site" : "Desativar som do site"));
+    items.push(action("tab.toggle-mute", muted ? "Ativar som do site" : "Desativar som do site"));
   }
   items.push(
     { type: "separator" },
-    action("reload", "Recarregar", { accelerator: "CmdOrCtrl+R" }),
+    action("tab.reload", "Recarregar", { accelerator: "CmdOrCtrl+R" }),
     {
       label: "Copiar endereço",
       enabled: Boolean(url),
@@ -458,18 +463,18 @@ function buildTabContextMenu(context) {
       },
     },
     { type: "separator" },
-    action("close", "Fechar", { accelerator: "CmdOrCtrl+W" }),
-    action("close-others", "Fechar outras guias"),
-    action("close-right", "Fechar guias à direita"),
-    action("close-left", "Fechar guias à esquerda"),
+    action("tab.close", "Fechar", { accelerator: "CmdOrCtrl+W" }),
+    action("tab.close-others", "Fechar outras guias"),
+    action("tab.close-right", "Fechar guias à direita"),
+    action("tab.close-left", "Fechar guias à esquerda"),
     { type: "separator" },
-    action("bookmark-all", "Adicionar todas as guias aos favoritos…", {
+    action("tabs.bookmark-all", "Adicionar todas as guias aos favoritos…", {
       accelerator: "CmdOrCtrl+Shift+D",
     }),
     { type: "separator" },
     orientation === "vertical"
-      ? action("tabs-horizontal", "Mostrar guias horizontalmente")
-      : action("tabs-vertical", "Mostrar guias verticalmente"),
+      ? action("tabs.horizontal", "Mostrar guias horizontalmente")
+      : action("tabs.vertical", "Mostrar guias verticalmente"),
   );
   return Menu.buildFromTemplate(items);
 }
@@ -535,9 +540,10 @@ function forwardAppShortcut(input, event) {
   const meta = input.control || input.meta;
   if (!meta) return false;
   const key = input.key.toLowerCase();
+  // Espelha os atalhos de src/features/browser/commands.ts.
   const isPlain = !input.shift && ["t", "w", "r", "l", "k"].includes(key);
-  const isShiftT = input.shift && key === "t";
-  if (!isPlain && !isShiftT) return false;
+  const isShifted = input.shift && ["t", "d", "n"].includes(key);
+  if (!isPlain && !isShifted) return false;
   event.preventDefault();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
   sendToChrome("agzos:hotkey", {
@@ -763,6 +769,24 @@ function registerIpc() {
     pending.callback(Boolean(allow));
   });
 
+  ipcMain.handle("state:load", () => {
+    if (!database) return { available: false, sections: {} };
+    try {
+      return { available: true, sections: database.loadState() };
+    } catch {
+      return { available: false, sections: {} };
+    }
+  });
+
+  ipcMain.handle("state:save", (_event, sections) => {
+    if (!database) return { ok: false };
+    try {
+      return { ok: database.saveState(sections) };
+    } catch {
+      return { ok: false };
+    }
+  });
+
   ipcMain.handle("key:load", () => {
     try {
       if (!safeStorage.isEncryptionAvailable()) return null;
@@ -807,14 +831,30 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("devtools-opened", () => contents.closeDevTools());
 });
 
+function openStateDatabase() {
+  try {
+    database = openDatabase(path.join(app.getPath("userData"), "agzos.db"));
+  } catch (error) {
+    // Sem banco a casca cai no localStorage (ver persistence/store.ts).
+    console.error("Agzos: não foi possível abrir o banco local.", error);
+    database = null;
+  }
+}
+
 app.whenReady().then(() => {
   if (!isDevelopment) Menu.setApplicationMenu(null);
 
+  openStateDatabase();
   registerIpc();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("will-quit", () => {
+  database?.close();
+  database = null;
 });
 
 app.on("window-all-closed", () => {

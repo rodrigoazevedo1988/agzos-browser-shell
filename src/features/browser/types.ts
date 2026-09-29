@@ -3,10 +3,10 @@ export type Tab = {
   id: number;
   history: Entry[];
   index: number;
-  pinned?: boolean;
-  private?: boolean;
-  muted?: boolean;
-  favicon?: string;
+  pinned?: boolean | undefined;
+  private?: boolean | undefined;
+  muted?: boolean | undefined;
+  favicon?: string | undefined;
 };
 export type ClosedTab = { title: string; url: string };
 export type TabOrientation = "horizontal" | "vertical";

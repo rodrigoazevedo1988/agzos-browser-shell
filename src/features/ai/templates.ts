@@ -1,5 +1,5 @@
 import { hashString, seededRandom } from "@/lib/seeded";
-import { hostOf } from "@/features/browser/storage";
+import { hostOf } from "@/features/browser/store/selectors";
 
 export type AiProfile = {
   host: string | null;
@@ -22,7 +22,7 @@ function profileForCategory(category: string, host: string | null, title: string
   const hostLabel = host ?? "esta página";
   const reputation =
     host !== null
-      ? { ...reputationOf(host), note: reputationNotes[category] ?? reputationNotes.web! }
+      ? { ...reputationOf(host), note: reputationNotes[category] ?? reputationNotes["web"]! }
       : {
           score: 100,
           verdict: "Ambiente local",

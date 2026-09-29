@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type ContextMenuItem = {
   id: string;
@@ -32,16 +32,20 @@ export function ContextMenu({ x, y, groups, onClose }: ContextMenuState) {
   }, [x, y]);
 
   useEffect(() => {
-    const close = () => onClose();
+    // Clique dentro do menu não fecha: senão o item desmonta antes de receber o click.
+    const close = (event: Event) => {
+      if (event.target instanceof Node && ref.current?.contains(event.target)) return;
+      onClose();
+    };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("pointerdown", close, true);
-    window.addEventListener("blur", close);
+    window.addEventListener("blur", onClose);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("pointerdown", close, true);
-      window.removeEventListener("blur", close);
+      window.removeEventListener("blur", onClose);
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
@@ -81,6 +85,10 @@ export function ContextMenu({ x, y, groups, onClose }: ContextMenuState) {
 
 export function useContextMenu() {
   const [menu, setMenu] = useState<Omit<ContextMenuState, "onClose"> | null>(null);
-  const open = (x: number, y: number, groups: ContextMenuGroup[]) => setMenu({ x, y, groups });
-  return { open, close: () => setMenu(null), menu };
+  const open = useCallback(
+    (x: number, y: number, groups: ContextMenuGroup[]) => setMenu({ x, y, groups }),
+    [],
+  );
+  const close = useCallback(() => setMenu(null), []);
+  return { open, close, menu };
 }

@@ -1,0 +1,198 @@
+import type { HydratePayload } from "../store/reducer";
+import { CLOSED_TABS_LIMIT, defaultPrefs, type BrowserState, type Prefs } from "../store/state";
+import type { ClosedTab, Entry, QuickLink, Tab } from "../types";
+
+export const SNAPSHOT_VERSION = 1;
+
+/** Formato gravado em disco (localStorage na web, tabela kv do SQLite no desktop). */
+export type Snapshot = {
+  version: typeof SNAPSHOT_VERSION;
+  prefs: Prefs;
+  session: { tabs: Tab[]; activeId: number | null };
+  /** null = usar os atalhos padrão. */
+  links: QuickLink[] | null;
+  closedTabs: ClosedTab[];
+};
+
+export const SNAPSHOT_SECTIONS = ["version", "prefs", "session", "links", "closedTabs"] as const;
+
+export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+type Json = Record<string, unknown>;
+const isObject = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const isString = (value: unknown): value is string => typeof value === "string";
+
+function parseEntry(value: unknown): Entry | null {
+  if (!isObject(value) || !isString(value["title"]) || !isString(value["url"])) return null;
+  const kind = value["kind"] === "home" ? "home" : value["kind"] === "page" ? "page" : null;
+  return kind ? { title: value["title"], url: value["url"], kind } : null;
+}
+
+function parseTab(value: unknown): Tab | null {
+  if (!isObject(value) || !Number.isSafeInteger(value["id"]) || !Array.isArray(value["history"])) {
+    return null;
+  }
+  const history = value["history"].map(parseEntry).filter((entry) => entry !== null);
+  if (!history.length) return null;
+  const rawIndex = Number.isInteger(value["index"]) ? (value["index"] as number) : 0;
+  const tab: Tab = {
+    id: value["id"] as number,
+    history,
+    index: Math.min(Math.max(rawIndex, 0), history.length - 1),
+  };
+  if (value["pinned"] === true) tab.pinned = true;
+  if (value["muted"] === true) tab.muted = true;
+  if (isString(value["favicon"]) && /^(https?:|data:image\/)/.test(value["favicon"])) {
+    tab.favicon = value["favicon"];
+  }
+  return tab;
+}
+
+export function parseTabs(value: unknown): Tab[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const tabs: Tab[] = [];
+  for (const item of value) {
+    // Abas anônimas nunca deveriam estar em disco; se estiverem, são descartadas.
+    if (isObject(item) && item["private"] === true) continue;
+    const tab = parseTab(item);
+    if (tab && !seen.has(tab.id)) {
+      seen.add(tab.id);
+      tabs.push(tab);
+    }
+  }
+  return tabs;
+}
+
+export function parseLinks(value: unknown): QuickLink[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter(
+    (item): item is QuickLink => isObject(item) && isString(item["name"]) && isString(item["url"]),
+  );
+}
+
+export function parseClosedTabs(value: unknown): ClosedTab[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (item): item is ClosedTab =>
+        isObject(item) && isString(item["title"]) && isString(item["url"]),
+    )
+    .map((item) => ({ title: item.title, url: item.url }))
+    .slice(-CLOSED_TABS_LIMIT);
+}
+
+export function parsePrefs(value: unknown): Prefs {
+  const raw = isObject(value) ? value : {};
+  const bool = (key: keyof Prefs) =>
+    typeof raw[key] === "boolean" ? (raw[key] as boolean) : (defaultPrefs[key] as boolean);
+  return {
+    dark: bool("dark"),
+    shield: bool("shield"),
+    aiOpen: bool("aiOpen"),
+    railCollapsed: bool("railCollapsed"),
+    engine:
+      raw["engine"] === "yandex" || raw["engine"] === "duckduckgo" ? raw["engine"] : "duckduckgo",
+    orientation: raw["orientation"] === "vertical" ? "vertical" : "horizontal",
+    pausedHosts: Array.isArray(raw["pausedHosts"])
+      ? [...new Set(raw["pausedHosts"].filter(isString))]
+      : [],
+  };
+}
+
+/** Aceita qualquer coisa vinda do disco; campos inválidos voltam ao padrão. */
+export function parseSnapshot(value: unknown): Snapshot | null {
+  if (!isObject(value) || value["version"] !== SNAPSHOT_VERSION) return null;
+  const session = isObject(value["session"]) ? value["session"] : {};
+  const activeId = Number.isSafeInteger(session["activeId"])
+    ? (session["activeId"] as number)
+    : null;
+  return {
+    version: SNAPSHOT_VERSION,
+    prefs: parsePrefs(value["prefs"]),
+    session: { tabs: parseTabs(session["tabs"]), activeId },
+    links: parseLinks(value["links"]),
+    closedTabs: parseClosedTabs(value["closedTabs"]),
+  };
+}
+
+export type PersistedSlice = Pick<
+  BrowserState,
+  "tabs" | "activeId" | "prefs" | "links" | "closedTabs"
+>;
+
+export function snapshotOf(state: PersistedSlice): Snapshot {
+  const tabs = state.tabs.filter((tab) => !tab.private).map(({ private: _private, ...tab }) => tab);
+  return {
+    version: SNAPSHOT_VERSION,
+    prefs: state.prefs,
+    session: {
+      tabs,
+      activeId: tabs.some((tab) => tab.id === state.activeId) ? state.activeId : null,
+    },
+    links: state.links,
+    closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
+  };
+}
+
+export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | null {
+  if (!snapshot) return null;
+  return {
+    prefs: snapshot.prefs,
+    tabs: snapshot.session.tabs.length ? snapshot.session.tabs : null,
+    activeId: snapshot.session.activeId,
+    links: snapshot.links,
+    closedTabs: snapshot.closedTabs,
+  };
+}
+
+// --- Formato antigo (v1.3.x): uma chave de localStorage por preferência. ---
+
+export const LEGACY_KEYS = [
+  "agzos-theme",
+  "agzos-tabs",
+  "agzos-engine",
+  "agzos-shield",
+  "agzos-ai",
+  "agzos-links",
+  "agzos-paused-hosts",
+  "agzos-tab-orientation",
+  "agzos-tab-rail-collapsed",
+  "agzos-closed-tabs",
+] as const;
+
+function readJson(storage: StorageLike, key: string): unknown {
+  try {
+    return JSON.parse(storage.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+/** Lê o estado gravado pela 1.3.x. Retorna null quando nenhuma chave antiga existe. */
+export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
+  if (!LEGACY_KEYS.some((key) => storage.getItem(key) !== null)) return null;
+  const tabs = parseTabs(readJson(storage, "agzos-tabs"));
+  return {
+    version: SNAPSHOT_VERSION,
+    prefs: parsePrefs({
+      dark: storage.getItem("agzos-theme") === "dark",
+      shield: storage.getItem("agzos-shield") !== "off",
+      aiOpen: storage.getItem("agzos-ai") !== "off",
+      engine: storage.getItem("agzos-engine"),
+      orientation: storage.getItem("agzos-tab-orientation"),
+      railCollapsed: storage.getItem("agzos-tab-rail-collapsed") === "1",
+      pausedHosts: readJson(storage, "agzos-paused-hosts"),
+    }),
+    // A 1.3 abria sempre na primeira aba.
+    session: { tabs, activeId: tabs[0]?.id ?? null },
+    links: parseLinks(readJson(storage, "agzos-links")),
+    // A 1.3 empilhava no fim e reabria o último.
+    closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),
+  };
+}
+
+export function clearLegacy(storage: StorageLike) {
+  for (const key of LEGACY_KEYS) storage.removeItem(key);
+}
