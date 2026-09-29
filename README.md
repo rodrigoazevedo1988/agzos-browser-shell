@@ -30,7 +30,18 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   recusava o login, como a identidade de Chrome é aplicada e como testar.
 - [Roadmap Opera/Vivaldi](docs/roadmap-opera-vivaldi.md): diagnóstico da v1.3.3 e
   plano de evolução por fases.
+- [PRD v1.4 — Fundação](docs/prd/v1.4-fundacao.md): store, SQLite e testes.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
+
+## Testes
+
+```sh
+bun run lint && bun run typecheck && bun run test   # lint, tipos e unitários (Vitest)
+bun run test:e2e:web                                 # Playwright na versão web
+xvfb-run -a bun run test:e2e:desktop                 # Playwright no Electron (sem tela: xvfb-run)
+```
+
+Se o `bun install` não baixar o binário do Electron, rode `node node_modules/electron/install.js`.
 
 ## Development
 

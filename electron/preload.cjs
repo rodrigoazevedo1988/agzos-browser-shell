@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   showTabMenu: (context) => ipcRenderer.invoke("tabmenu:show", context),
   respondPermission: (id, allow, remember) =>
     ipcRenderer.invoke("permission:respond", { id, allow, remember }),
+  stateLoad: () => ipcRenderer.invoke("state:load"),
+  stateSave: (sections) => ipcRenderer.invoke("state:save", sections),
   keyLoad: () => ipcRenderer.invoke("key:load"),
   keySave: (list) => ipcRenderer.invoke("key:save", list),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
