@@ -399,6 +399,8 @@ function notifyTabState(id) {
   const entry = views.get(id);
   if (!entry || entry.view.webContents.isDestroyed()) return;
   const contents = entry.view.webContents;
+  // Preparação com about:blank (loadWithScriptlets): a casca continua mostrando o site.
+  if (primingContents.has(contents)) return;
   crashedViews.delete(id);
   const url = contents.getURL();
   const rejected = isGoogleRejectedUrl(url);
@@ -806,11 +808,28 @@ function scheduleThumbnail(id, delay) {
 const scriptletRegistry = new WeakMap();
 const MAX_SCRIPTLET_SITES = 30;
 
+const SCRIPTLET_WORLD = "agzos-adblock";
+
+// Guarda: só no documento principal do site, nunca numa página de login.
+// Cada scriptlet no seu próprio escopo e try/catch: vários trazem a mesma dependência
+// declarada como classe (ex.: `class JSONPath`), e juntos no mesmo escopo viravam um
+// SyntaxError que impedia TODOS de rodar (era por isso que o YouTube seguia com anúncios).
+// O escopo próprio também evita variáveis globais (scriptletGlobals) visíveis à página.
 function scriptletSource(host, scripts) {
+  const isolated = scripts.map((script) => `try { (function () {\n${script}\n})(); } catch (_) {}`);
   return `if (window.top === window && location.hostname === ${JSON.stringify(host)} &&
     !new RegExp(${JSON.stringify(AUTH_PATH_SOURCE)}, "i").test(location.pathname)) {
-${scripts.join("\n;\n")}
+${isolated.join("\n")}
 }`;
+}
+
+function removeScripts(contents, ids) {
+  if (contents.isDestroyed() || !contents.debugger.isAttached()) return;
+  for (const identifier of ids) {
+    void contents.debugger
+      .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier })
+      .catch(() => {});
+  }
 }
 
 /** Devolve uma promessa que resolve quando o registro (se houver) foi confirmado. */
@@ -831,31 +850,40 @@ function ensureScriptlets(contents, url, phase) {
   if (current?.settled && current.pid === pid) return null;
   if (phase === "early" && current && !current.settled) return null;
   if (!current && registry.size >= MAX_SCRIPTLET_SITES) return null;
-  const scripts = adblock.scriptletsFor(url);
-  if (!scripts.length) {
-    registry.set(host, { id: null, pid, settled: true });
+  const { main, isolated } = adblock.scriptletsFor(url);
+  if (!main.length && !isolated.length) {
+    registry.set(host, { ids: [], pid, settled: true });
     return null;
   }
-  const entry = { id: null, pid, settled: phase === "settled" };
+  const entry = { ids: [], pid, settled: phase === "settled" };
   registry.set(host, entry);
-  // O comando sai já (sem esperar: numa aba nova ele só responde depois da primeira
-  // navegação). O registro anterior, se houver, sai quando o novo for confirmado.
-  return contents.debugger
-    .sendCommand("Page.addScriptToEvaluateOnNewDocument", {
-      source: scriptletSource(host, scripts),
-      runImmediately: phase === "early",
-    })
-    .then(({ identifier }) => {
-      if (current?.id && !contents.isDestroyed() && contents.debugger.isAttached()) {
-        void contents.debugger
-          .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier: current.id })
-          .catch(() => {});
-      }
-      entry.id = identifier;
-    })
-    .catch(() => {
-      // Sem CDP a página só fica sem os scriptlets.
+  const runImmediately = phase === "early";
+  // Mundo da página e mundo isolado (como no uBO), cada um com seu registro.
+  const requests = [];
+  if (main.length) {
+    requests.push({ source: scriptletSource(host, main), runImmediately });
+  }
+  if (isolated.length) {
+    requests.push({
+      source: scriptletSource(host, isolated),
+      worldName: SCRIPTLET_WORLD,
+      runImmediately,
     });
+  }
+  // Os comandos saem já (sem esperar: numa guia nova só respondem depois da primeira
+  // navegação). O registro anterior, se houver, sai quando o novo for confirmado.
+  return Promise.all(
+    requests.map((params) =>
+      contents.debugger
+        .sendCommand("Page.addScriptToEvaluateOnNewDocument", params)
+        .then(({ identifier }) => entry.ids.push(identifier))
+        .catch(() => {
+          // Sem CDP a página só fica sem os scriptlets.
+        }),
+    ),
+  ).then(() => {
+    if (current?.ids?.length) removeScripts(contents, current.ids);
+  });
 }
 
 let lastShieldConfig = "";
@@ -877,16 +905,44 @@ function applyShieldConfig(prefs) {
  * CDP só confirma depois da navegação: aí o prazo (500 ms) é o tempo de o comando ser
  * processado. Numa guia existente a confirmação chega em milissegundos.
  */
+// Guias sendo preparadas com about:blank (a casca não vê essa carga).
+const primingContents = new WeakSet();
+
 async function loadWithScriptlets(contents, url) {
+  // Guia nova de um site com scriptlets (ex.: YouTube, inclusive ao restaurar a sessão):
+  // o CDP de uma guia que nunca navegou não garante o registro a tempo da primeira carga,
+  // e numa SPA isso deixaria a sessão inteira sem os scriptlets. Então a guia passa antes
+  // por about:blank (local, instantâneo), o registro é confirmado e só depois vem o site.
   const fresh = contents.getURL() === "";
+  const { main, isolated } =
+    fresh && adblock ? adblock.scriptletsFor(url) : { main: [], isolated: [] };
+  if (fresh && (main.length || isolated.length)) {
+    primingContents.add(contents);
+    await contents.loadURL("about:blank").catch(() => {});
+  }
   const registering = ensureScriptlets(contents, url, "early");
   if (registering) {
-    await Promise.race([
-      registering,
-      new Promise((resolve) => setTimeout(resolve, fresh ? 500 : 1000)),
-    ]);
+    await Promise.race([registering, new Promise((resolve) => setTimeout(resolve, 1000))]);
   }
-  if (!contents.isDestroyed()) await contents.loadURL(url).catch(() => {});
+  if (contents.isDestroyed()) return;
+  const loading = contents.loadURL(url).catch(() => {});
+  if (primingContents.has(contents)) {
+    // Assim que o site entra no histórico, o about:blank sai (o "Voltar" não para nele).
+    contents.once("did-navigate", () => {
+      primingContents.delete(contents);
+      try {
+        const history = contents.navigationHistory;
+        if (history.length() > 1 && history.getEntryAtIndex(0)?.url === "about:blank") {
+          history.removeEntryAtIndex(0);
+        }
+      } catch {
+        // Sem a API: o about:blank fica no histórico, sem outro efeito.
+      }
+      const id = tabIdByContents.get(contents.id);
+      if (id != null) notifyTabState(id);
+    });
+  }
+  await loading;
 }
 
 /** Escudo, sites pausados ou listas mudaram: os scriptlets registrados saem. */
@@ -896,12 +952,7 @@ function resetScriptlets() {
     const registry = scriptletRegistry.get(contents);
     if (!registry || contents.isDestroyed()) continue;
     scriptletRegistry.delete(contents);
-    for (const { id: identifier } of registry.values()) {
-      if (!identifier || !contents.debugger.isAttached()) continue;
-      void contents.debugger
-        .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier })
-        .catch(() => {});
-    }
+    for (const { ids } of registry.values()) removeScripts(contents, ids);
   }
 }
 
