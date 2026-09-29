@@ -100,9 +100,6 @@ button {
   overflow: hidden;
   background: var(--background);
 }
-.titlebar-spacer {
-  flex: 1;
-}
 .titlebar {
   height: 52px;
   display: flex;
@@ -111,20 +108,6 @@ button {
   padding: 0 12px 0 18px;
   border-bottom: 1px solid var(--border);
   background: var(--secondary);
-}
-.window-controls {
-  display: flex;
-  gap: 8px;
-  flex: 0 0 58px;
-}
-.window-controls span {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--border);
-}
-.window-controls span:first-child {
-  background: var(--primary);
 }
 .tabs {
   display: flex;
@@ -918,7 +901,6 @@ button {
     border: 0;
     border-radius: 0;
   }
-  .window-controls,
   .privacy-pill span {
     display: none;
   }
@@ -2056,4 +2038,85 @@ button.download-name:hover {
 .switcher-card {
   animation: tab-in var(--dur-enter) var(--ease-out) both;
   animation-delay: calc(var(--i, 0) * 30ms);
+}
+
+/* Foto da página no lugar do WebContentsView enquanto um painel está aberto. */
+.view-snapshot {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+/* Mac sem barra de título nativa: a faixa de abas (ou a toolbar, com guias verticais)
+   arrasta a janela; o espaço à esquerda é dos botões reais do macOS. */
+.mac-frameless .titlebar {
+  -webkit-app-region: drag;
+  padding-left: 88px;
+}
+.mac-frameless .titlebar button,
+.mac-frameless .titlebar [role="button"],
+.mac-frameless .browser-tab {
+  -webkit-app-region: no-drag;
+}
+.mac-frameless.vertical-tabs .toolbar {
+  -webkit-app-region: drag;
+  padding-left: 88px;
+}
+.mac-frameless .toolbar > * {
+  -webkit-app-region: no-drag;
+}
+.browser-stage.fs.mac-frameless .toolbar,
+.browser-stage.fs.mac-frameless .titlebar {
+  padding-left: 12px;
+}
+
+/* Painéis por cima da foto da página: vidro quase opaco (contraste do texto ≥ 4.5:1
+   mesmo com a página clara atrás no tema escuro) e rolagem própria em janelas baixas. */
+.key-panel {
+  background: color-mix(in oklab, var(--card) 95%, transparent);
+  max-height: calc(100vh - 124px);
+  overflow-y: auto;
+}
+.settings-actions button {
+  height: 30px;
+  font-size: 12px;
+}
+
+/* Aba só com ícone (barra recolhida ou fixada na horizontal): o som vira um selo no
+   canto do favicon, em vez de empurrar o ícone para fora do centro. */
+.tabs-rail.collapsed:not(.peek) .browser-tab .tab-audio,
+.tabs .browser-tab.pinned:not(:hover) .tab-audio {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0 2px;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 1px 3px oklch(0 0 0 / 18%);
+  pointer-events: none;
+}
+.tabs-rail.collapsed:not(.peek) .browser-tab .tab-audio.muted,
+.tabs .browser-tab.pinned:not(:hover) .tab-audio.muted {
+  color: var(--muted-foreground);
+}
+/* Ícone da aba recolhida sempre centralizado e do mesmo tamanho. */
+.tabs-rail.collapsed:not(.peek) .browser-tab > img,
+.tabs-rail.collapsed:not(.peek) .browser-tab > svg:first-child {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+.tabs-rail.collapsed:not(.peek) .browser-tab {
+  height: 38px;
+  border-radius: 9px;
 }

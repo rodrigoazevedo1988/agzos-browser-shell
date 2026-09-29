@@ -12,7 +12,7 @@ function listsNote(desktop: boolean, stats: AdblockStats | null) {
   const date = stats.updatedAt
     ? new Date(stats.updatedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
     : null;
-  return `EasyList, EasyPrivacy e EasyList Brasil${date ? ` · atualizadas em ${date}` : ""}`;
+  return `EasyList, EasyPrivacy, uBlock Origin e EasyList Brasil${date ? ` · atualizadas em ${date}` : ""}`;
 }
 
 export function PrivacyPanel({

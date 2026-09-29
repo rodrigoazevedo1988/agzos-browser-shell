@@ -20,7 +20,28 @@ let server: http.Server;
 let origin = "";
 
 const FILTERS: Record<string, string> = {
-  "/filtros/anuncios.txt": "/anuncios/banner.js\n##.caixa-anuncio\n",
+  "/filtros/anuncios.txt":
+    "/anuncios/banner.js\n##.caixa-anuncio\n127.0.0.1##+js(agzos-teste)\n" +
+    "/anuncios/substituto.js$script,redirect=noopjs\n",
+  // Formato do resources.json do uBlock Origin (espelho do Ghostery).
+  "/filtros/recursos.json": JSON.stringify({
+    scriptlets: [
+      {
+        name: "agzos-teste.js",
+        aliases: [],
+        body: "function agzosTeste(){window.__agzosScriptlet = true;}",
+        dependencies: [],
+      },
+    ],
+    redirects: [
+      {
+        name: "noop.js",
+        aliases: ["noopjs"],
+        body: "window.__agzosRedirect = true;",
+        contentType: "application/javascript",
+      },
+    ],
+  }),
   "/filtros/privacidade.txt": "/pixel/rastreio.gif\n",
 };
 
@@ -29,6 +50,10 @@ const PAGES: Record<string, string> = {
     <h1>Notícia</h1><div class="caixa-anuncio">ANÚNCIO</div>
     <script src="/anuncios/banner.js"></script>
     <img src="/pixel/rastreio.gif" alt="">`,
+  // CSP com nonce, como o YouTube: script inline sem nonce seria recusado.
+  "/scriptlet": `<!doctype html><meta http-equiv="Content-Security-Policy"
+    content="script-src 'nonce-agzos'"><title>Scriptlet</title>
+    <script nonce="agzos">window.viuScriptlet = window.__agzosScriptlet === true;</script>`,
   "/busca": `<!doctype html><title>Busca</title>
     <p>agzos um</p><p>outro texto</p><p>agzos dois</p><p>mais agzos três</p>`,
   "/baixar": `<!doctype html><title>Baixar</title><a href="/arquivo/relatorio.txt">relatório</a>`,
@@ -110,6 +135,7 @@ async function launch(profile: string): Promise<{ app: ElectronApplication; wind
       AGZOS_FILTER_LISTS: JSON.stringify({
         ads: [`${origin}/filtros/anuncios.txt`],
         privacy: [`${origin}/filtros/privacidade.txt`],
+        resources: `${origin}/filtros/recursos.json`,
       }),
     },
   });
@@ -549,6 +575,51 @@ test("seletor do Ctrl+Tab com miniaturas das páginas, confirmado ao soltar o Ct
     await window.keyboard.up("Control");
     await expect(switcher).toHaveCount(0);
     await expect(window.locator(".browser-tab.active")).toContainText("Página UM");
+  } finally {
+    await app.close();
+  }
+});
+
+test("scriptlets (+js) rodam antes dos scripts da página, mesmo com CSP de nonce", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/scriptlet`;
+  try {
+    await waitForFilters(window);
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Scriptlet");
+    await expect.poll(() => inTab(app, url, "window.viuScriptlet")).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("painel aberto mostra a foto da página no lugar (não fica preto)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/foto`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Página FOTO");
+    await window.waitForTimeout(400);
+    await window.getByRole("button", { name: "Configurações" }).click();
+    const photo = window.locator(".view-snapshot");
+    await expect(photo).toBeVisible();
+    expect(await photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(100);
+    // O WebContentsView saiu da frente (senão cobriria o painel).
+    await expect
+      .poll(() =>
+        app.evaluate(({ BrowserWindow }, target) => {
+          const win = BrowserWindow.getAllWindows()[0]!;
+          const view = win.contentView.children.find(
+            (child) =>
+              "webContents" in child &&
+              (child as { webContents: Electron.WebContents }).webContents.getURL() === target,
+          );
+          return view?.getBounds().width ?? -1;
+        }, url),
+      )
+      .toBe(0);
+    await window.keyboard.press("Escape");
+    await expect(photo).toHaveCount(0);
   } finally {
     await app.close();
   }

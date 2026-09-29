@@ -109,3 +109,12 @@ Depois, com uma conta real no app instalado: login em aba normal e anônima, e
 definida em `VERSION`, atualiza o `package.json` e publica com
 `scripts/release-browser.sh` em `https://agzosagency.com.br/browser/`, que mantém só
 as duas versões mais recentes.
+
+## Adblock (desde a 1.3.5)
+
+O antifraude do login usa a telemetria do próprio Google (`play.google.com/log`,
+`google.com/gen_204`), que o EasyPrivacy bloqueia. Com ela bloqueada o Google recusa
+o login como "navegador não seguro". Por isso `electron/adblock.cjs` nunca filtra
+páginas de login nem requisições para serviços de conta (`isAuthFlow`, lista
+`AUTH_HOSTS`). Ao adicionar listas ou regras, confira que esse desvio continua valendo
+(teste em `src/features/browser/main-process.test.ts`).

@@ -20,6 +20,13 @@ const { nextZoom, zoomHostOf } = require("./zoom.cjs");
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
 const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
+const TAB_PRELOAD = path.join(__dirname, "tab-preload.cjs");
+
+// Exceção não tratada no main vira log: o diálogo padrão do Electron é modal e, na
+// saída do app, seguraria o processo aberto.
+process.on("uncaughtException", (error) => {
+  console.error("Agzos: erro inesperado no processo principal.", error);
+});
 
 // Testes e2e isolam o perfil numa pasta temporária.
 if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_DATA);
@@ -58,7 +65,8 @@ function chromePlatform() {
     return {
       token: "Macintosh; Intel Mac OS X 10_15_7",
       name: "macOS",
-      version: process.getSystemVersion(),
+      // O Chrome manda sempre três partes ("15.6.0").
+      version: `${process.getSystemVersion()}.0.0`.split(".").slice(0, 3).join("."),
     };
   }
   if (process.platform === "win32") {
@@ -174,11 +182,11 @@ const USER_AGENT_METADATA = {
 app.userAgentFallback = CLEAN_USER_AGENT;
 
 // Adblock: decide cada requisição de página. A janela da casca (file://) nunca é filtrada.
-function shouldCancelRequest(details) {
-  if (!adblock) return false;
+function requestDecision(details) {
+  if (!adblock) return null;
   try {
     const contents = details.webContents;
-    if (contents && mainWindow && contents === mainWindow.webContents) return false;
+    if (contents && mainWindow && contents === mainWindow.webContents) return null;
     const alive = contents && !contents.isDestroyed();
     let sourceUrl = details.referrer || "";
     try {
@@ -186,7 +194,7 @@ function shouldCancelRequest(details) {
     } catch {
       // Frame já descartado: fica o referrer.
     }
-    return adblock.shouldBlock({
+    return adblock.decide({
       url: details.url,
       resourceType: details.resourceType,
       pageUrl: alive ? contents.getURL() : sourceUrl,
@@ -194,7 +202,7 @@ function shouldCancelRequest(details) {
       tabId: alive ? tabIdByContents.get(contents.id) : undefined,
     });
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -218,8 +226,14 @@ function notifyDownloadNavigation(item, contents) {
 app.on("session-created", (ses) => {
   ses.setUserAgent(CLEAN_USER_AGENT);
   ses.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: shouldCancelRequest(details) });
+    callback(requestDecision(details) ?? {});
   });
+  // Scriptlets do adblock no início de cada página (ver tab-preload.cjs).
+  try {
+    ses.registerPreloadScript({ type: "frame", id: "agzos-adblock", filePath: TAB_PRELOAD });
+  } catch {
+    // Session sem suporte (não deveria acontecer no Electron 44): segue sem scriptlets.
+  }
   ses.webRequest.onHeadersReceived((details, callback) => {
     rememberAcceptedHints(details);
     callback({});
@@ -891,6 +905,11 @@ function createWindow() {
     backgroundColor: "#0E0E0E",
     show: false,
     autoHideMenuBar: true,
+    // Mac: sem a barra de título nativa; a faixa de abas vira a área de arrastar e os
+    // botões reais (semáforo) ficam por cima dela.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 18 } }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -968,6 +987,20 @@ function registerIpc() {
 
   ipcMain.handle("tab:capture", (_event, { id }) => captureThumbnail(id));
 
+  // Foto da página visível, em tamanho real: a casca mostra no lugar dela enquanto um
+  // painel está aberto (o WebContentsView precisa sair da frente do painel).
+  ipcMain.handle("tab:snapshot", async (_event, { id }) => {
+    const contents = views.get(id)?.view.webContents;
+    if (!contents || contents.isDestroyed() || !isVisible(id)) return null;
+    try {
+      const image = await contents.capturePage();
+      if (image.isEmpty()) return null;
+      return `data:image/jpeg;base64,${image.toJPEG(88).toString("base64")}`;
+    } catch {
+      return null;
+    }
+  });
+
   ipcMain.handle("tab:bounds", (_event, rect) => {
     if (fullscreenActive) return;
     if (rect && rect.width > 0 && rect.height > 0) lastRect = rect;
@@ -1030,6 +1063,13 @@ function registerIpc() {
   // Mudança no escudo vale na hora (o state:save tem debounce).
   ipcMain.handle("adblock:config", (_event, config) => {
     adblock?.setConfig(shieldConfigOf(config));
+  });
+
+  // Chamada síncrona do tab-preload: precisa responder antes dos scripts da página.
+  ipcMain.on("adblock:scriptlets", (event, url) => {
+    const fromShell = mainWindow && event.sender === mainWindow.webContents;
+    event.returnValue =
+      !adblock || fromShell || typeof url !== "string" ? [] : adblock.scriptletsFor(url);
   });
 
   ipcMain.handle("adblock:stats", () =>

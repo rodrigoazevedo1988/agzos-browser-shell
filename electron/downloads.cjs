@@ -23,6 +23,8 @@ function createDownloadManager({ database, downloadsDir, emit, isPrivateSession 
   const privateRecords = new Map();
   const saveAsNext = new WeakSet();
   let privateSeq = 0;
+  // App saindo: o banco fecha no will-quit e os "done" dos cancelamentos chegam depois.
+  let closing = false;
 
   function reservedPaths() {
     return new Set([...active.values()].map((entry) => entry.record.path).filter(Boolean));
@@ -44,8 +46,13 @@ function createDownloadManager({ database, downloadsDir, emit, isPrivateSession 
   }
 
   function persist(entry) {
-    if (entry.private || !database) return;
-    database.updateDownload(entry.record.id, entry.record);
+    if (entry.private || !database || closing) return;
+    try {
+      database.updateDownload(entry.record.id, entry.record);
+    } catch (error) {
+      // Erro no processo principal abriria um diálogo e seguraria o app aberto.
+      console.error("Agzos: não foi possível gravar o download.", error);
+    }
   }
 
   function track(event, item, contents) {
@@ -86,6 +93,7 @@ function createDownloadManager({ database, downloadsDir, emit, isPrivateSession 
       if (Date.now() - entry.lastEmit >= PROGRESS_INTERVAL_MS) send(entry);
     });
     item.once("done", (_event, state) => {
+      if (closing) return;
       record.receivedBytes = item.getReceivedBytes();
       record.totalBytes = item.getTotalBytes() || record.receivedBytes;
       const savePath = item.getSavePath();
@@ -162,6 +170,14 @@ function createDownloadManager({ database, downloadsDir, emit, isPrivateSession 
     },
     /** Saída do app: download em andamento segura o quit do Electron; cancela todos. */
     cancelAll() {
+      // Grava "cancelado" já (o banco ainda está aberto) e só depois cancela.
+      const now = Date.now();
+      for (const entry of active.values()) {
+        entry.record.state = "cancelled";
+        entry.record.endedAt = now;
+        persist(entry);
+      }
+      closing = true;
       for (const entry of active.values()) entry.item?.cancel();
     },
     remove(id) {

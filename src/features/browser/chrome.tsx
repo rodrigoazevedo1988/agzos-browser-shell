@@ -222,12 +222,43 @@ export function AgzosBrowser() {
     };
   }, [switcherOpen]);
 
+  // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
+  // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
+  const overlay = panel !== null || switcherVisible;
+  const [viewHidden, setViewHidden] = useState(false);
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const activeIdRef = useRef(state.activeId);
+  activeIdRef.current = state.activeId;
+  useEffect(() => {
+    if (!overlay) {
+      setViewHidden(false);
+      // A página nativa volta por cima; a foto sai logo depois, sem piscar.
+      const timer = window.setTimeout(() => setSnapshot(null), 150);
+      return () => window.clearTimeout(timer);
+    }
+    if (!desktop) {
+      setViewHidden(true);
+      return;
+    }
+    let cancelled = false;
+    void desktop
+      .snapshotTab(activeIdRef.current)
+      .catch(() => null)
+      .then((image) => {
+        if (cancelled) return;
+        setSnapshot(image);
+        setViewHidden(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [overlay, desktop]);
+
   useDesktopSync({
     desktop,
     state,
     dispatch,
-    // O WebContentsView fica por cima da casca: sai da frente com painel ou seletor aberto.
-    panelOpen: panel !== null || switcherVisible,
+    panelOpen: viewHidden,
     runCommandRef,
     runHotkeyRef,
     onPermission: setPermission,
@@ -329,35 +360,38 @@ export function AgzosBrowser() {
 
   const togglePanel = (target: Panel) => setPanel((open) => (open === target ? null : target));
 
+  const settingsButton = (
+    <Button
+      variant={panel === "settings" ? "default" : "ghost"}
+      size="icon"
+      title="Configurações"
+      aria-label="Configurações"
+      onClick={() => togglePanel("settings")}
+    >
+      <MoreHorizontal />
+    </Button>
+  );
+
   return (
     <main
-      className={cn("browser-stage", prefs.dark && "dark", state.fullscreen && "fs")}
+      className={cn(
+        "browser-stage",
+        prefs.dark && "dark",
+        state.fullscreen && "fs",
+        // App do Mac sem barra de título nativa: a casca desenha a área de arrastar.
+        desktop && isMac && "mac-frameless",
+        prefs.orientation === "vertical" && "vertical-tabs",
+      )}
       data-ready={state.hydrated ? "true" : undefined}
     >
       <section className="browser-window" aria-label="Agzos Browser">
-        <header className="titlebar">
-          {isMac && (
-            <div className="window-controls" aria-label="Controles da janela">
-              <span />
-              <span />
-              <span />
-            </div>
-          )}
-          {prefs.orientation === "horizontal" ? (
+        {/* Guias verticais: sem a faixa de cima (o "⋯" vai para a toolbar), mais página. */}
+        {prefs.orientation === "horizontal" && (
+          <header className="titlebar">
             <TabStrip {...listProps} />
-          ) : (
-            <div className="titlebar-spacer" />
-          )}
-          <Button
-            variant={panel === "settings" ? "default" : "ghost"}
-            size="icon"
-            title="Configurações"
-            aria-label="Configurações"
-            onClick={() => togglePanel("settings")}
-          >
-            <MoreHorizontal />
-          </Button>
-        </header>
+            {settingsButton}
+          </header>
+        )}
 
         <Toolbar
           ref={omniboxRef}
@@ -391,6 +425,7 @@ export function AgzosBrowser() {
           onToggleKey={() => togglePanel("key")}
           onToggleDark={() => setPrefs({ dark: !prefs.dark })}
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
+          trailing={prefs.orientation === "vertical" ? settingsButton : null}
         />
 
         {state.find && state.find.id === activeTab.id && (
@@ -423,6 +458,7 @@ export function AgzosBrowser() {
               tab={activeTab}
               loading={loading}
               blockedToday={blockedToday}
+              snapshot={viewHidden ? snapshot : null}
               desktop={desktop}
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}

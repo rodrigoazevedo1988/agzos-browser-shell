@@ -12,7 +12,7 @@ import {
   Sun,
   VenetianMask,
 } from "lucide-react";
-import { forwardRef, type CSSProperties } from "react";
+import { forwardRef, type CSSProperties, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -45,6 +45,8 @@ export type ToolbarProps = {
   onToggleKey: () => void;
   onToggleDark: () => void;
   onToggleAi: () => void;
+  /** Botão extra no fim da barra (o "⋯" nas guias verticais). */
+  trailing?: ReactNode;
 };
 
 export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
@@ -181,6 +183,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
           >
             <Sparkles />
           </Button>
+          {props.trailing}
         </div>
       </div>
     );

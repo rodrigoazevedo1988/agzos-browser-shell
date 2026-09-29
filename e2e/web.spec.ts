@@ -323,3 +323,13 @@ test("UX: Esc fecha o painel aberto; clique do meio fecha a aba", async ({ page 
   await tabs(page).last().click({ button: "middle" });
   await expect(tabs(page)).toHaveCount(1);
 });
+
+test("guias verticais: sem a faixa de cima; o ⋯ vai para a toolbar", async ({ page }) => {
+  await expect(page.locator(".titlebar")).toHaveCount(1);
+  await page.locator(".tabs").click({ button: "right", position: { x: 700, y: 20 } });
+  await page.getByText("Mostrar guias verticalmente").click();
+  await expect(page.locator(".tabs-rail")).toBeVisible();
+  await expect(page.locator(".titlebar")).toHaveCount(0);
+  await page.locator(".toolbar").getByRole("button", { name: "Configurações" }).click();
+  await expect(page.locator(".key-panel")).toHaveCount(1);
+});

@@ -12,7 +12,12 @@ for (const [category, texts] of Object.entries(workerData.lists)) {
     loadGenericCosmeticsFilters: category === "ads",
     enableHtmlFiltering: false,
     loadExtendedSelectors: false,
+    loadCSPFilters: false,
   });
+  // Scriptlets (+js) e redirecionamentos ($redirect) usam o código do resources.json.
+  if (category === "ads" && workerData.resources) {
+    engine.updateResources(workerData.resources, String(workerData.resources.length));
+  }
   engines[category] = engine.serialize();
 }
 parentPort.postMessage(
