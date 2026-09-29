@@ -34,3 +34,6 @@ dist-ssr
 # Testes
 test-results/
 playwright-report/
+
+# Command Code (config local)
+.commandcode/
