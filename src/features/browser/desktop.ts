@@ -51,13 +51,24 @@ export type DesktopBridge = {
   setPanelOpen(open: boolean): Promise<void>;
   showTabMenu(context: DesktopTabMenuContext): Promise<void>;
   respondPermission(id: string, allow: boolean, remember: boolean): Promise<void>;
+  stateLoad(): Promise<{ available: boolean; sections: Record<string, unknown> }>;
+  stateSave(sections: Record<string, unknown>): Promise<{ ok: boolean }>;
   keyLoad(): Promise<Credential[] | null>;
   keySave(list: Credential[]): Promise<{ ok: boolean }>;
   openExternal(url: string): Promise<void>;
   onTabEvent(callback: (event: DesktopTabEvent) => void): () => void;
   onOpenRequest(callback: (payload: { url: string }) => void): () => void;
   onFullscreen(callback: (payload: { active: boolean }) => void): () => void;
-  onHotkey(callback: (payload: { key: string; shift: boolean }) => void): () => void;
+  onHotkey(
+    callback: (payload: {
+      key: string;
+      shift: boolean;
+      alt: boolean;
+      meta: boolean;
+      ctrl: boolean;
+    }) => void,
+  ): () => void;
+  /** `action` é um CommandId (ver commands.ts). */
   onTabMenuAction(
     callback: (payload: { action: string; tabId: number | null }) => void,
   ): () => void;

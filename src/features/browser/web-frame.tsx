@@ -40,7 +40,7 @@ function NativeView({
 }: {
   tabId: number;
   url: string;
-  requestedUrl?: string;
+  requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
   muted: boolean;
@@ -104,7 +104,7 @@ export function WebFrame({
   tabId: number;
   title: string;
   url: string;
-  requestedUrl?: string;
+  requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
   muted: boolean;

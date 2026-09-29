@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-VERSION="1.3.3"
+VERSION="1.4.0"
+# Arquivos do processo principal que vão para resources/app/electron.
+ELECTRON_FILES=(main.cjs preload.cjs db.cjs)
 
 cd /var/www/agzos-browser
 sed -i -E "s/\"version\": \"[0-9.]+\"/\"version\": \"$VERSION\"/" package.json
@@ -31,8 +33,7 @@ rm -rf v$VERSION && mkdir v$VERSION && cd v$VERSION
 echo "Building Win..."
 rm -rf win && mkdir win && unzip -q ../electron-v44.4.5-win32-x64.zip -d win
 mkdir -p win/resources/app/electron
-cp /var/www/agzos-browser/electron/main.cjs win/resources/app/electron/
-cp /var/www/agzos-browser/electron/preload.cjs win/resources/app/electron/
+for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" win/resources/app/electron/; done
 cp -r /var/www/agzos-browser/dist win/resources/app/dist
 printf '%s\n' "$APPJSON" > win/resources/app/package.json
 rm -f win/resources/default_app.asar
@@ -45,8 +46,7 @@ echo "Win OK"
 echo "Building Linux..."
 rm -rf linux && mkdir linux && unzip -q ../electron-v44.4.5-linux-x64.zip -d linux
 mkdir -p linux/resources/app/electron
-cp /var/www/agzos-browser/electron/main.cjs linux/resources/app/electron/
-cp /var/www/agzos-browser/electron/preload.cjs linux/resources/app/electron/
+for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" linux/resources/app/electron/; done
 cp -r /var/www/agzos-browser/dist linux/resources/app/dist
 printf '%s\n' "$APPJSON" > linux/resources/app/package.json
 rm -f linux/resources/default_app.asar
@@ -76,8 +76,7 @@ with open(path, "wb") as f:
 PY
 
   mkdir -p "$APP/Contents/Resources/app/electron"
-  cp /var/www/agzos-browser/electron/main.cjs "$APP/Contents/Resources/app/electron/"
-  cp /var/www/agzos-browser/electron/preload.cjs "$APP/Contents/Resources/app/electron/"
+  for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" "$APP/Contents/Resources/app/electron/"; done
   cp -r /var/www/agzos-browser/dist "$APP/Contents/Resources/app/dist"
   printf '%s\n' "$APPJSON" > "$APP/Contents/Resources/app/package.json"
   rm -f "$APP/Contents/Resources/default_app.asar"
