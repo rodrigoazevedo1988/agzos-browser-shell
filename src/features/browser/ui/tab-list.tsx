@@ -1,5 +1,5 @@
 import { PanelLeftClose, PanelLeftOpen, Plus, VenetianMask } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,10 @@ export function TabStrip(props: ListProps) {
       role="tablist"
       aria-label="Abas abertas"
       onContextMenu={props.onStripMenu}
+      // Duplo clique no espaço vazio da barra abre uma aba nova.
+      onDoubleClick={(event) => {
+        if (event.target === event.currentTarget) props.onNewTab();
+      }}
     >
       {renderTabs(props)}
       <Button
@@ -64,13 +68,36 @@ export function TabStrip(props: ListProps) {
   );
 }
 
+/** Barra recolhida: pausar o mouse sobre ela abre uma espiada (sem mudar a preferência). */
+const PEEK_OPEN_MS = 260;
+const PEEK_CLOSE_MS = 320;
+
 export function TabRail({
   collapsed,
   onToggleCollapsed,
   ...props
 }: ListProps & { collapsed: boolean; onToggleCollapsed: () => void }) {
+  const [peek, setPeek] = useState(false);
+  const timer = useRef<number | null>(null);
+  const schedule = (open: boolean) => {
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setPeek(open), open ? PEEK_OPEN_MS : PEEK_CLOSE_MS);
+  };
+  useEffect(() => {
+    setPeek(false);
+    return () => {
+      if (timer.current) window.clearTimeout(timer.current);
+    };
+  }, [collapsed]);
+  const expanded = !collapsed || peek;
+
   return (
-    <aside className={cn("tabs-rail", collapsed && "collapsed")} onContextMenu={props.onStripMenu}>
+    <aside
+      className={cn("tabs-rail", collapsed && "collapsed", peek && "peek")}
+      onContextMenu={props.onStripMenu}
+      onMouseEnter={() => collapsed && schedule(true)}
+      onMouseLeave={() => collapsed && schedule(false)}
+    >
       <div className="rail-head">
         <Button
           variant="ghost"
@@ -82,7 +109,7 @@ export function TabRail({
         >
           {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
         </Button>
-        {!collapsed && (
+        {expanded && (
           <>
             <span className="rail-title">Guias</span>
             <div className="rail-actions">
@@ -108,7 +135,14 @@ export function TabRail({
           </>
         )}
       </div>
-      <div className="rail-tabs" role="tablist" aria-label="Abas verticais">
+      <div
+        className="rail-tabs"
+        role="tablist"
+        aria-label="Abas verticais"
+        onDoubleClick={(event) => {
+          if (event.target === event.currentTarget) props.onNewTab();
+        }}
+      >
         {renderTabs(props)}
       </div>
     </aside>
