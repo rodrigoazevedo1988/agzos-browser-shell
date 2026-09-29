@@ -1,4 +1,13 @@
-import { Check, History, MoreHorizontal, Search, ShieldCheck, Star, X } from "lucide-react";
+import {
+  Check,
+  History,
+  MoreHorizontal,
+  PartyPopper,
+  Search,
+  ShieldCheck,
+  Star,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type {
@@ -52,6 +61,7 @@ export function SettingsPanel({
   update,
   onCheckUpdate,
   onInstallUpdate,
+  onShowWhatsNew,
   onOpenHistory,
   onOpenBookmarks,
   onReset,
@@ -82,6 +92,8 @@ export function SettingsPanel({
   update: UpdateState | null;
   onCheckUpdate: () => void;
   onInstallUpdate: () => void;
+  /** Abre as novidades da versão atual (null na web). */
+  onShowWhatsNew: (() => void) | null;
   onOpenHistory: () => void;
   onOpenBookmarks: () => void;
   onReset: () => void;
@@ -185,6 +197,11 @@ export function SettingsPanel({
         <Button variant="outline" size="sm" onClick={onOpenBookmarks}>
           <Star /> Favoritos
         </Button>
+        {onShowWhatsNew && (
+          <Button variant="outline" size="sm" onClick={onShowWhatsNew}>
+            <PartyPopper /> Novidades desta versão
+          </Button>
+        )}
       </div>
       {permissions && (
         <div className="settings-section">
@@ -289,6 +306,12 @@ export function SettingsPanel({
           </li>
           <li>
             <kbd>⌘/Ctrl Shift O</kbd> Favoritos
+          </li>
+          <li>
+            <kbd>⌘/Ctrl Shift P</kbd> Picture-in-picture
+          </li>
+          <li>
+            <kbd>⌘/Ctrl Shift PgUp/PgDn</kbd> Mover guia
           </li>
         </ul>
       </div>

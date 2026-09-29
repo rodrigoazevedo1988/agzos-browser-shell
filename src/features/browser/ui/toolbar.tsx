@@ -5,6 +5,7 @@ import {
   KeyRound,
   LockKeyhole,
   Moon,
+  PictureInPicture2,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -29,6 +30,8 @@ export type ToolbarProps = {
   blockedCount: number;
   /** Zoom da aba ativa (1 = 100 %). */
   zoom: number;
+  /** Botão de picture-in-picture: guia com vídeo tocando (ou já em PiP). null = escondido. */
+  pip: { active: boolean; onToggle: () => void } | null;
   /** Botão de downloads: só aparece quando há algum na lista. */
   downloads: { visible: boolean; open: boolean; active: number; fraction: number | null };
   keyOpen: boolean;
@@ -171,6 +174,18 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
             <strong>{props.blockedCount}</strong>
             <span>bloqueados</span>
           </button>
+          {props.pip && (
+            <Button
+              variant={props.pip.active ? "default" : "ghost"}
+              size="icon"
+              onClick={props.pip.onToggle}
+              title="Picture-in-picture (Ctrl/⌘ Shift P)"
+              aria-label={props.pip.active ? "Sair do picture-in-picture" : "Picture-in-picture"}
+              aria-pressed={props.pip.active}
+            >
+              <PictureInPicture2 />
+            </Button>
+          )}
           {props.downloads.visible && (
             <Button
               variant={props.downloads.open ? "default" : "ghost"}

@@ -19,6 +19,7 @@ export function TabItem({
   active,
   playing,
   hibernated = false,
+  dropMark = null,
   confirmingClose,
   handlers,
 }: {
@@ -26,6 +27,8 @@ export function TabItem({
   active: boolean;
   playing: boolean;
   hibernated?: boolean;
+  /** Arrastando outra guia: ela cai antes/depois desta. */
+  dropMark?: "before" | "after" | null;
   confirmingClose: boolean;
   handlers: TabHandlers;
 }) {
@@ -65,6 +68,7 @@ export function TabItem({
         tab.pinned && "pinned",
         tab.private && "private",
         hibernated && "hibernated",
+        dropMark && `drop-${dropMark}`,
       )}
     >
       {tab.private ? (

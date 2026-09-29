@@ -464,3 +464,49 @@ describe("sincronização entre janelas (store desktop)", () => {
     expect(Object.keys(saved[0]!)).not.toContain("prefs");
   });
 });
+
+describe("reordenar guias (1.5.1)", () => {
+  const withTabs = () =>
+    run(
+      { type: "nav/push", entry: page("https://a.com") },
+      { type: "tab/new" },
+      { type: "nav/push", entry: page("https://b.com") },
+      { type: "tab/new" },
+      { type: "nav/push", entry: page("https://c.com") },
+    );
+  const order = (state: BrowserState) => state.tabs.map((tab) => tab.id);
+
+  it("arrasta para qualquer posição da ordem exibida", () => {
+    const state = withTabs();
+    expect(order(browserReducer(state, { type: "tab/move", id: 3, index: 0 }))).toEqual([3, 1, 2]);
+    expect(order(browserReducer(state, { type: "tab/move", id: 1, index: 2 }))).toEqual([2, 3, 1]);
+    expect(order(browserReducer(state, { type: "tab/move", id: 1, index: 99 }))).toEqual([2, 3, 1]);
+    // Mesma posição: estado intacto.
+    expect(browserReducer(state, { type: "tab/move", id: 2, index: 1 })).toBe(state);
+    expect(browserReducer(state, { type: "tab/move", id: 42, index: 0 })).toBe(state);
+  });
+
+  it("fixadas ficam no grupo das fixadas", () => {
+    const pinned = browserReducer(withTabs(), { type: "tab/toggle-pin", id: 3 });
+    // Guia normal não passa para antes da fixada.
+    const moved = browserReducer(pinned, { type: "tab/move", id: 2, index: 0 });
+    expect(order(moved)).toEqual([3, 2, 1]);
+    // Fixada não sai do começo.
+    expect(order(browserReducer(pinned, { type: "tab/move", id: 3, index: 2 }))).toEqual([3, 1, 2]);
+  });
+
+  it("Ctrl+Shift+PgUp/PgDn anda uma posição", () => {
+    const state = withTabs();
+    const left = browserReducer(state, { type: "tab/move-relative", id: 3, delta: -1 });
+    expect(order(left)).toEqual([1, 3, 2]);
+    expect(browserReducer(state, { type: "tab/move-relative", id: 3, delta: 1 })).toBe(state);
+  });
+
+  it("picture-in-picture por guia sai quando a guia fecha", () => {
+    let state = withTabs();
+    state = browserReducer(state, { type: "view/pip", id: 2, active: true });
+    expect(state.pip).toEqual([2]);
+    state = browserReducer(state, { type: "tab/close", id: 2 });
+    expect(state.pip).toEqual([]);
+  });
+});

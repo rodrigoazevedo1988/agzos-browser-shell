@@ -63,6 +63,7 @@ import type { TabHandlers } from "./ui/tab-item";
 import { Toolbar } from "./ui/toolbar";
 import { StartupNotice, UnresponsiveBar } from "./ui/notice-bars";
 import { Viewport, type ErrorActions } from "./ui/viewport";
+import { WhatsNew } from "./ui/whats-new";
 
 type Panel = "key" | "privacy" | "settings" | "downloads" | "bookmark" | "site";
 
@@ -109,6 +110,12 @@ export function AgzosBrowser() {
   const [sitePermissions, setSitePermissions] = useState<SitePermission[]>([]);
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [startupInfo, setStartupInfo] = useState<StartupInfo | null>(null);
+  // Aviso "Atualizado com sucesso" (celebrate) ou "Novidades" aberto pelas Configurações.
+  const [whatsNew, setWhatsNew] = useState<{
+    from: string | null;
+    to: string;
+    celebrate: boolean;
+  } | null>(null);
   // "Esperar" na página sem resposta: a faixa some até ela travar de novo.
   const [waitingId, setWaitingId] = useState<number | null>(null);
 
@@ -249,6 +256,16 @@ export function AgzosBrowser() {
     });
     editBookmark(folder.id, true);
   }, [editBookmark]);
+
+  const pictureInPicture = useCallback(
+    (tabId: number) => {
+      if (!desktop) return;
+      void desktop.pictureInPicture(tabId).then(({ ok, active }) => {
+        if (ok) dispatch({ type: "view/pip", id: tabId, active });
+      });
+    },
+    [desktop],
+  );
 
   const openUrl = useCallback(
     (url: string, newTab: boolean) => {
@@ -411,6 +428,20 @@ export function AgzosBrowser() {
     if (panel === "site" || panel === "settings") void refreshPermissions();
   }, [panel, refreshPermissions]);
 
+  // Primeiro início depois de uma atualização: aviso com as novidades e confetes.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!desktop) return;
+    void desktop
+      .appVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+    void desktop
+      .whatsNew()
+      .then((info) => info && setWhatsNew({ ...info, celebrate: true }))
+      .catch(() => {});
+  }, [desktop]);
+
   // Fechamento inesperado na execução anterior: aviso na primeira janela restaurada.
   useEffect(() => {
     if (!desktop) return;
@@ -450,6 +481,7 @@ export function AgzosBrowser() {
       toggleDownloads: () => togglePanel("downloads"),
       bookmarkPage,
       bookmarkAllTabs,
+      pictureInPicture,
     },
   };
   const ctxRef = useRef(ctx);
@@ -518,7 +550,7 @@ export function AgzosBrowser() {
 
   // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
   // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
-  const overlay = panel !== null || switcherVisible || omniboxOpen;
+  const overlay = panel !== null || switcherVisible || omniboxOpen || whatsNew !== null;
   const [viewHidden, setViewHidden] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const activeIdRef = useRef(state.activeId);
@@ -677,6 +709,7 @@ export function AgzosBrowser() {
     onNewTab: () => dispatch({ type: "tab/new" }),
     onNewPrivateTab: () => dispatch({ type: "tab/new", private: true }),
     onStripMenu: openStripMenu,
+    onMoveTab: (id: number, index: number) => dispatch({ type: "tab/move", id, index }),
   };
 
   // Esc fecha o painel aberto (rota de saída de qualquer painel).
@@ -688,6 +721,8 @@ export function AgzosBrowser() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [panel]);
+
+  const closeWhatsNew = useCallback(() => setWhatsNew(null), []);
 
   const togglePanel = (target: Panel) => setPanel((open) => (open === target ? null : target));
 
@@ -734,6 +769,16 @@ export function AgzosBrowser() {
           favorite={currentBookmark(state) !== undefined}
           blockedCount={blockedCount}
           zoom={state.zoom[activeTab.id] ?? 1}
+          pip={
+            desktop &&
+            current.kind === "page" &&
+            (state.audioPlaying.includes(activeTab.id) || state.pip.includes(activeTab.id))
+              ? {
+                  active: state.pip.includes(activeTab.id),
+                  onToggle: () => pictureInPicture(activeTab.id),
+                }
+              : null
+          }
           downloads={{
             visible: desktop !== null && state.downloads.length > 0,
             open: panel === "downloads",
@@ -954,6 +999,14 @@ export function AgzosBrowser() {
             update={update}
             onCheckUpdate={() => void desktop?.updateCheck()}
             onInstallUpdate={() => void desktop?.updateInstall()}
+            onShowWhatsNew={
+              appVersion
+                ? () => {
+                    setPanel(null);
+                    setWhatsNew({ from: null, to: appVersion, celebrate: false });
+                  }
+                : null
+            }
             onOpenHistory={() => {
               setPanel(null);
               openInternal(HISTORY_URL, "Histórico");
@@ -1037,6 +1090,14 @@ export function AgzosBrowser() {
           onSelect={(index) => dispatch({ type: "switcher/select", index })}
           onCommit={(index) => dispatch({ type: "switcher/commit", index })}
           onCancel={() => dispatch({ type: "switcher/cancel" })}
+        />
+      )}
+      {whatsNew && (
+        <WhatsNew
+          from={whatsNew.from}
+          to={whatsNew.to}
+          celebrate={whatsNew.celebrate}
+          onClose={closeWhatsNew}
         />
       )}
       {tabMenu.menu && (

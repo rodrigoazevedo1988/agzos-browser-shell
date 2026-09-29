@@ -1,5 +1,12 @@
 import { PanelLeftClose, PanelLeftOpen, Plus, VenetianMask } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -18,7 +25,103 @@ type ListProps = {
   onNewTab: () => void;
   onNewPrivateTab: () => void;
   onStripMenu: (event: MouseEvent) => void;
+  /** Guia arrastada para `index` da ordem exibida (contada sem ela). */
+  onMoveTab: (id: number, index: number) => void;
 };
+
+const DRAG_THRESHOLD = 6;
+
+type Drop = { id: number; index: number; before: number | null };
+
+/**
+ * Arrastar para reordenar (ponteiro, não o drag-and-drop do HTML: sem imagem fantasma e
+ * igual no Electron). A guia segue o mouse e uma linha mostra onde ela vai cair; soltar
+ * move, Esc cancela. O clique que termina o arraste não ativa a guia.
+ */
+function useTabDrag(vertical: boolean, onMove: (id: number, index: number) => void) {
+  const [drop, setDrop] = useState<Drop | null>(null);
+  const suppressClick = useRef(false);
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const element = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
+    // Botões dentro da guia (fechar, fixar) não arrastam.
+    if (!element || (event.target as HTMLElement).closest("[data-no-drag], .tab-close, .tab-pin"))
+      return;
+    const list = event.currentTarget;
+    const id = Number(element.dataset["tabId"]);
+    const start = vertical ? event.clientY : event.clientX;
+    let dragging = false;
+    let current: Drop | null = null;
+
+    const targetOf = (position: number): Drop => {
+      const others = [...list.querySelectorAll<HTMLElement>('[role="tab"]')].filter(
+        (item) => item !== element,
+      );
+      let index = 0;
+      for (const item of others) {
+        const rect = item.getBoundingClientRect();
+        const middle = vertical ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
+        if (position > middle) index += 1;
+      }
+      const before = others[index] ? Number(others[index]!.dataset["tabId"]) : null;
+      return { id, index, before };
+    };
+
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key, true);
+      element.style.transform = "";
+      element.classList.remove("dragging");
+      if (dragging) {
+        suppressClick.current = true;
+        window.setTimeout(() => (suppressClick.current = false), 0);
+        if (commit && current) onMoveRef.current(current.id, current.index);
+      }
+      setDrop(null);
+    };
+    const move = (moveEvent: PointerEvent) => {
+      const position = vertical ? moveEvent.clientY : moveEvent.clientX;
+      if (!dragging) {
+        if (Math.abs(position - start) < DRAG_THRESHOLD) return;
+        dragging = true;
+        element.classList.add("dragging");
+      }
+      const offset = position - start;
+      element.style.transform = vertical ? `translateY(${offset}px)` : `translateX(${offset}px)`;
+      current = targetOf(position);
+      setDrop((previous) =>
+        previous?.index === current!.index && previous.before === current!.before
+          ? previous
+          : current,
+      );
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    const key = (keyEvent: globalThis.KeyboardEvent) => {
+      if (keyEvent.key !== "Escape" || !dragging) return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      finish(false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key, true);
+  };
+
+  const onClickCapture = (event: MouseEvent) => {
+    if (!suppressClick.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  return { drop, dragProps: { onPointerDown, onClickCapture } };
+}
 
 /**
  * Teclado na lista de abas (padrão WAI-ARIA de tabs): setas movem o foco, Home/End vão
@@ -51,14 +154,10 @@ function tabsKeyDown(
   items[target]!.focus();
 }
 
-function renderTabs({
-  tabs,
-  activeId,
-  audioPlaying,
-  hibernated = [],
-  confirmingClose,
-  handlers,
-}: ListProps) {
+function renderTabs(
+  { tabs, activeId, audioPlaying, hibernated = [], confirmingClose, handlers }: ListProps,
+  drop: Drop | null,
+) {
   return tabs.map((tab) => (
     <TabItem
       key={tab.id}
@@ -68,14 +167,30 @@ function renderTabs({
       hibernated={hibernated.includes(tab.id)}
       confirmingClose={confirmingClose === tab.id}
       handlers={handlers}
+      dropMark={
+        !drop || drop.id === tab.id
+          ? null
+          : drop.before === tab.id
+            ? "before"
+            : drop.before === null && tab === lastOther(tabs, drop.id)
+              ? "after"
+              : null
+      }
     />
   ));
 }
 
+function lastOther(tabs: Tab[], id: number) {
+  const others = tabs.filter((tab) => tab.id !== id);
+  return others[others.length - 1];
+}
+
 export function TabStrip(props: ListProps) {
+  const { drop, dragProps } = useTabDrag(false, props.onMoveTab);
   return (
     <div
-      className="tabs"
+      {...dragProps}
+      className={cn("tabs", drop && "reordering")}
       role="tablist"
       aria-label="Abas abertas"
       onContextMenu={props.onStripMenu}
@@ -85,7 +200,7 @@ export function TabStrip(props: ListProps) {
         if (event.target === event.currentTarget) props.onNewTab();
       }}
     >
-      {renderTabs(props)}
+      {renderTabs(props, drop)}
       <Button
         variant="ghost"
         size="icon"
@@ -132,6 +247,7 @@ export function TabRail({
     };
   }, [collapsed]);
   const expanded = !collapsed || peek;
+  const { drop, dragProps } = useTabDrag(true, props.onMoveTab);
 
   return (
     <aside
@@ -178,7 +294,8 @@ export function TabRail({
         )}
       </div>
       <div
-        className="rail-tabs"
+        {...dragProps}
+        className={cn("rail-tabs", drop && "reordering")}
         role="tablist"
         aria-label="Abas verticais"
         aria-orientation="vertical"
@@ -187,7 +304,7 @@ export function TabRail({
           if (event.target === event.currentTarget) props.onNewTab();
         }}
       >
-        {renderTabs(props)}
+        {renderTabs(props, drop)}
       </div>
     </aside>
   );

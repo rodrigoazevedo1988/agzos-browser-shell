@@ -2891,3 +2891,145 @@ button.download-name:hover {
   color: var(--foreground);
   font-size: 12px;
 }
+
+/* 1.5.1: aviso "Atualizado com sucesso" com as novidades e confetes. */
+.whats-new-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: oklch(0 0 0 / 38%);
+  animation: fade-in var(--dur-enter, 0.2s) var(--ease-out);
+}
+.whats-new {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(460px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 28px 28px 22px;
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 30px 80px oklch(0 0 0 / 35%);
+  text-align: center;
+  animation: panel-in 0.28s var(--ease-out);
+}
+.whats-new-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.whats-new-x:hover {
+  background: var(--muted);
+}
+.whats-new-x svg {
+  width: 16px;
+}
+.whats-new-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.whats-new-mark svg {
+  width: 26px;
+  height: 26px;
+}
+.whats-new h2 {
+  margin: 4px 0 0;
+  font-family: Georgia, serif;
+  font-size: 22px;
+  font-weight: 500;
+}
+.whats-new-version {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.whats-new-version strong {
+  color: var(--foreground);
+}
+.whats-new-list {
+  align-self: stretch;
+  margin: 6px 0 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--muted);
+  text-align: left;
+}
+.whats-new-list h3 {
+  margin: 10px 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.whats-new-list div:first-child h3 {
+  margin-top: 0;
+}
+.whats-new-list ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.whats-new-empty {
+  margin: 4px 0 10px;
+  font-size: 13px;
+}
+.confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 1.5.1: arrastar guias para reordenar. */
+.browser-tab.dragging {
+  position: relative;
+  z-index: 5;
+  opacity: 0.92;
+  box-shadow: 0 8px 22px oklch(0 0 0 / 22%);
+  transition: none;
+  cursor: grabbing;
+}
+.reordering .browser-tab:not(.dragging) {
+  transition: box-shadow 0.12s var(--ease-out);
+}
+.tabs .browser-tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.tabs .browser-tab.drop-after {
+  box-shadow: inset -3px 0 0 var(--primary);
+}
+.rail-tabs .browser-tab.drop-before {
+  box-shadow: inset 0 3px 0 var(--primary);
+}
+.rail-tabs .browser-tab.drop-after {
+  box-shadow: inset 0 -3px 0 var(--primary);
+}
+.reordering {
+  cursor: grabbing;
+  user-select: none;
+}
