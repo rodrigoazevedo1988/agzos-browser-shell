@@ -41,6 +41,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   isolado do uBO e primeira carga de guia nova.
 - [PRD v1.6 — Biblioteca](docs/prd/v1.6-biblioteca.md): histórico, favoritos com pastas,
   omnibox com sugestões, permissões por site e atualização automática.
+- [PRD v1.6.1 — Marca e correções](docs/prd/v1.6.1-marca-e-correcoes.md): ícone e nome
+  "Agzos Browser" no Windows/Mac, barra de permissão e atalhos no Windows.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

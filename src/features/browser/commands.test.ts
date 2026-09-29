@@ -64,6 +64,33 @@ describe("atalhos", () => {
     expect(commandForKey(key(value, extra))?.id).toBe(id);
   });
 
+  it("Ctrl com caractere de controle no Windows: usa a tecla física", () => {
+    expect(
+      commandForKey({
+        key: "\u000f",
+        code: "KeyO",
+        ctrl: true,
+        meta: false,
+        shift: true,
+        alt: false,
+      })?.id,
+    ).toBe("bookmarks.manager");
+    expect(
+      commandForKey({
+        key: "Unidentified",
+        code: "KeyH",
+        ctrl: true,
+        meta: false,
+        shift: false,
+        alt: false,
+      })?.id,
+    ).toBeUndefined();
+    expect(
+      commandForKey({ key: "", code: "Digit2", ctrl: true, meta: false, shift: false, alt: false })
+        ?.id,
+    ).toBe("tab.select-2");
+  });
+
   it("ignora Alt, teclas sem modificador e Shift onde não existe", () => {
     expect(commandForKey(key("t", { alt: true }))).toBeUndefined();
     expect(

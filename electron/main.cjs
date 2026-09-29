@@ -41,6 +41,10 @@ process.on("uncaughtException", (error) => {
   console.error("Agzos: erro inesperado no processo principal.", error);
 });
 
+// Identidade do app no Windows (agrupamento na barra de tarefas, notificações). O nome
+// vem do productName do package.json do pacote; mudar o nome mudaria a pasta do perfil.
+if (process.platform === "win32") app.setAppUserModelId("br.agzos.browser");
+
 // Testes e2e isolam o perfil numa pasta temporária.
 if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_DATA);
 
@@ -739,12 +743,21 @@ const FORWARDED_SHORTCUTS = new Set([
   "f11",
 ]);
 
+// Com Ctrl, alguns teclados/layouts do Windows entregam um caractere de controle (ou
+// nada) em `key`; aí vale a tecla física (`code`: KeyO → "o", Digit1 → "1").
+function shortcutKey(input) {
+  const key = String(input.key ?? "");
+  if (key.length > 1 || /^[\x21-\x7e]$/.test(key)) return key.toLowerCase();
+  const code = /^(?:Key([A-Z])|Digit(\d))$/.exec(String(input.code ?? ""));
+  return code ? (code[1] ?? code[2]).toLowerCase() : key.toLowerCase();
+}
+
 function shortcutCombo(input) {
   const parts = [];
   if (input.control || input.meta) parts.push("mod");
   if (input.alt) parts.push("alt");
   if (input.shift) parts.push("shift");
-  parts.push(input.key.toLowerCase());
+  parts.push(shortcutKey(input));
   return parts.join("+");
 }
 
@@ -754,7 +767,7 @@ function forwardAppShortcut(input, event) {
   event.preventDefault();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
   sendToChrome("agzos:hotkey", {
-    key: input.key.toLowerCase(),
+    key: shortcutKey(input),
     shift: Boolean(input.shift),
     alt: Boolean(input.alt),
     meta: Boolean(input.meta),
@@ -1156,6 +1169,8 @@ function createWindow() {
     minWidth: 980,
     minHeight: 680,
     backgroundColor: "#0E0E0E",
+    // Windows e Linux (no Mac vale o .icns do bundle).
+    ...(process.platform === "darwin" ? {} : { icon: path.join(__dirname, "icons", "icon.png") }),
     show: false,
     autoHideMenuBar: true,
     // Mac: sem a barra de título nativa; a faixa de abas vira a área de arrastar e os
