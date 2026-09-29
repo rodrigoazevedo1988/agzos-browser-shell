@@ -37,6 +37,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   DMG "danificado", YouTube, layout no Mac.
 - [PRD v1.5.2 — Login do Google e YouTube](docs/prd/v1.5.2-login-youtube.md): identidade de
   Chrome em toda carga da guia, logins intocados, listas oficiais do uBlock Origin.
+- [PRD v1.5.3 — YouTube](docs/prd/v1.5.3-youtube.md): scriptlets isolados entre si, mundo
+  isolado do uBO e primeira carga de guia nova.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

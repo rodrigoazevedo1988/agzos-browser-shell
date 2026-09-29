@@ -46,7 +46,7 @@ type Adblock = {
     sourceUrl?: string;
     tabId?: number;
   }): { cancel?: boolean; redirectURL?: string } | null;
-  scriptletsFor(url: string): string[];
+  scriptletsFor(url: string): { main: string[]; isolated: string[] };
   cosmeticCss(
     url: string,
     dom?: { classes?: string[]; ids?: string[] } | null,
@@ -179,7 +179,8 @@ describe("adblock.cjs (motor real)", () => {
   const lists: Record<string, string> = {
     "ads.txt":
       "||ads.exemplo.test^\n/banner-anuncio.\n##.caixa-anuncio\n" +
-      "site.test##+js(agzos-teste)\n/substituto.js$script,redirect=noopjs\n",
+      "site.test##+js(agzos-teste)\nsite.test##+js(agzos-isolado)\n" +
+      "/substituto.js$script,redirect=noopjs\n",
     "privacy.txt": "||rastreio.exemplo.test^\n||play.google.com/log^\n",
     "resources.json": JSON.stringify({
       scriptlets: [
@@ -188,6 +189,13 @@ describe("adblock.cjs (motor real)", () => {
           aliases: [],
           body: "function agzosTeste(){window.__agzos = 1;}",
           dependencies: [],
+        },
+        {
+          name: "agzos-isolado.js",
+          aliases: [],
+          body: "function agzosIsolado(){document.documentElement.dataset.iso = '1';}",
+          dependencies: [],
+          executionWorld: "ISOLATED",
         },
       ],
       redirects: [
@@ -263,8 +271,12 @@ describe("adblock.cjs (motor real)", () => {
     expect(adblock.pageInfo(7).count).toBe(0);
 
     // Scriptlets do site, $redirect com substituto e login do Google liberado.
-    expect(adblock.scriptletsFor(page).join("")).toContain("window.__agzos = 1");
-    expect(adblock.scriptletsFor("https://outro.test/")).toEqual([]);
+    const scriptlets = adblock.scriptletsFor(page);
+    expect(scriptlets.main.join("")).toContain("window.__agzos = 1");
+    // Mundo isolado, como no uBO (replace-node-text etc. esbarram nos Trusted Types).
+    expect(scriptlets.isolated.join("")).toContain("agzosIsolado");
+    expect(scriptlets.main.join("")).not.toContain("agzosIsolado");
+    expect(adblock.scriptletsFor("https://outro.test/")).toEqual({ main: [], isolated: [] });
     expect(adblock.decide(request("https://cdn.test/substituto.js"))).toEqual({ cancel: true });
     expect(
       adblock.decide({

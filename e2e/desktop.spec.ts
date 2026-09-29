@@ -22,6 +22,8 @@ let origin = "";
 const FILTERS: Record<string, string> = {
   "/filtros/anuncios.txt":
     "/anuncios/banner.js\n##.caixa-anuncio\n127.0.0.1##+js(agzos-teste)\n" +
+    "localhost##+js(agzos-teste)\n" +
+    "127.0.0.1##+js(agzos-rpnt)\n" +
     "/anuncios/substituto.js$script,redirect=noopjs\n",
   // Formato do resources.json do uBlock Origin (espelho do Ghostery).
   "/filtros/recursos.json": JSON.stringify({
@@ -31,6 +33,23 @@ const FILTERS: Record<string, string> = {
         aliases: [],
         body: "function agzosTeste(){window.__agzosScriptlet = true;}",
         dependencies: [],
+      },
+      {
+        // Como o replace-node-text do uBO: reescreve um <script> inline antes de ele rodar.
+        // No mundo da página os Trusted Types barrariam; no mundo isolado passa.
+        name: "agzos-rpnt.js",
+        aliases: [],
+        body:
+          // Como o uBO: cria uma política de Trusted Types para poder trocar o texto.
+          "function agzosRpnt(){var tt=self.trustedTypes;var f={createScript:function(s){return s;}};" +
+          "if(tt&&tt.getPropertyType&&tt.getPropertyType('script','textContent')==='TrustedScript')" +
+          "{f=tt.createPolicy('agzos-'+Math.random().toString(36).slice(2),f);}" +
+          "new MutationObserver(function(ms){ms.forEach(function(m){" +
+          "m.addedNodes.forEach(function(n){if(n.nodeName==='SCRIPT'&&n.textContent.indexOf('ANUNCIO')>=0)" +
+          "{n.textContent=f.createScript(n.textContent.replace('ANUNCIO','LIMPO'));}});});})" +
+          ".observe(document,{childList:true,subtree:true});}",
+        dependencies: [],
+        executionWorld: "ISOLATED",
       },
     ],
     redirects: [
@@ -58,6 +77,11 @@ const PAGES: Record<string, string> = {
   "/login": `<!doctype html><title>Entrar</title>
     <div class="caixa-anuncio">caixa</div>
     <script>window.viuScriptlet = window.__agzosScriptlet === true;</script>`,
+  "/com-link": `<!doctype html><title>Com link</title><a id="ir" href="LINK">ir</a>`,
+  // Trusted Types + nonce, como o YouTube.
+  "/tt": `<!doctype html><meta http-equiv="Content-Security-Policy"
+    content="require-trusted-types-for 'script'; script-src 'nonce-agzos'"><title>TT</title>
+    <script nonce="agzos">window.resultado = "ANUNCIO";</script>`,
   "/busca": `<!doctype html><title>Busca</title>
     <p>agzos um</p><p>outro texto</p><p>agzos dois</p><p>mais agzos três</p>`,
   "/baixar": `<!doctype html><title>Baixar</title><a href="/arquivo/relatorio.txt">relatório</a>`,
@@ -114,6 +138,12 @@ test.beforeAll(async () => {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(PAGES[url]);
       }, 150);
+      return;
+    }
+    if (url.startsWith("/com-link?para=")) {
+      const target = decodeURIComponent(url.slice("/com-link?para=".length));
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(PAGES["/com-link"]!.replace("LINK", target));
       return;
     }
     const html = PAGES[url];
@@ -599,10 +629,11 @@ test("scriptlets (+js) rodam antes dos scripts da página, mesmo com CSP de nonc
     await waitForFilters(window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Scriptlet");
-    // Primeira carga numa guia nova: o scriptlet roda (quase sempre antes do HTML; o CDP
-    // de uma guia que ainda não navegou às vezes só o aplica depois).
-    await expect.poll(() => inTab(app, url, "window.__agzosScriptlet === true")).toBe(true);
-    // Da carga seguinte em diante: sempre antes de qualquer script da página.
+    // Já na primeira carga de uma guia nova (a guia passa antes por about:blank).
+    await expect.poll(() => inTab(app, url, "window.viuScriptlet")).toBe(true);
+    // O about:blank da preparação não fica no histórico.
+    await expect(window.getByRole("button", { name: "Voltar" })).toBeDisabled();
+    // E nas recargas.
     for (let i = 0; i < 2; i++) {
       await window.getByRole("button", { name: "Recarregar" }).click();
       await window.waitForTimeout(700);
@@ -705,6 +736,44 @@ test("identidade de Chrome vale em toda carga da guia (recarga, mesma origem, ou
     await window.getByRole("button", { name: "Voltar" }).click();
     await expect(tabs(window).first()).toContainText("Página ID2");
     expect(await identity("/id2")).toBe(expected);
+  } finally {
+    await app.close();
+  }
+});
+
+test("scriptlets ao chegar por link (navegação iniciada pela página)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const other = origin.replace("127.0.0.1", "localhost");
+  const target = `${other}/scriptlet`;
+  try {
+    await waitForFilters(window);
+    const start = `${origin}/com-link?para=${encodeURIComponent(target)}`;
+    await go(window, start);
+    await expect(tabs(window).first()).toContainText("Com link");
+    await inTab(app, start, "document.getElementById('ir').click(), true");
+    await expect(tabs(window).first()).toContainText("Scriptlet");
+    const state = await inTab(
+      app,
+      target,
+      "JSON.stringify({ antes: window.viuScriptlet, rodou: window.__agzosScriptlet === true })",
+    );
+    console.log("LINK", state);
+    expect(JSON.parse(state as string).rodou).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("scriptlet do mundo isolado reescreve script inline mesmo com Trusted Types (como no YouTube)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/tt`;
+  try {
+    await waitForFilters(window);
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("TT");
+    // Da carga seguinte em diante o registro vale antes de qualquer script da página.
+    await window.getByRole("button", { name: "Recarregar" }).click();
+    await expect.poll(() => inTab(app, url, "window.resultado")).toBe("LIMPO");
   } finally {
     await app.close();
   }

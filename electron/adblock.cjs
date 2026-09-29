@@ -375,10 +375,29 @@ function createAdblock({
   }
 
   /** Scriptlets (+js) da página, para rodar no mundo da página antes dos scripts dela. */
+  // Funções de scriptlet que o uBO roda no mundo isolado (replace-node-text, remove-node-
+  // text…). No mundo da página elas batem nos Trusted Types do YouTube e falham caladas.
+  let isolatedCache = { engine: null, names: new Set() };
+  function isolatedNames(engine) {
+    if (isolatedCache.engine === engine) return isolatedCache.names;
+    const names = new Set();
+    for (const scriptlet of engine.resources?.scriptlets ?? []) {
+      const match = /^function\s+([\w$]+)/.exec(scriptlet.body ?? "");
+      if (match && scriptlet.executionWorld === "ISOLATED") names.add(match[1]);
+    }
+    isolatedCache = { engine, names };
+    return names;
+  }
+
+  /**
+   * Scriptlets (+js) da página, separados pelo mundo em que o uBO os roda: `main` (mundo da
+   * página) e `isolated` (mundo isolado, que enxerga o DOM mas não os scripts da página).
+   */
   function scriptletsFor(pageUrl) {
+    const none = { main: [], isolated: [] };
     const engine = engines.ads;
     if (!engine || !vendor || !/^https?:\/\//.test(pageUrl) || isAllowedSite(config, pageUrl)) {
-      return [];
+      return none;
     }
     try {
       const hostname = new URL(pageUrl).hostname;
@@ -392,9 +411,17 @@ function createAdblock({
         getRulesFromHostname: true,
         getRulesFromDOM: false,
       });
-      return Array.isArray(scripts) ? scripts : [];
+      if (!Array.isArray(scripts) || !scripts.length) return none;
+      const isolated = isolatedNames(engine);
+      const result = { main: [], isolated: [] };
+      for (const script of scripts) {
+        // O scriptlet principal é o `;(function nome(...` no fim do texto gerado.
+        const name = /;\(function ([\w$]+)\(/.exec(script)?.[1];
+        (name && isolated.has(name) ? result.isolated : result.main).push(script);
+      }
+      return result;
     } catch {
-      return [];
+      return none;
     }
   }
 
