@@ -317,6 +317,16 @@ export function AgzosBrowser() {
     onStripMenu: openStripMenu,
   };
 
+  // Esc fecha o painel aberto (rota de saída de qualquer painel).
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setPanel(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
+
   const togglePanel = (target: Panel) => setPanel((open) => (open === target ? null : target));
 
   return (

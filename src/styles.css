@@ -475,7 +475,7 @@ button {
   flex: 1;
 }
 .engine-option small {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted-foreground);
 }
 .web-frame {
@@ -545,7 +545,7 @@ button {
 }
 .frame-fallback small {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
   word-break: break-all;
 }
 .fallback-actions {
@@ -589,7 +589,7 @@ button {
   border-color: var(--primary);
 }
 .quick-links small {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted-foreground);
 }
 .privacy-note {
@@ -613,7 +613,7 @@ button {
   font-size: 11px;
 }
 .privacy-note small {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--muted-foreground);
 }
 
@@ -666,7 +666,7 @@ button {
 .panel-title small {
   margin-top: 2px;
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: 11px;
 }
 .mode-switch {
   display: grid;
@@ -683,7 +683,7 @@ button {
   border-radius: 4px;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
 }
 .mode-switch button.selected {
@@ -701,7 +701,7 @@ button {
   align-items: center;
   gap: 7px;
   color: var(--primary);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
 }
 .summary-label svg {
@@ -775,7 +775,7 @@ button {
   margin: 8px 14px 11px;
   text-align: center;
   color: var(--muted-foreground);
-  font-size: 8px;
+  font-size: 10.5px;
 }
 
 .key-panel {
@@ -797,7 +797,7 @@ button {
   padding: 0 18px;
   border-bottom: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   font-weight: 700;
 }
@@ -839,7 +839,7 @@ button {
 .credential-copy span {
   overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
 }
 .key-footer {
@@ -849,7 +849,7 @@ button {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: 11px;
 }
 .key-footer svg {
   width: 14px;
@@ -863,7 +863,7 @@ button {
 }
 .mock-eyebrow {
   color: var(--primary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -892,12 +892,12 @@ button {
 }
 .result-list article > span {
   color: var(--primary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 .result-list small {
   color: var(--primary);
-  font-size: 9px;
+  font-size: 11px;
 }
 .result-list h2 {
   margin: 5px 0;
@@ -997,7 +997,7 @@ button {
 }
 .setting-row small {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
 }
 .switch {
   position: relative;
@@ -1169,13 +1169,13 @@ button {
   align-items: center;
   gap: 8px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
 }
 .settings-shortcuts kbd {
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 9px;
+  font-size: 10.5px;
 }
 
 .panel-heading-actions {
@@ -1929,4 +1929,131 @@ button.download-name:hover {
 .tabs-rail.collapsed:not(.peek) .pin-badge {
   left: 50%;
   margin-left: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Revisão UI/UX (skill ui-ux-pro-max): tokens de movimento únicos, saída mais
+   rápida que a entrada, feedback de clique, alvos ≥ 24 px e foco visível.
+   --------------------------------------------------------------------------- */
+:root {
+  --dur-enter: 220ms;
+  --dur-exit: 140ms;
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+/* Saída (volta ao repouso): curta e acelerando. */
+.browser-tab,
+.tab-close,
+.tab-pin,
+.switcher-card,
+.privacy-pill,
+.zoom-pill,
+.fav-button,
+.tabs-rail {
+  transition-duration: var(--dur-exit);
+  transition-timing-function: var(--ease-in);
+}
+/* Entrada (hover, foco, seleção, espiada): um pouco mais longa e desacelerando. */
+.browser-tab:hover,
+.browser-tab:focus-visible,
+.browser-tab.active,
+.browser-tab:hover .tab-close,
+.browser-tab:hover .tab-pin,
+.browser-tab:focus-visible .tab-close,
+.browser-tab:focus-visible .tab-pin,
+.switcher-card.selected,
+.privacy-pill:hover,
+.zoom-pill:hover,
+.fav-button:hover,
+.tabs-rail.peek {
+  transition-duration: var(--dur-enter);
+  transition-timing-function: var(--ease-out);
+}
+
+/* Feedback de clique. */
+.browser-tab:active {
+  transform: scale(0.98);
+}
+.toolbar button:active:not(:disabled),
+.titlebar button:active:not(:disabled),
+.rail-head button:active:not(:disabled),
+.privacy-pill:active {
+  transform: scale(0.94);
+}
+.toolbar button,
+.titlebar button,
+.rail-head button {
+  transition:
+    transform var(--dur-exit) var(--ease-out),
+    background-color var(--dur-exit),
+    color var(--dur-exit),
+    box-shadow var(--dur-exit);
+}
+
+/* Alvos de clique com pelo menos 24×24 (WCAG 2.2 AA). */
+.tab-close,
+.tab-pin {
+  width: 24px;
+  height: 24px;
+}
+.fav-button {
+  min-width: 24px;
+  min-height: 24px;
+}
+.zoom-pill {
+  height: 24px;
+}
+.lists-update {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* Foco visível em tudo que é clicável na casca (inclusive fixar/fechar pelo teclado). */
+.fav-button:focus-visible,
+.privacy-pill:focus-visible,
+.zoom-pill:focus-visible,
+.lists-update:focus-visible,
+.switcher-card:focus-visible,
+.download-name:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.browser-tab:focus-visible .tab-pin,
+.browser-tab:focus-visible .tab-close {
+  opacity: 1;
+  transform: none;
+}
+
+/* O vidro precisa de algo atrás: brilho discreto do vermelho Agzos na barra de abas. */
+.titlebar {
+  background:
+    radial-gradient(
+      640px 140px at 18% -60%,
+      color-mix(in oklab, var(--primary) 16%, transparent),
+      transparent 70%
+    ),
+    var(--secondary);
+}
+.tabs-rail {
+  background:
+    radial-gradient(
+      220px 360px at -40% 0%,
+      color-mix(in oklab, var(--primary) 12%, transparent),
+      transparent 70%
+    ),
+    color-mix(in oklab, var(--secondary) 84%, transparent);
+}
+
+/* Painéis crescem a partir de quem os abriu. */
+.key-panel {
+  transform-origin: top right;
+}
+.ctx-menu {
+  transform-origin: top left;
+}
+
+/* Seletor do Ctrl+Tab: cartões entram em sequência (30 ms cada). */
+.switcher-card {
+  animation: tab-in var(--dur-enter) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 30ms);
 }

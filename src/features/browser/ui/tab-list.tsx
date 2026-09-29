@@ -1,5 +1,5 @@
 import { PanelLeftClose, PanelLeftOpen, Plus, VenetianMask } from "lucide-react";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,37 @@ type ListProps = {
   onNewPrivateTab: () => void;
   onStripMenu: (event: MouseEvent) => void;
 };
+
+/**
+ * Teclado na lista de abas (padrão WAI-ARIA de tabs): setas movem o foco, Home/End vão
+ * às pontas, Delete fecha a aba focada. Enter/Espaço ativam (é um botão).
+ */
+function tabsKeyDown(
+  event: KeyboardEvent<HTMLElement>,
+  vertical: boolean,
+  onClose: (id: number) => void,
+) {
+  const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  if (current < 0) return;
+  const next = vertical ? "ArrowDown" : "ArrowRight";
+  const previous = vertical ? "ArrowUp" : "ArrowLeft";
+  let target: number | null = null;
+  if (event.key === next) target = (current + 1) % items.length;
+  else if (event.key === previous) target = (current - 1 + items.length) % items.length;
+  else if (event.key === "Home") target = 0;
+  else if (event.key === "End") target = items.length - 1;
+  else if (event.key === "Delete") {
+    event.preventDefault();
+    const id = Number(items[current]!.dataset["tabId"]);
+    (items[current + 1] ?? items[current - 1])?.focus();
+    onClose(id);
+    return;
+  }
+  if (target === null) return;
+  event.preventDefault();
+  items[target]!.focus();
+}
 
 function renderTabs({ tabs, activeId, audioPlaying, confirmingClose, handlers }: ListProps) {
   return tabs.map((tab) => (
@@ -38,6 +69,7 @@ export function TabStrip(props: ListProps) {
       role="tablist"
       aria-label="Abas abertas"
       onContextMenu={props.onStripMenu}
+      onKeyDown={(event) => tabsKeyDown(event, false, props.handlers.onClose)}
       // Duplo clique no espaço vazio da barra abre uma aba nova.
       onDoubleClick={(event) => {
         if (event.target === event.currentTarget) props.onNewTab();
@@ -139,6 +171,8 @@ export function TabRail({
         className="rail-tabs"
         role="tablist"
         aria-label="Abas verticais"
+        aria-orientation="vertical"
+        onKeyDown={(event) => tabsKeyDown(event, true, props.handlers.onClose)}
         onDoubleClick={(event) => {
           if (event.target === event.currentTarget) props.onNewTab();
         }}

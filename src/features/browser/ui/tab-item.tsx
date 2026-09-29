@@ -34,6 +34,17 @@ export function TabItem({
       role="tab"
       aria-selected={active}
       title={entry.title}
+      // O título some nas fixadas (só o ícone): o nome acessível não pode depender dele.
+      aria-label={[
+        entry.title,
+        tab.pinned && "fixada",
+        tab.private && "anônima",
+        playing && !tab.muted && "tocando áudio",
+        tab.muted && "sem som",
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      data-tab-id={tab.id}
       onClick={() => handlers.onActivate(tab)}
       // Botão do meio fecha a aba, como em todo navegador.
       onMouseDown={(event) => {

@@ -1,4 +1,5 @@
 import { VenetianMask } from "lucide-react";
+import type { CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -43,6 +44,7 @@ export function TabSwitcher({
               aria-selected={position === index}
               key={tab.id}
               className={cn("switcher-card", position === index && "selected")}
+              style={{ "--i": Math.min(position, 10) } as CSSProperties}
               onMouseEnter={() => onSelect(position)}
               onClick={() => onCommit(position)}
             >
