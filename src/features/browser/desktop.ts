@@ -1,4 +1,4 @@
-import type { Credential, HistoryUrl, HistoryVisit } from "./types";
+import type { Credential, HistoryUrl, HistoryVisit, Tab } from "./types";
 
 export type PermissionType =
   "camera" | "microphone" | "notifications" | "geolocation" | "clipboard-read" | "midi";
@@ -43,7 +43,12 @@ export type DesktopTabEvent =
   | { type: "favicon"; id: number; icon: string | null }
   | { type: "audio"; id: number; playing: boolean }
   | { type: "muted"; id: number; muted: boolean }
-  | { type: "crashed"; id: number }
+  | { type: "crashed"; id: number; reason?: CrashReason }
+  /** null: a página voltou a carregar (a tela de erro sai). */
+  | { type: "load-failed"; id: number; failure: LoadFailure | null }
+  /** O main fechou o WebContentsView da guia (hibernação). */
+  | { type: "hibernated"; id: number }
+  | { type: "unresponsive"; id: number; value: boolean }
   | { type: "blocked"; id: number; count: number; trackers: BlockedTracker[] }
   | { type: "find"; id: number; active: number; total: number }
   | { type: "zoom"; id: number; factor: number }
@@ -52,6 +57,23 @@ export type DesktopTabEvent =
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null };
 
 export type BlockedTracker = { host: string; category: string };
+
+/** Falha de carga da página (código de erro de rede do Chromium, ex.: -105). */
+export type LoadFailure = { code: number; description: string; url: string };
+
+/** Motivo do render-process-gone. */
+export type CrashReason =
+  | "crashed"
+  | "oom"
+  | "killed"
+  | "abnormal-exit"
+  | "launch-failed"
+  | "integrity-failure"
+  | "clean-exit"
+  | "memory-eviction";
+
+/** Como a execução anterior terminou (aviso de restauração). */
+export type StartupInfo = { safe: boolean; windows: number };
 
 export type AdblockStats = {
   /** false quando o app foi montado sem o motor de filtros. */
@@ -94,6 +116,10 @@ export type DesktopTabMenuContext = {
   hasClosed?: boolean;
   orientation?: "horizontal" | "vertical";
   url?: string;
+  /** Quantas guias a janela tem ("Mover para nova janela" some com uma só). */
+  tabCount?: number;
+  /** Guia ativa (não pode ser hibernada). */
+  active?: boolean;
 };
 
 export type DesktopPermissionRequest = {
@@ -161,6 +187,21 @@ export type DesktopBridge = {
   suggest(engine: string, text: string): Promise<string[]>;
   /** Menu nativo; devolve o id escolhido ou null. */
   showMenu(items: NativeMenuItem[]): Promise<string | null>;
+  /** Janela nova (vazia, ou com `url` numa guia). */
+  newWindow(options?: { url?: string }): Promise<void>;
+  /** Leva a guia (e a página viva) para uma janela nova. */
+  moveTabToWindow(id: number, tab: Tab): Promise<{ ok: boolean }>;
+  /** Guias que a casca conhece: o main fecha as outras (casca recarregada). */
+  syncTabs(ids: number[]): Promise<void>;
+  hibernateTab(id: number): Promise<{ ok: boolean }>;
+  /** Encerra a página que não responde. */
+  killTab(id: number): Promise<void>;
+  /** "Continuar mesmo assim" num certificado inválido (só nesta execução). */
+  allowCertificate(id: number): Promise<{ ok: boolean }>;
+  /** Aviso de restauração depois de um fechamento inesperado (só a 1ª janela recebe). */
+  windowStartup(): Promise<StartupInfo | null>;
+  /** Outra janela gravou seções compartilhadas (preferências, favoritos…). */
+  onStateSync(callback: (sections: Record<string, unknown>) => void): () => void;
   updateState(): Promise<UpdateState | null>;
   updateCheck(): Promise<UpdateState | null>;
   updateInstall(): Promise<{ ok: boolean }>;

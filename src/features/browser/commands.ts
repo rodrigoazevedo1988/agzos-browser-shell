@@ -11,6 +11,9 @@ import { BOOKMARKS_URL, HISTORY_URL, type BrowserState } from "./store/state";
  */
 export type CommandId =
   | "tab.new"
+  | "window.new"
+  | "tab.move-to-window"
+  | "tab.hibernate"
   | "tab.new-private"
   | "tab.new-right"
   | "tab.reopen-closed"
@@ -106,6 +109,44 @@ export const commands: Command[] = [
     label: "Nova guia",
     shortcuts: [{ key: "t" }],
     run: ({ dispatch }) => dispatch({ type: "tab/new" }),
+  },
+  {
+    id: "window.new",
+    label: "Nova janela",
+    shortcuts: [{ key: "n" }],
+    // Na web o Ctrl+N fica com o próprio navegador.
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ desktop }) => void desktop?.newWindow(),
+  },
+  {
+    id: "tab.move-to-window",
+    label: "Mover para nova janela",
+    visible: ({ desktop }) => desktop !== null,
+    enabled: ({ state }) => state.tabs.length > 1,
+    run: ({ state, dispatch, desktop }, tabId) => {
+      const tab = state.tabs.find((item) => item.id === tabId);
+      if (!desktop || !tab) return;
+      // A guia só sai daqui depois que o main levou a página para a outra janela.
+      void desktop.moveTabToWindow(tabId, tab).then(({ ok }) => {
+        if (ok) dispatch({ type: "tab/detach", id: tabId });
+      });
+    },
+  },
+  {
+    id: "tab.hibernate",
+    label: "Hibernar guia",
+    visible: ({ desktop }) => desktop !== null,
+    enabled: ({ state }, tabId) => {
+      const tab = state.tabs.find((item) => item.id === tabId);
+      return (
+        tab !== undefined &&
+        tabId !== state.activeId &&
+        !state.hibernated.includes(tabId) &&
+        entryOf(tab).kind === "page"
+      );
+    },
+    run: ({ desktop }, tabId) => void desktop?.hibernateTab(tabId),
   },
   {
     id: "tab.new-private",

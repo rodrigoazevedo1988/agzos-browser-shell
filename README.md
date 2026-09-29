@@ -43,6 +43,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   omnibox com sugestões, permissões por site e atualização automática.
 - [PRD v1.6.1 — Marca e correções](docs/prd/v1.6.1-marca-e-correcoes.md): ícone e nome
   "Agzos Browser" no Windows/Mac, barra de permissão e atalhos no Windows.
+- [PRD v1.7 — Janelas e sessão](docs/prd/v1.7-janelas-e-sessao.md): várias janelas,
+  sessão restaurada após crash (com modo seguro), telas de erro e hibernação de guias.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

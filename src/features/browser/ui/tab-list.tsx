@@ -11,6 +11,8 @@ type ListProps = {
   tabs: Tab[];
   activeId: number;
   audioPlaying: number[];
+  /** Guias sem página carregada (hibernadas): aparecem esmaecidas. */
+  hibernated?: number[];
   confirmingClose: number | null;
   handlers: TabHandlers;
   onNewTab: () => void;
@@ -49,13 +51,21 @@ function tabsKeyDown(
   items[target]!.focus();
 }
 
-function renderTabs({ tabs, activeId, audioPlaying, confirmingClose, handlers }: ListProps) {
+function renderTabs({
+  tabs,
+  activeId,
+  audioPlaying,
+  hibernated = [],
+  confirmingClose,
+  handlers,
+}: ListProps) {
   return tabs.map((tab) => (
     <TabItem
       key={tab.id}
       tab={tab}
       active={tab.id === activeId}
       playing={audioPlaying.includes(tab.id)}
+      hibernated={hibernated.includes(tab.id)}
       confirmingClose={confirmingClose === tab.id}
       handlers={handlers}
     />

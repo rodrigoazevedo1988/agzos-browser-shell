@@ -144,6 +144,8 @@ describe("migração da 1.3", () => {
         pausedHosts: ["x.com"],
         bookmarksBar: true,
         searchSuggestions: true,
+        hibernate: true,
+        hibernateMinutes: 30,
       },
       session: { tabs: legacyTabs, activeId: 1727000000000 },
       links: [{ name: "Meu", url: "meu.dev" }],

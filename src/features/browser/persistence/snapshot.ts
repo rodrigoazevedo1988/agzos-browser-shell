@@ -3,6 +3,7 @@ import type { HydratePayload } from "../store/reducer";
 import {
   BOOKMARKS_URL,
   CLOSED_TABS_LIMIT,
+  HIBERNATE_MINUTES,
   HISTORY_URL,
   defaultPrefs,
   type BrowserState,
@@ -120,6 +121,10 @@ export function parsePrefs(value: unknown): Prefs {
     railCollapsed: bool("railCollapsed"),
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),
+    hibernate: bool("hibernate"),
+    hibernateMinutes: (HIBERNATE_MINUTES as readonly unknown[]).includes(raw["hibernateMinutes"])
+      ? (raw["hibernateMinutes"] as number)
+      : defaultPrefs.hibernateMinutes,
     engine:
       raw["engine"] === "yandex" || raw["engine"] === "duckduckgo" ? raw["engine"] : "duckduckgo",
     orientation: raw["orientation"] === "vertical" ? "vertical" : "horizontal",

@@ -1,5 +1,11 @@
 import { BOOKMARKS_LIMIT, moveNode, seedFromLinks, subtreeIds } from "../bookmarks";
-import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
+import type {
+  AdblockStats,
+  BlockedTracker,
+  CrashReason,
+  DownloadRecord,
+  LoadFailure,
+} from "../desktop";
 import type { BookmarkNode, ClosedTab, Entry, QuickLink, Tab } from "../types";
 import { entryOf, orderTabs } from "./selectors";
 import {
@@ -21,8 +27,19 @@ export type HydratePayload = {
   bookmarks: BookmarkNode[] | null;
 };
 
+/** Seções compartilhadas que outra janela gravou. */
+export type SyncPayload = {
+  prefs?: Prefs;
+  links?: QuickLink[] | null;
+  closedTabs?: ClosedTab[];
+  bookmarks?: BookmarkNode[] | null;
+};
+
 export type BrowserAction =
   | { type: "hydrate"; payload: HydratePayload | null }
+  | { type: "sync"; payload: SyncPayload }
+  /** A guia foi para outra janela: sai daqui sem entrar em "reabrir guia fechada". */
+  | { type: "tab/detach"; id: number }
   | { type: "tab/new"; private?: boolean; rightOf?: number }
   | { type: "tab/open-page"; entry: Entry }
   | { type: "tab/activate"; id: number }
@@ -67,7 +84,10 @@ export type BrowserAction =
   | { type: "view/favicon"; id: number; icon: string | null }
   | { type: "view/audio"; id: number; playing: boolean }
   | { type: "view/muted"; id: number; muted: boolean }
-  | { type: "view/crashed"; id: number }
+  | { type: "view/crashed"; id: number; reason?: CrashReason }
+  | { type: "view/load-failed"; id: number; failure: LoadFailure | null }
+  | { type: "view/hibernated"; id: number }
+  | { type: "view/unresponsive"; id: number; value: boolean }
   | { type: "view/recovered"; id: number }
   | { type: "view/login-rejected"; id: number; continueUrl: string | null }
   | { type: "fullscreen/set"; active: boolean }
@@ -107,6 +127,10 @@ function withoutId(list: number[], id: number) {
   return list.includes(id) ? list.filter((item) => item !== id) : list;
 }
 
+function withoutKey<T>(record: Record<number, T>, id: number): Record<number, T> {
+  return id in record ? withoutKeys(record, new Set([id])) : record;
+}
+
 /** Abas anônimas e a página inicial nunca entram na pilha de "reabrir guia fechada". */
 function rememberClosed(closed: ClosedTab[], tabs: Tab[]): ClosedTab[] {
   const additions = tabs
@@ -130,6 +154,8 @@ function activate(state: BrowserState, tab: Tab): BrowserState {
     viewNav: null,
     find: null,
     recent,
+    // A guia visível volta a ter página (o main recria a hibernada).
+    hibernated: withoutId(state.hibernated, tab.id),
   };
 }
 
@@ -161,14 +187,23 @@ function mapTab(state: BrowserState, id: number, update: (tab: Tab) => Tab): Bro
 }
 
 /** Remove as abas indicadas; se a ativa sumir, `fallbackId` (ou a vizinha) assume. */
-function removeTabs(state: BrowserState, doomed: Tab[], fallbackId?: number): BrowserState {
+function removeTabs(
+  state: BrowserState,
+  doomed: Tab[],
+  fallbackId?: number,
+  remember = true,
+): BrowserState {
   if (!doomed.length) return state;
   const ids = new Set(doomed.map((tab) => tab.id));
   const remaining = state.tabs.filter((tab) => !ids.has(tab.id));
-  const closedTabs = rememberClosed(state.closedTabs, doomed);
+  const closedTabs = remember ? rememberClosed(state.closedTabs, doomed) : state.closedTabs;
   const cleanup = {
     audioPlaying: state.audioPlaying.filter((id) => !ids.has(id)),
     crashed: state.crashed.filter((id) => !ids.has(id)),
+    crashReasons: withoutKeys(state.crashReasons, ids),
+    failed: withoutKeys(state.failed, ids),
+    hibernated: state.hibernated.filter((id) => !ids.has(id)),
+    unresponsive: state.unresponsive.filter((id) => !ids.has(id)),
     blocked: withoutKeys(state.blocked, ids),
     zoom: withoutKeys(state.zoom, ids),
     thumbnails: withoutKeys(state.thumbnails, ids),
@@ -222,7 +257,27 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         activeId: active.id,
         address: entryOf(active).url,
         recent: [active.id],
+        // Restauradas: só a guia ativa carrega; as outras esperam ser abertas.
+        hibernated: tabs
+          .filter((tab) => tab.id !== active.id && entryOf(tab).kind === "page")
+          .map((tab) => tab.id),
       };
+    }
+
+    case "sync": {
+      const { prefs, links, closedTabs, bookmarks } = action.payload;
+      return {
+        ...state,
+        ...(prefs ? { prefs } : {}),
+        ...(links !== undefined ? { links: links ?? defaultLinks } : {}),
+        ...(closedTabs ? { closedTabs: closedTabs.slice(-CLOSED_TABS_LIMIT) } : {}),
+        ...(bookmarks ? { bookmarks } : {}),
+      };
+    }
+
+    case "tab/detach": {
+      const tab = state.tabs.find((item) => item.id === action.id);
+      return tab ? removeTabs(state, [tab], undefined, false) : state;
     }
 
     case "tab/new": {
@@ -331,6 +386,10 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         address: HOME_URL,
         viewNav: null,
         crashed: [],
+        crashReasons: {},
+        failed: {},
+        hibernated: [],
+        unresponsive: [],
         audioPlaying: [],
         loginRejected: {},
         requestedUrl: null,
@@ -479,10 +538,49 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       );
 
     case "view/crashed":
-      return { ...state, crashed: [...withoutId(state.crashed, action.id), action.id] };
+      return {
+        ...state,
+        crashed: [...withoutId(state.crashed, action.id), action.id],
+        crashReasons: { ...state.crashReasons, [action.id]: action.reason ?? "crashed" },
+        unresponsive: withoutId(state.unresponsive, action.id),
+        audioPlaying: withoutId(state.audioPlaying, action.id),
+      };
 
     case "view/recovered":
-      return { ...state, crashed: withoutId(state.crashed, action.id) };
+      return {
+        ...state,
+        crashed: withoutId(state.crashed, action.id),
+        crashReasons: withoutKey(state.crashReasons, action.id),
+      };
+
+    case "view/load-failed": {
+      if (!action.failure) {
+        return action.id in state.failed
+          ? { ...state, failed: withoutKey(state.failed, action.id) }
+          : state;
+      }
+      if (!state.tabs.some((tab) => tab.id === action.id)) return state;
+      return { ...state, failed: { ...state.failed, [action.id]: action.failure } };
+    }
+
+    case "view/hibernated":
+      if (action.id === state.activeId || !state.tabs.some((tab) => tab.id === action.id)) {
+        return state;
+      }
+      return {
+        ...state,
+        hibernated: [...withoutId(state.hibernated, action.id), action.id],
+        audioPlaying: withoutId(state.audioPlaying, action.id),
+        crashed: withoutId(state.crashed, action.id),
+        crashReasons: withoutKey(state.crashReasons, action.id),
+        failed: withoutKey(state.failed, action.id),
+        unresponsive: withoutId(state.unresponsive, action.id),
+      };
+
+    case "view/unresponsive": {
+      const without = withoutId(state.unresponsive, action.id);
+      return { ...state, unresponsive: action.value ? [...without, action.id] : without };
+    }
 
     case "view/login-rejected": {
       const loginRejected = { ...state.loginRejected };

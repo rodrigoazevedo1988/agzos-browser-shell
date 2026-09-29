@@ -6,11 +6,23 @@ import { cn } from "@/lib/utils";
 
 import type { DesktopBridge } from "../desktop";
 import { engineOf } from "../engines";
+import { describeCrash } from "../load-errors";
 import { StartPage } from "../start-page";
 import { entryOf } from "../store/selectors";
 import type { BrowserState } from "../store/state";
 import type { QuickLink, Tab } from "../types";
 import { WebFrame } from "../web-frame";
+import { ErrorPage } from "./error-page";
+
+/** Ações das telas de erro e da página sem resposta (guia ativa). */
+export type ErrorActions = {
+  canBack: boolean;
+  onRetry: (id: number) => void;
+  onBack: (id: number) => void;
+  onAllowCertificate: (id: number) => void;
+  onAllowSite: (id: number) => void;
+  onSearch: (text: string) => void;
+};
 
 export function Viewport({
   state,
@@ -23,8 +35,10 @@ export function Viewport({
   onAddLink,
   onRemoveLink,
   onRecover,
+  errors,
   internal,
 }: {
+  errors: ErrorActions;
   /** Conteúdo da página da casca (histórico, favoritos) quando a aba mostra uma. */
   internal: ReactNode;
   state: BrowserState;
@@ -41,6 +55,7 @@ export function Viewport({
 }) {
   const current = entryOf(tab);
   const rejectedUrl = state.loginRejected[tab.id];
+  const failure = state.failed[tab.id];
 
   let content;
   if (rejectedUrl) {
@@ -63,13 +78,27 @@ export function Viewport({
       </div>
     );
   } else if (state.crashed.includes(tab.id)) {
+    const crash = describeCrash(state.crashReasons[tab.id]);
     content = (
-      <div className="crash-page">
+      <div className="crash-page" role="alert" aria-label="Guia travada">
         <ShieldCheck aria-hidden="true" />
-        <h1>Esta guia travou</h1>
-        <p>O processo desta página parou de responder.</p>
+        <h1>{crash.title}</h1>
+        <p>{crash.message}</p>
         <Button onClick={() => onRecover(tab.id)}>Recarregar</Button>
       </div>
+    );
+  } else if (failure && current.kind === "page") {
+    content = (
+      <ErrorPage
+        key={`${tab.id}-${failure.url}-${failure.code}`}
+        failure={failure}
+        canBack={errors.canBack}
+        onRetry={() => errors.onRetry(tab.id)}
+        onBack={() => errors.onBack(tab.id)}
+        onAllowCertificate={() => errors.onAllowCertificate(tab.id)}
+        onAllowSite={() => errors.onAllowSite(tab.id)}
+        onSearch={errors.onSearch}
+      />
     );
   } else if (current.kind === "internal") {
     content = internal;

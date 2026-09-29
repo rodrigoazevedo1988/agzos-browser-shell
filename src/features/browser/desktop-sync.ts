@@ -60,7 +60,16 @@ export function useDesktopSync({
             dispatch({ type: "view/muted", id: event.id, muted: event.muted });
             return;
           case "crashed":
-            dispatch({ type: "view/crashed", id: event.id });
+            dispatch({ type: "view/crashed", id: event.id, reason: event.reason ?? "crashed" });
+            return;
+          case "load-failed":
+            dispatch({ type: "view/load-failed", id: event.id, failure: event.failure });
+            return;
+          case "hibernated":
+            dispatch({ type: "view/hibernated", id: event.id });
+            return;
+          case "unresponsive":
+            dispatch({ type: "view/unresponsive", id: event.id, value: event.value });
             return;
           case "blocked":
             dispatch({
@@ -132,6 +141,15 @@ export function useDesktopSync({
     lastFindTab.current = findTab;
     if (desktop && previous !== null && previous !== findTab) void desktop.findStop(previous);
   }, [desktop, findTab]);
+
+  // Casca carregada (ou recarregada depois de cair): o main fecha as páginas de guias que
+  // esta janela não tem mais.
+  const hydrated = state.hydrated;
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
+  useEffect(() => {
+    if (desktop && hydrated) void desktop.syncTabs(tabsRef.current.map((tab) => tab.id));
+  }, [desktop, hydrated]);
 
   // Aba que saiu do estado → fecha o WebContentsView correspondente.
   const knownIds = useRef<Set<number>>(new Set(state.tabs.map((tab) => tab.id)));

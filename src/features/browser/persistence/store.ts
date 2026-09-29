@@ -1,7 +1,12 @@
+import { parseBookmarks } from "../bookmarks";
 import { desktopBridge, type DesktopBridge } from "../desktop";
+import type { SyncPayload } from "../store/reducer";
 import {
   SNAPSHOT_VERSION,
   clearLegacy,
+  parseClosedTabs,
+  parseLinks,
+  parsePrefs,
   parseSnapshot,
   readLegacySnapshot,
   type Snapshot,
@@ -15,7 +20,22 @@ export type BrowserStore = {
   debounceMs: number;
   load(): Promise<Snapshot | null>;
   save(snapshot: Snapshot): Promise<void>;
+  /** Mudanças gravadas por outra janela do app (só no desktop). */
+  subscribe?(onSync: (payload: SyncPayload) => void): () => void;
 };
+
+/** Seções que outra janela gravou → o que muda nesta (valores já normalizados). */
+export function syncPayloadOf(sections: Record<string, unknown>): SyncPayload {
+  const payload: SyncPayload = {};
+  if ("prefs" in sections) payload.prefs = parsePrefs(sections["prefs"]);
+  if ("links" in sections) payload.links = parseLinks(sections["links"]);
+  if ("closedTabs" in sections) payload.closedTabs = parseClosedTabs(sections["closedTabs"]);
+  if ("bookmarks" in sections) {
+    const bookmarks = parseBookmarks(sections["bookmarks"]);
+    if (bookmarks) payload.bookmarks = bookmarks;
+  }
+  return payload;
+}
 
 export const STATE_KEY = "agzos-state";
 
@@ -75,8 +95,29 @@ export function createDesktopStore(bridge: DesktopBridge, storage: StorageLike):
         available = false;
         return fallback.load();
       }
-      const snapshot = parseSnapshot(result.sections);
-      if (snapshot) return snapshot;
+      // Janela aberta com guias (guia movida, link em nova janela) antes de a primeira
+      // janela gravar as preferências: vale a sessão, o resto fica no padrão.
+      const sections =
+        "session" in result.sections && !("version" in result.sections)
+          ? { ...result.sections, version: SNAPSHOT_VERSION }
+          : result.sections;
+      const snapshot = parseSnapshot(sections);
+      if (snapshot) {
+        // O que veio do SQLite não é regravado (nem espalhado para as outras janelas):
+        // uma janela nova não desfaz o que outra acabou de mudar. Sem as seções
+        // compartilhadas (janela aberta antes da primeira gravação), os padrões também
+        // não sobrescrevem nada.
+        const loaded = sectionsOf(snapshot);
+        const known = Object.keys(result.sections).length && "version" in result.sections;
+        remember(
+          Object.fromEntries(
+            Object.entries(loaded).filter(([key]) =>
+              known ? key in result.sections : key !== "session",
+            ),
+          ),
+        );
+        return snapshot;
+      }
       // Primeiro boot da 1.4: traz o estado que a 1.3 deixou no localStorage do app.
       const legacy = readLegacySnapshot(storage);
       if (!legacy) return null;
@@ -90,6 +131,16 @@ export function createDesktopStore(bridge: DesktopBridge, storage: StorageLike):
       if (!Object.keys(sections).length) return;
       const result = await bridge.stateSave(sections);
       if (result.ok) remember(sections);
+    },
+    subscribe(onSync) {
+      return bridge.onStateSync((sections) => {
+        if (!sections || typeof sections !== "object") return;
+        const payload = syncPayloadOf(sections);
+        // O que veio de fora já está gravado: não volta para o SQLite (nem para as outras
+        // janelas, o que viraria um pingue-pongue).
+        remember(payload as Record<string, unknown>);
+        onSync(payload);
+      });
     },
   };
 }
