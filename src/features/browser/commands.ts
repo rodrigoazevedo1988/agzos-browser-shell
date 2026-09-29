@@ -350,7 +350,23 @@ export function commandById(id: string): Command | undefined {
   return byId.get(id as CommandId);
 }
 
-export type KeyInput = { key: string; ctrl: boolean; meta: boolean; shift: boolean; alt: boolean };
+export type KeyInput = {
+  key: string;
+  /** Tecla física (KeyboardEvent.code), reserva quando `key` não é a letra. */
+  code?: string;
+  ctrl: boolean;
+  meta: boolean;
+  shift: boolean;
+  alt: boolean;
+};
+
+/** Mesma regra do main (shortcutKey em electron/main.cjs). */
+export function shortcutKey(input: Pick<KeyInput, "key" | "code">): string {
+  const key = input.key ?? "";
+  if (key.length > 1 || /^[\x21-\x7e]$/.test(key)) return key.toLowerCase();
+  const code = /^(?:Key([A-Z])|Digit(\d))$/.exec(input.code ?? "");
+  return code ? (code[1] ?? code[2]!).toLowerCase() : key.toLowerCase();
+}
 
 /** Forma canônica do atalho ("mod+shift+t"), a mesma de FORWARDED_SHORTCUTS no main. */
 export function shortcutCombo(shortcut: Shortcut): string {
@@ -365,7 +381,7 @@ export function shortcutCombo(shortcut: Shortcut): string {
 /** Resolve a tecla pressionada para um comando, com os modificadores exatos. */
 export function commandForKey(input: KeyInput): Command | undefined {
   const combo = shortcutCombo({
-    key: input.key.toLowerCase(),
+    key: shortcutKey(input),
     shift: input.shift,
     alt: input.alt,
     mod: input.ctrl || input.meta,

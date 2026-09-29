@@ -40,10 +40,13 @@ echo "Building Win..."
 rm -rf win && mkdir win && unzip -q ../electron-v44.4.5-win32-x64.zip -d win
 mkdir -p win/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" win/resources/app/electron/; done
+mkdir -p win/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png win/resources/app/electron/icons/
 cp -r /var/www/agzos-browser/dist win/resources/app/dist
 printf '%s\n' "$APPJSON" > win/resources/app/package.json
 rm -f win/resources/default_app.asar
 mv win/electron.exe win/AgzosBrowser.exe
+# Nome "Agzos Browser" e ícone no .exe (o Gerenciador de Tarefas mostra a descrição do .exe).
+node /var/www/agzos-browser/scripts/brand-win.mjs win/AgzosBrowser.exe /var/www/agzos-browser/electron/icons/icon.ico "$VERSION"
 (cd win/locales && ls | grep -v -E '^(en-US|pt-BR)\.pak$' | xargs rm -f)
 (cd win && zip -qr9 "$ARTIFACTS/Agnos-Browser-win32-x64.zip" .)
 echo "Win OK"
@@ -53,6 +56,7 @@ echo "Building Linux..."
 rm -rf linux && mkdir linux && unzip -q ../electron-v44.4.5-linux-x64.zip -d linux
 mkdir -p linux/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" linux/resources/app/electron/; done
+mkdir -p linux/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png linux/resources/app/electron/icons/
 cp -r /var/www/agzos-browser/dist linux/resources/app/dist
 printf '%s\n' "$APPJSON" > linux/resources/app/package.json
 rm -f linux/resources/default_app.asar
@@ -81,19 +85,14 @@ with open(path, "wb") as f:
     plistlib.dump(data, f)
 PY
 
-  # Os helpers do Electron vêm sem CFBundleExecutable. O codesign da Apple deduz o
-  # executável pelo nome, o rcodesign não: sem a chave ele sela o bundle mas assina o
-  # binário como Mach-O avulso (sem Info.plist/recursos) e o Gatekeeper acusa "danificado".
-  python3 - "$APP" <<'PY'
-import glob, os, plistlib, sys
-for path in glob.glob(os.path.join(sys.argv[1], "Contents/Frameworks/*.app/Contents/Info.plist")):
-    with open(path, "rb") as f:
-        data = plistlib.load(f)
-    if "CFBundleExecutable" not in data:
-        data["CFBundleExecutable"] = data["CFBundleName"]
-        with open(path, "wb") as f:
-            plistlib.dump(data, f)
-PY
+  # Marca no Mac (como o electron-packager): executável "Agzos Browser", helpers
+  # "Agzos Browser Helper (…)" (o Monitor de Atividade mostra esses nomes) e ícone.
+  # O Electron acha os helpers pelo CFBundleName do app ("<nome> Helper").
+  # Os helpers vêm sem CFBundleExecutable: o codesign da Apple deduz, o rcodesign não
+  # (sem a chave ele assina o binário como Mach-O avulso e o Gatekeeper acusa "danificado").
+  cp /var/www/agzos-browser/electron/icons/icon.icns "$APP/Contents/Resources/agzos.icns"
+  python3 /var/www/agzos-browser/scripts/brand-mac.py "$APP"
+  [ -x "$APP/Contents/MacOS/Agzos Browser" ] || { echo "Executável do Mac não renomeado" >&2; exit 1; }
 
   mkdir -p "$APP/Contents/Resources/app/electron"
   for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" "$APP/Contents/Resources/app/electron/"; done

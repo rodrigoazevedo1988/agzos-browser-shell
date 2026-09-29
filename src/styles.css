@@ -2803,3 +2803,23 @@ button.download-name:hover {
 .library-folder-head > div button {
   height: 30px;
 }
+
+/* Pedido de permissão: faixa entre a barra de endereço e a página (o WebContentsView
+   fica por cima de tudo que flutua sobre a área da página). */
+.permission-bar {
+  position: static;
+  max-width: none;
+  margin: 0;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--primary) 35%, var(--border));
+  border-radius: 0;
+  background: color-mix(in oklab, var(--primary) 9%, var(--background));
+  box-shadow: none;
+  backdrop-filter: none;
+  animation: fade-in var(--dur-enter) var(--ease-out);
+}
+.permission-bar > span {
+  flex: 1;
+  min-width: 0;
+}

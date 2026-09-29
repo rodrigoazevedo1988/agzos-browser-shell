@@ -846,6 +846,11 @@ test("1.6: permissão lembrada vale depois de reiniciar; bloqueio vira 'denied'"
     const asked = withGesture<string>(first.app, url, "Notification.requestPermission()");
     const bar = first.window.getByRole("alertdialog", { name: "Pedido de permissão" });
     await expect(bar).toContainText("quer mostrar notificações");
+    // A faixa fica acima da página nativa (antes flutuava e ficava atrás dela).
+    const barBox = (await bar.boundingBox())!;
+    // O WebContentsView ocupa a caixa do .native-view (setBounds).
+    const frame = (await first.window.locator(".native-view").boundingBox())!;
+    expect(barBox.y + barBox.height).toBeLessThanOrEqual(frame.y + 1);
     await bar.getByRole("button", { name: "Permitir" }).click();
     expect(await asked).toBe("granted");
   } finally {

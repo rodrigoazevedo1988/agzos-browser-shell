@@ -447,6 +447,7 @@ export function AgzosBrowser() {
     function onKey(event: KeyboardEvent) {
       const command = commandForKey({
         key: event.key,
+        code: event.code,
         ctrl: event.ctrlKey,
         meta: event.metaKey,
         shift: event.shiftKey,
@@ -731,6 +732,18 @@ export function AgzosBrowser() {
           />
         )}
 
+        {/* Faixa abaixo da barra de endereço (a página nativa cobriria algo flutuando). */}
+        {permission && (
+          <PermissionBar
+            key={permission.id}
+            request={permission}
+            onAnswer={(allow, remember) => {
+              void desktop?.respondPermission(permission.id, allow, remember);
+              setPermission(null);
+            }}
+          />
+        )}
+
         {state.find && state.find.id === activeTab.id && (
           <FindBar
             result={state.find}
@@ -937,16 +950,6 @@ export function AgzosBrowser() {
           />
         )}
       </section>
-      {permission && (
-        <PermissionBar
-          key={permission.id}
-          request={permission}
-          onAnswer={(allow, remember) => {
-            void desktop?.respondPermission(permission.id, allow, remember);
-            setPermission(null);
-          }}
-        />
-      )}
       {state.switcher && switcherVisible && (
         <TabSwitcher
           tabs={state.switcher.ids.flatMap((id) => state.tabs.filter((tab) => tab.id === id))}
