@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onModifierUp: subscribe("agzos:modifier-up"),
   showTabPreview: (payload) => ipcRenderer.invoke("preview:show", payload),
   hideTabPreview: () => ipcRenderer.invoke("preview:hide"),
+  renderSwitcher: (model) => ipcRenderer.invoke("switcher:render", model),
   setSwitcherOpen: (open) => ipcRenderer.invoke("switcher:state", { open }),
   onSwitcherKey: subscribe("agzos:switcher-key"),
   onAdblockStats: subscribe("agzos:adblock-stats"),

@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.3",
+    date: "2026-10-02",
+    items: [
+      "Ctrl+Tab: soltar o Ctrl confirma a guia escolhida sempre, não só às vezes.",
+      "O seletor do Ctrl+Tab aparece por cima da página, que continua à vista.",
+    ],
+  },
+  {
     version: "1.5.2",
     date: "2026-10-01",
     items: [

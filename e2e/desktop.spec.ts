@@ -275,6 +275,34 @@ async function liveViews(app: ElectronApplication, needle: string) {
   );
 }
 
+/** Camada nativa pelo título da página (agzos-preview, agzos-switcher). */
+async function layerState(app: ElectronApplication, title: string) {
+  return app.evaluate(async ({ BrowserWindow }, wanted) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      const children = window.contentView.children;
+      for (const child of children) {
+        const contents = (child as { webContents?: Electron.WebContents }).webContents;
+        if (!contents || contents.isDestroyed() || contents.getTitle() !== wanted) continue;
+        const bounds = (child as Electron.WebContentsView).getBounds();
+        const info = (await contents.executeJavaScript(`({
+            text: document.body.innerText,
+            cards: [...document.querySelectorAll("a.card")].map((card) => ({
+              title: card.innerText.trim(),
+              image: Boolean(card.querySelector(".shot img")),
+              selected: card.classList.contains("selected"),
+            })),
+          })`)) as { text: string; cards: { title: string; image: boolean; selected: boolean }[] };
+        return {
+          visible: bounds.width > 0 && bounds.height > 0,
+          onTop: children.at(-1) === child,
+          ...info,
+        };
+      }
+    }
+    return { visible: false, onTop: false, text: "", cards: [] };
+  }, title);
+}
+
 test("navega de verdade, sincroniza título e voltar/avançar", async () => {
   const { app, window } = await launch(tempProfile());
   try {
@@ -624,21 +652,22 @@ test("seletor do Ctrl+Tab com miniaturas das páginas, confirmado ao soltar o Ct
     await window.getByRole("button", { name: "Nova aba", exact: true }).click();
     await go(window, `${origin}/dois`);
     await expect(tabs(window).last()).toContainText("Página DOIS");
-    // Ctrl pressionado + Tab, sem soltar: o seletor aparece por cima da página.
+    // Ctrl pressionado + Tab, sem soltar: o seletor aparece por cima da página (camada).
     await app.evaluate(({ webContents }, target) => {
       const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
       contents.focus();
+      contents.sendInputEvent({ type: "keyDown", keyCode: "Control", modifiers: ["control"] });
       contents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["control"] });
     }, `${origin}/dois`);
-    const switcher = window.getByRole("listbox", { name: "Alternar guias" });
-    await expect(switcher).toBeVisible();
-    const options = switcher.getByRole("option");
-    await expect(options).toHaveCount(2);
-    await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect.poll(async () => (await layerState(app, "agzos-switcher")).visible).toBe(true);
+    const layer = await layerState(app, "agzos-switcher");
+    expect(layer.onTop).toBe(true);
+    expect(layer.cards.map((card) => card.title)).toEqual(["Página DOIS", "Página UM"]);
+    expect(layer.cards.map((card) => card.selected)).toEqual([false, true]);
     // As duas abas já estiveram visíveis: as duas têm miniatura de verdade.
-    await expect(switcher.locator(".switcher-preview > img")).toHaveCount(2, { timeout: 10_000 });
-    await window.keyboard.up("Control");
-    await expect(switcher).toHaveCount(0);
+    expect(layer.cards.every((card) => card.image)).toBe(true);
+    await keyInTab(app, `${origin}/dois`, "Control");
+    await expect.poll(async () => (await layerState(app, "agzos-switcher")).visible).toBe(false);
     await expect(window.locator(".browser-tab.active")).toContainText("Página UM");
   } finally {
     await app.close();
@@ -1054,9 +1083,11 @@ test("1.7: Ctrl+N abre janela nova, tema sincroniza e as janelas voltam depois d
   const again = await launch(profile);
   try {
     const pages = await waitShells(again.app, 2);
-    const titles = await Promise.all(pages.map((page) => tabs(page).first().textContent()));
-    expect(titles.join(" ")).toContain("Página JANELA-UM");
-    expect(titles.join(" ")).toContain("Página JANELA-DOIS");
+    // A guia ativa de cada janela recarrega ao abrir: o título volta quando a página carrega.
+    const titles = async () =>
+      (await Promise.all(pages.map((page) => tabs(page).first().textContent()))).join(" ");
+    await expect.poll(titles).toContain("Página JANELA-UM");
+    await expect.poll(titles).toContain("Página JANELA-DOIS");
     for (const page of pages) await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
     // Fechar uma janela entre várias descarta as guias dela (como no Chrome).
     await again.app.evaluate(({ BrowserWindow }) => {
@@ -1384,7 +1415,7 @@ async function previewCard(app: ElectronApplication) {
     for (const window of BrowserWindow.getAllWindows()) {
       for (const child of window.contentView.children) {
         const contents = (child as { webContents?: Electron.WebContents }).webContents;
-        if (!contents || !contents.getURL().startsWith("data:text/html")) continue;
+        if (!contents || contents.getTitle() !== "agzos-preview") continue;
         const bounds = (child as Electron.WebContentsView).getBounds();
         const text = (await contents.executeJavaScript("document.body.innerText")) as string;
         const onTop = window.contentView.children.at(-1) === child;
@@ -1424,7 +1455,7 @@ test("1.5.2: pausar o mouse na guia mostra a prévia por cima da página, com RA
   }
 });
 
-test("1.5.2: Ctrl+Tab com o foco na página confirma ao soltar o Ctrl (e Enter confirma)", async () => {
+test("1.5.3: Ctrl+Tab com o foco na página: a página fica à vista e com o foco, e soltar o Ctrl confirma sempre", async () => {
   const { app, window } = await launch(tempProfile());
   try {
     await go(window, `${origin}/troca-a`);
@@ -1432,55 +1463,79 @@ test("1.5.2: Ctrl+Tab com o foco na página confirma ao soltar o Ctrl (e Enter c
     await window.getByRole("button", { name: "Nova aba", exact: true }).click();
     await go(window, `${origin}/troca-b`);
     await expect(tabs(window).last()).toContainText("Página TROCA-B");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/troca-c`);
+    await expect(tabs(window).last()).toContainText("Página TROCA-C");
     const active = window.locator(".tabs .browser-tab.active");
-    /** Tecla no webContents que tem o foco do sistema: a página ou a casca. */
-    const send = (
-      where: "page" | "shell",
-      type: "keyDown" | "keyUp",
-      keyCode: string,
-      modifiers: string[] = [],
-    ) =>
+    const switcher = () => layerState(app, "agzos-switcher");
+    /** Tecla na página (o foco do sistema fica nela o tempo todo). */
+    const key = (type: "keyDown" | "keyUp", keyCode: string, modifiers: string[] = []) =>
       app.evaluate(
-        ({ webContents, BrowserWindow }, [target, place, kind, key, mods]) => {
-          const contents =
-            place === "shell"
-              ? BrowserWindow.getAllWindows()[0]!.webContents
-              : webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+        ({ webContents }, [kind, code, mods]) => {
+          const contents = webContents.getFocusedWebContents()!;
           contents.sendInputEvent({
             type: kind as "keyDown" | "keyUp",
-            keyCode: key as string,
+            keyCode: code as string,
             modifiers: mods as ("control" | "shift")[],
           });
         },
-        [`${origin}/troca-b`, where, type, keyCode, modifiers] as const,
+        [type, keyCode, modifiers] as const,
       );
     const focused = () =>
       app.evaluate(({ webContents }) => webContents.getFocusedWebContents()?.getURL() ?? "");
+    const pageShown = (url: string) =>
+      app.evaluate(({ BrowserWindow }, target) => {
+        const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find(
+          (item) =>
+            (item as { webContents?: Electron.WebContents }).webContents?.getURL() === target,
+        ) as Electron.WebContentsView | undefined;
+        return (child?.getBounds().width ?? 0) > 0;
+      }, url);
+    const focusPage = (url: string) =>
+      app.evaluate(({ webContents }, target) => {
+        webContents
+          .getAllWebContents()
+          .find((item) => item.getURL() === target)!
+          .focus();
+      }, url);
 
-    // Ctrl apertado na página, Tab: o seletor abre e o foco vai para a casca.
-    await app.evaluate(({ webContents }, target) => {
-      webContents
-        .getAllWebContents()
-        .find((item) => item.getURL() === target)!
-        .focus();
-    }, `${origin}/troca-b`);
-    await send("page", "keyDown", "Control", ["control"]);
-    await send("page", "keyDown", "Tab", ["control"]);
-    await expect(window.locator(".tab-switcher")).toBeVisible();
-    await expect.poll(focused).toContain("/dist/index.html");
-    // O "soltar o Ctrl" chega à casca, que confirma a guia escolhida.
-    await send("shell", "keyUp", "Control");
-    await expect(active).toContainText("Página TROCA-A");
-    await expect(window.locator(".tab-switcher")).toHaveCount(0);
+    // Várias vezes seguidas: segura o Ctrl, Tab, Tab, solta.
+    for (let round = 0; round < 3; round++) {
+      const from = (await active.textContent())!.match(/TROCA-[A-C]/)![0].toLowerCase();
+      await focusPage(`${origin}/${from}`);
+      await key("keyDown", "Control", ["control"]);
+      await key("keyDown", "Tab", ["control"]);
+      await key("keyUp", "Tab", ["control"]);
+      await expect.poll(async () => (await switcher()).visible).toBe(true);
+      await key("keyDown", "Tab", ["control"]);
+      await key("keyUp", "Tab", ["control"]);
+      await expect
+        .poll(async () => (await switcher()).cards.findIndex((card) => card.selected))
+        .toBe(2);
+      // A página continua à vista e com o foco (o "soltar" chega nela).
+      expect(await focused()).toContain(`/${from}`);
+      expect(await pageShown(`${origin}/${from}`)).toBe(true);
+      const target = (await switcher()).cards[2]!.title;
+      await key("keyUp", "Control");
+      await expect(active).toContainText(target);
+      await expect.poll(async () => (await switcher()).visible).toBe(false);
+    }
 
-    // Enter também confirma.
-    await tabs(window).last().click();
-    await expect(active).toContainText("Página TROCA-B");
-    await send("shell", "keyDown", "Control", ["control"]);
-    await send("shell", "keyDown", "Tab", ["control"]);
-    await expect(window.locator(".tab-switcher")).toBeVisible();
-    await send("shell", "keyDown", "Enter", ["control"]);
-    await expect(active).toContainText("Página TROCA-A");
+    // Enter confirma e não chega à página; clicar num cartão também confirma.
+    const current = (await active.textContent())!.match(/TROCA-[A-C]/)![0].toLowerCase();
+    await focusPage(`${origin}/${current}`);
+    await inTab(
+      app,
+      `${origin}/${current}`,
+      "window.enters = 0; addEventListener('keydown', (e) => { if (e.key === 'Enter') window.enters++; })",
+    );
+    await key("keyDown", "Control", ["control"]);
+    await key("keyDown", "Tab", ["control"]);
+    await expect.poll(async () => (await switcher()).visible).toBe(true);
+    const chosen = (await switcher()).cards[1]!.title;
+    await key("keyDown", "Enter", ["control"]);
+    await expect(active).toContainText(chosen);
+    expect(await inTab(app, `${origin}/${current}`, "window.enters")).toBe(0);
   } finally {
     await app.close();
   }

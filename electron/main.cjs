@@ -39,6 +39,7 @@ const {
   STABLE_AFTER_MS,
 } = require("./windows.cjs");
 const { HOVER_CARD_HTML, cardBounds, metricRows } = require("./hover-card.cjs");
+const { SWITCHER_HTML, switcherChoice, switcherBounds } = require("./switcher-layer.cjs");
 const {
   CHECK_INTERVAL_MS,
   hibernateConfigOf,
@@ -876,10 +877,17 @@ function shortcutCombo(input) {
   return parts.join("+");
 }
 
-// Ctrl+Tab com o foco na página: o foco vai para a casca (a página some atrás do seletor e
-// página escondida não recebe teclas), mas o Chromium não entrega à casca o "soltar o
-// Ctrl" de uma tecla apertada em outra superfície, e o seletor só confirmava com Enter.
-// Então a casca recebe um "Ctrl apertado" sintético: o soltar de verdade chega a ela.
+// Ctrl+Tab: o seletor confirma ao soltar o Ctrl, então o keyup do Ctrl precisa chegar.
+// Duas regras do Chromium atrapalhavam:
+// 1. Tecla consumida pelo navegador (preventDefault no before-input-event) faz o
+//    Chromium descartar os eventos seguintes daquela superfície até o próximo keydown
+//    (RenderWidgetHostImpl::suppress_events_until_keydown_). O keyup do Tab e o do Ctrl
+//    sumiam. Só funcionava quando o Windows repetia o keydown do Ctrl segurado (~0,5 s),
+//    por isso "às vezes funciona, às vezes não". Depois do Ctrl+Tab consumido, a mesma
+//    superfície recebe um keydown do Ctrl (que está apertado): a supressão acaba e o
+//    soltar chega.
+// 2. Com o foco na página, o foco fica nela e o seletor aparece numa camada por cima
+//    (switcher-layer.cjs): apertar e soltar acontecem na mesma superfície.
 const SWITCHER_COMBOS = new Set(["mod+tab", "mod+shift+tab"]);
 // Com o seletor aberto e o foco na página, estas teclas vão para o seletor, não para ela.
 const SWITCHER_KEYS = new Set([
@@ -891,26 +899,33 @@ const SWITCHER_KEYS = new Set([
   "ArrowDown",
 ]);
 
-function forwardAppShortcut(ctx, input, event, { page = false } = {}) {
+/** Tira a supressão de teclas do Chromium depois de um Ctrl+Tab consumido (ver acima). */
+function releaseKeySuppression(contents, input) {
+  // Depois do handler: a supressão é ligada quando ele devolve "consumido".
+  setImmediate(() => {
+    if (contents.isDestroyed()) return;
+    const modifiers = [input.control && "control", input.meta && "meta"].filter(Boolean);
+    contents.sendInputEvent({
+      type: "keyDown",
+      keyCode: input.meta ? "Meta" : "Control",
+      modifiers,
+    });
+  });
+}
+
+function forwardAppShortcut(ctx, input, event, { page = false, contents = null } = {}) {
   if (input.type !== "keyDown" || !ctx) return false;
   const combo = shortcutCombo(input);
   if (!FORWARDED_SHORTCUTS.has(combo)) return false;
   // No Mac o ⌘H é "Ocultar Agzos Browser" (a barra de menus trata; histórico é ⌘Y).
   if (process.platform === "darwin" && combo === "mod+h" && input.meta) return false;
   event.preventDefault();
-  if (!ctx.window.isDestroyed()) {
-    const shell = ctx.window.webContents;
-    shell.focus();
-    if (page && SWITCHER_COMBOS.has(combo)) {
-      const modifiers = [input.control && "control", input.meta && "meta"].filter(Boolean);
-      shell.sendInputEvent({
-        type: "keyDown",
-        keyCode: input.meta ? "Meta" : "Control",
-        modifiers,
-      });
-    }
-  }
+  if (SWITCHER_COMBOS.has(combo) && contents) releaseKeySuppression(contents, input);
+  const layer = page && SWITCHER_COMBOS.has(combo);
+  if (!layer && !ctx.window.isDestroyed()) ctx.window.webContents.focus();
   send(ctx, "agzos:hotkey", {
+    // A casca desenha o seletor na camada (a página continua à vista e com o foco).
+    layer,
     key: shortcutKey(input),
     shift: Boolean(input.shift),
     alt: Boolean(input.alt),
@@ -938,7 +953,7 @@ function wireShortcuts(contents, { page = false } = {}) {
     // Esc com foco na página para o carregamento (e segue para a página, como no Chrome).
     if (page && input.key === "Escape" && contents.isLoading()) contents.stop();
     if (handlePageShortcut(ctx, input, event)) return;
-    forwardAppShortcut(ctx, input, event, { page });
+    forwardAppShortcut(ctx, input, event, { page, contents });
   });
 }
 
@@ -1443,6 +1458,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     hibernated: new Map(),
     unresponsive: new Set(),
     switcherOpen: false,
+    switcherView: null,
     preview: null,
   };
   const shellId = window.webContents.id;
@@ -1486,9 +1502,16 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     // janela, ou todas ao sair do app, ficam salvas para o próximo início.
     if (!quitting && contexts.size > 1) windowStore?.remove(ctx.key);
   });
-  window.on("blur", () => hidePreview(ctx));
+  window.on("blur", () => {
+    hidePreview(ctx);
+    // Alt+Tab do sistema com o seletor aberto: confirma (como soltar o Ctrl).
+    if (ctx.switcherOpen) send(ctx, "agzos:modifier-up", { key: "Control" });
+  });
   window.on("closed", () => {
     if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
+    if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) {
+      ctx.switcherView.webContents.close();
+    }
     for (const [id, entry] of ctx.views) dropView(ctx, id, entry);
     contexts.delete(shellId);
     if (lastFocused === ctx) lastFocused = contexts.values().next().value ?? null;
@@ -1842,6 +1865,88 @@ async function showPreview(ctx, { id, rect, side, card }) {
   view.setBounds(cardBounds(rect, { width, height: windowHeight }, height || 200, side));
 }
 
+// --- Seletor do Ctrl+Tab na camada acima da página (switcher-layer.cjs). ---
+
+function switcherLayer(ctx) {
+  if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) return ctx.switcherView;
+  const view = new WebContentsView({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  view.setBackgroundColor("#00000000");
+  view.setBounds(HIDDEN_RECT);
+  const contents = view.webContents;
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.setIgnoreMenuShortcuts(true);
+  // Clique num cartão: agzos-switcher://N vira "confirmar a guia N".
+  contents.on("will-navigate", (event, url) => {
+    event.preventDefault();
+    const index = switcherChoice(url);
+    if (index !== null) send(ctx, "agzos:switcher-key", { key: "commit", index });
+  });
+  // Teclas com o foco na camada (depois de um clique) valem como na página.
+  contents.on("before-input-event", (event, input) => {
+    if (input.type === "keyUp" && (input.key === "Control" || input.key === "Meta")) {
+      send(ctx, "agzos:modifier-up", { key: input.key });
+    } else if (input.type === "keyDown" && SWITCHER_KEYS.has(input.key)) {
+      event.preventDefault();
+      send(ctx, "agzos:switcher-key", { key: input.key });
+    } else if (input.type === "keyDown") {
+      forwardAppShortcut(ctx, input, event, { page: true, contents });
+    }
+  });
+  void contents
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(SWITCHER_HTML)}`)
+    .catch(() => {});
+  ctx.switcherView = view;
+  ctx.switcherReady = new Promise((resolve) => {
+    contents.once("did-finish-load", resolve);
+    contents.once("destroyed", resolve);
+  });
+  return view;
+}
+
+let switcherSeq = 0;
+
+/** model: { cards, index, dark } desenha; { index } só muda a seleção; null esconde. */
+async function renderSwitcher(ctx, model) {
+  const seq = ++switcherSeq;
+  ctx.switcherSeq = seq;
+  if (!model) {
+    const view = ctx.switcherView;
+    if (!view || view.webContents.isDestroyed()) return;
+    const hadFocus = view.webContents.isFocused();
+    view.setBounds(HIDDEN_RECT);
+    // Clicou num cartão: o foco volta para a página ativa.
+    if (hadFocus) activeViewEntry(ctx)?.view.webContents.focus();
+    return;
+  }
+  const view = switcherLayer(ctx);
+  await ctx.switcherReady;
+  if (ctx.switcherSeq !== seq || view.webContents.isDestroyed() || ctx.window.isDestroyed()) {
+    return;
+  }
+  const [width, height] = ctx.window.getContentSize();
+  if (!Array.isArray(model.cards)) {
+    void view.webContents
+      .executeJavaScript(`window.select(${Number(model.index) || 0})`)
+      .catch(() => {});
+    return;
+  }
+  let size = null;
+  try {
+    // Desenha com a largura da janela (com 0 px os cartões ficariam empilhados) e depois
+    // encolhe para o tamanho do painel. A camada é transparente: a página segue à vista.
+    view.setBounds({ x: 0, y: 0, width, height });
+    const layout = { ...model, maxWidth: Math.max(240, Math.min(1040, width - 96)) };
+    size = await view.webContents.executeJavaScript(`window.render(${JSON.stringify(layout)})`);
+  } catch {
+    return;
+  }
+  if (ctx.switcherSeq !== seq || ctx.window.isDestroyed() || !size) return;
+  ctx.window.contentView.addChildView(view);
+  view.setBounds(switcherBounds(size, { width, height }));
+}
+
 function hidePreview(ctx) {
   ctx.previewSeq = ++previewSeq;
   const view = ctx.preview;
@@ -2160,6 +2265,14 @@ function registerIpc() {
   ipcMain.handle("switcher:state", (event, { open }) => {
     const ctx = ctxOfEvent(event);
     if (ctx) ctx.switcherOpen = Boolean(open);
+  });
+
+  ipcMain.handle("switcher:render", (event, model) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    const valid =
+      model && typeof model === "object" && (Array.isArray(model.cards) || "index" in model);
+    return renderSwitcher(ctx, valid ? model : null);
   });
 
   ipcMain.handle("chrome:panel", (event, { open }) => {
