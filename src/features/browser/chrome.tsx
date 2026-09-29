@@ -510,10 +510,22 @@ export function AgzosBrowser() {
   const runCommandRef = useRef((id: string, tabId: number | null) => {
     runCommand(ctxRef.current, id, tabId);
   });
+  // Ctrl+Tab com o foco na página: seletor na camada do main, acima da página, que continua
+  // à vista e com o foco (o "soltar o Ctrl" chega sempre; ver switcher-layer.cjs).
+  const [switcherLayer, setSwitcherLayer] = useState(false);
   const runHotkeyRef = useRef(
-    (input: { key: string; shift: boolean; alt: boolean; meta: boolean; ctrl: boolean }) => {
+    (input: {
+      key: string;
+      shift: boolean;
+      alt: boolean;
+      meta: boolean;
+      ctrl: boolean;
+      layer?: boolean;
+    }) => {
       const command = commandForKey(input);
-      if (command) runCommand(ctxRef.current, command.id, null, "keyboard");
+      if (!command) return;
+      if (input.layer && ctxRef.current.state.switcher === null) setSwitcherLayer(true);
+      runCommand(ctxRef.current, command.id, null, "keyboard");
     },
   );
 
@@ -540,13 +552,16 @@ export function AgzosBrowser() {
   useEffect(() => {
     if (!switcherOpen) {
       setSwitcherVisible(false);
+      setSwitcherLayer(false);
       return;
     }
     const timer = window.setTimeout(() => setSwitcherVisible(true), 140);
     const commit = () => dispatch({ type: "switcher/commit" });
     // Mesmas teclas com o foco na casca ou na página (o main repassa: agzos:switcher-key).
-    const handleKey = (key: string) => {
-      if (key === "Escape") dispatch({ type: "switcher/cancel" });
+    const handleKey = (key: string, index?: number) => {
+      if (key === "commit")
+        dispatch({ type: "switcher/commit", ...(index != null ? { index } : {}) });
+      else if (key === "Escape") dispatch({ type: "switcher/cancel" });
       else if (key === "Enter") commit();
       else if (key === "ArrowRight" || key === "ArrowDown") {
         dispatch({ type: "switcher/step", delta: 1 });
@@ -566,7 +581,7 @@ export function AgzosBrowser() {
     // Perdeu o foco com o Ctrl ainda apertado (ex.: Alt+Tab do sistema): confirma.
     window.addEventListener("blur", commit);
     void desktop?.setSwitcherOpen(true);
-    const offKey = desktop?.onSwitcherKey(({ key }) => void handleKey(key));
+    const offKey = desktop?.onSwitcherKey(({ key, index }) => void handleKey(key, index));
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("keyup", onKeyUp);
@@ -579,7 +594,43 @@ export function AgzosBrowser() {
 
   // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
   // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
-  const overlay = panel !== null || switcherVisible || omniboxOpen || whatsNew !== null;
+  const overlay =
+    panel !== null || (switcherVisible && !switcherLayer) || omniboxOpen || whatsNew !== null;
+
+  // Seletor na camada: os cartões vão uma vez ao abrir; depois só o índice.
+  const layerShown = useRef(false);
+  const switcherIds = state.switcher?.ids.join(",") ?? "";
+  const switcherIndex = state.switcher?.index ?? 0;
+  useEffect(() => {
+    if (!desktop) return;
+    if (!switcherLayer || !switcherVisible || !switcherIds) {
+      if (layerShown.current) void desktop.renderSwitcher(null);
+      layerShown.current = false;
+      return;
+    }
+    const current = stateRef.current;
+    if (!layerShown.current) {
+      layerShown.current = true;
+      const cards = switcherIds.split(",").flatMap((id) => {
+        const tab = current.tabs.find((item) => item.id === Number(id));
+        if (!tab) return [];
+        const entry = entryOf(tab);
+        const title = entry.kind === "home" ? "Nova aba" : entry.title;
+        const image = current.thumbnails[tab.id];
+        return [
+          {
+            title,
+            letter: (hostOf(entry.url) ?? title).slice(0, 1).toUpperCase(),
+            ...(image ? { image } : {}),
+            ...(tab.favicon ? { icon: tab.favicon } : {}),
+          },
+        ];
+      });
+      void desktop.renderSwitcher({ cards, index: switcherIndex, dark: current.prefs.dark });
+      return;
+    }
+    void desktop.renderSwitcher({ index: switcherIndex });
+  }, [desktop, switcherLayer, switcherVisible, switcherIds, switcherIndex]);
   const [viewHidden, setViewHidden] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const activeIdRef = useRef(state.activeId);
@@ -1147,7 +1198,7 @@ export function AgzosBrowser() {
           />
         )}
       </section>
-      {state.switcher && switcherVisible && (
+      {state.switcher && switcherVisible && !switcherLayer && (
         <TabSwitcher
           tabs={state.switcher.ids.flatMap((id) => state.tabs.filter((tab) => tab.id === id))}
           index={state.switcher.index}

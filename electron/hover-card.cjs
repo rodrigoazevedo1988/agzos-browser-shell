@@ -8,7 +8,7 @@ const CARD_WIDTH = 300;
 const CARD_GAP = 6;
 const SHADOW = 18;
 
-const HOVER_CARD_HTML = `<!doctype html><html><head><meta charset="utf-8">
+const HOVER_CARD_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>agzos-preview</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
   :root { color-scheme: light dark; }

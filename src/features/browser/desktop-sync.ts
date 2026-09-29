@@ -13,7 +13,15 @@ type Options = {
   /** Comandos vindos do main (menu nativo, atalhos com foco na página). */
   runCommandRef: MutableRefObject<(id: string, tabId: number | null) => void>;
   runHotkeyRef: MutableRefObject<
-    (input: { key: string; shift: boolean; alt: boolean; meta: boolean; ctrl: boolean }) => void
+    (input: {
+      key: string;
+      shift: boolean;
+      alt: boolean;
+      meta: boolean;
+      ctrl: boolean;
+      /** Ctrl+Tab com o foco na página: o seletor vai para a camada acima dela. */
+      layer?: boolean;
+    }) => void
   >;
   onPermission: (request: DesktopPermissionRequest) => void;
 };

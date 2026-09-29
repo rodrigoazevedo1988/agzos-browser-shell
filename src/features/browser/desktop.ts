@@ -227,6 +227,8 @@ export type DesktopBridge = {
       alt: boolean;
       meta: boolean;
       ctrl: boolean;
+      /** Ctrl+Tab com o foco na página: o seletor vai para a camada acima dela. */
+      layer?: boolean;
     }) => void,
   ): () => void;
   /** `action` é um CommandId (ver commands.ts). */
@@ -248,7 +250,18 @@ export type DesktopBridge = {
   /** O seletor do Ctrl+Tab abriu/fechou (o main desvia Enter/Esc/setas da página). */
   setSwitcherOpen(open: boolean): Promise<void>;
   /** Tecla do seletor apertada com o foco na página. */
-  onSwitcherKey(callback: (payload: { key: string }) => void): () => void;
+  onSwitcherKey(callback: (payload: { key: string; index?: number }) => void): () => void;
+  /** Seletor na camada acima da página: cartões (ao abrir), só o índice, ou null (fecha). */
+  renderSwitcher(
+    model:
+      | {
+          cards: { title: string; image?: string; icon?: string; letter: string }[];
+          index: number;
+          dark: boolean;
+        }
+      | { index: number }
+      | null,
+  ): Promise<void>;
   onAdblockStats(callback: (stats: AdblockStats) => void): () => void;
 };
 
