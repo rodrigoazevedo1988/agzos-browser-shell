@@ -132,3 +132,14 @@ o login como "navegador não seguro". Por isso `electron/adblock.cjs` nunca filt
 páginas de login nem requisições para serviços de conta (`isAuthFlow`, lista
 `AUTH_HOSTS`). Ao adicionar listas ou regras, confira que esse desvio continua valendo
 (teste em `src/features/browser/main-process.test.ts`).
+
+## Permissões por site (desde a 1.6)
+
+`electron/permissions.cjs` salva as decisões de câmera, microfone, notificações etc. O
+_check_ de permissão (`setPermissionCheckHandler`) continua respondendo "permitido" para
+tudo que o usuário **não** bloqueou, como o Electron fazia antes. Assim o
+`Notification.permission` das páginas de login segue nascendo `"granted"` e o shim o
+mostra como `"default"`. Só um bloqueio explícito responde `denied` (igual ao Chrome com o
+site bloqueado). Não troque isso por "negar o que não foi decidido": o Google passaria a ver
+`"denied"` e o fingerprint mudaria. O e2e "permissão lembrada vale depois de reiniciar"
+confere o `"default"` antes de qualquer decisão.

@@ -39,6 +39,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   Chrome em toda carga da guia, logins intocados, listas oficiais do uBlock Origin.
 - [PRD v1.5.3 — YouTube](docs/prd/v1.5.3-youtube.md): scriptlets isolados entre si, mundo
   isolado do uBO e primeira carga de guia nova.
+- [PRD v1.6 — Biblioteca](docs/prd/v1.6-biblioteca.md): histórico, favoritos com pastas,
+  omnibox com sugestões, permissões por site e atualização automática.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

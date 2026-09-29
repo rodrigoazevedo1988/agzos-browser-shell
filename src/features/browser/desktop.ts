@@ -1,4 +1,31 @@
-import type { Credential } from "./types";
+import type { Credential, HistoryUrl, HistoryVisit } from "./types";
+
+export type PermissionType =
+  "camera" | "microphone" | "notifications" | "geolocation" | "clipboard-read" | "midi";
+export type PermissionValue = "allow" | "block";
+export type SitePermission = { origin: string; type: PermissionType; value: PermissionValue };
+
+export type UpdateStatus =
+  "idle" | "checking" | "up-to-date" | "downloading" | "ready" | "error" | "unsupported";
+export type UpdateState = {
+  status: UpdateStatus;
+  currentVersion: string;
+  /** Versão mais nova publicada (quando já verificou). */
+  version: string | null;
+  progress: number | null;
+  error: string | null;
+  notes?: string;
+  page?: string;
+  checkedAt?: number;
+};
+
+/** Item do menu nativo (menu:show). `children` vira submenu. */
+export type NativeMenuItem =
+  | { separator: true }
+  | { id: string; label: string; enabled?: boolean }
+  | { label: string; children: NativeMenuItem[] };
+
+export type HistoryQuery = { text?: string; before?: number | null; limit?: number };
 
 export type DesktopTabEvent =
   | {
@@ -68,6 +95,7 @@ export type DesktopTabMenuContext = {
 export type DesktopPermissionRequest = {
   id: string;
   origin: string;
+  types: PermissionType[];
   mediaTypes: string[];
 };
 
@@ -112,6 +140,27 @@ export type DesktopBridge = {
   keyLoad(): Promise<Credential[] | null>;
   keySave(list: Credential[]): Promise<{ ok: boolean }>;
   openExternal(url: string): Promise<void>;
+  permissionsList(): Promise<SitePermission[]>;
+  /** value null volta para "perguntar". */
+  permissionsSet(
+    origin: string,
+    type: PermissionType,
+    value: PermissionValue | null,
+  ): Promise<{ ok: boolean }>;
+  permissionsReset(origin: string): Promise<{ ok: boolean }>;
+  historyList(query?: HistoryQuery): Promise<HistoryVisit[]>;
+  historySearch(text: string, limit?: number): Promise<HistoryUrl[]>;
+  historyDelete(ids: number[]): Promise<void>;
+  historyDeleteUrl(url: string): Promise<void>;
+  historyClear(range?: { from?: number; to?: number }): Promise<void>;
+  /** Sugestões do motor de busca (feitas pelo main). */
+  suggest(engine: string, text: string): Promise<string[]>;
+  /** Menu nativo; devolve o id escolhido ou null. */
+  showMenu(items: NativeMenuItem[]): Promise<string | null>;
+  updateState(): Promise<UpdateState | null>;
+  updateCheck(): Promise<UpdateState | null>;
+  updateInstall(): Promise<{ ok: boolean }>;
+  onUpdate(callback: (state: UpdateState) => void): () => void;
   onTabEvent(callback: (event: DesktopTabEvent) => void): () => void;
   onOpenRequest(callback: (payload: { url: string }) => void): () => void;
   onFullscreen(callback: (payload: { active: boolean }) => void): () => void;

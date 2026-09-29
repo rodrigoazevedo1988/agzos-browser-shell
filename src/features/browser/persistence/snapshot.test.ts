@@ -92,6 +92,7 @@ describe("snapshot", () => {
       },
       links: null,
       closedTabs: [{ title: "a", url: "https://a.com" }],
+      bookmarks: null,
     });
   });
 
@@ -109,6 +110,7 @@ describe("snapshot", () => {
       activeId: null,
       links: null,
       closedTabs: [],
+      bookmarks: null,
     });
   });
 });
@@ -140,10 +142,13 @@ describe("migração da 1.3", () => {
         orientation: "vertical",
         railCollapsed: true,
         pausedHosts: ["x.com"],
+        bookmarksBar: true,
+        searchSuggestions: true,
       },
       session: { tabs: legacyTabs, activeId: 1727000000000 },
       links: [{ name: "Meu", url: "meu.dev" }],
       closedTabs: [{ title: "Velha", url: "https://velha.com" }],
+      bookmarks: null,
     });
   });
 

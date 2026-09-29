@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import type { Entry, Tab } from "../types";
+import { BOOKMARK_BAR, BOOKMARK_OTHER, type BookmarkNode, type Entry, type Tab } from "../types";
 import { browserReducer, type BrowserAction } from "./reducer";
-import { entryOf, navState, orderTabs } from "./selectors";
-import { CLOSED_TABS_LIMIT, HOME_URL, initialState, type BrowserState } from "./state";
+import { activeTabOf, entryOf, navState, orderTabs } from "./selectors";
+import {
+  BOOKMARKS_URL,
+  CLOSED_TABS_LIMIT,
+  HISTORY_URL,
+  HOME_URL,
+  initialState,
+  type BrowserState,
+} from "./state";
 
 const page = (url: string, title = url): Entry => ({ title, url, kind: "page" });
 
@@ -167,40 +174,125 @@ describe("navegação", () => {
     expect(state.address).toBe("b.com");
     expect(entryOf(state.tabs[0]!).title).toBe("a.com");
   });
+
+  it("texto digitado na omnibox sobrevive à página terminando de carregar", () => {
+    const loaded = (url: string) =>
+      ({
+        type: "view/updated",
+        id: 1,
+        url,
+        title: "Título",
+        canBack: false,
+        canForward: false,
+      }) as const;
+    let state = withPages("https://a.com/");
+    state = browserReducer(state, { type: "address/set", value: "histo" });
+    state = browserReducer(state, loaded("https://a.com/"));
+    expect(state.address).toBe("histo");
+    // Link clicado na página: outro endereço, a barra acompanha.
+    state = browserReducer(state, loaded("https://a.com/outra"));
+    expect(state.address).toBe("https://a.com/outra");
+    expect(state.addressEdited).toBe(false);
+  });
 });
 
 describe("favoritos e preferências", () => {
-  it("favoritar alterna pelo endereço normalizado", () => {
-    let state = withPages("https://linear.app/team/");
-    state = browserReducer(state, { type: "links/toggle-current" });
-    expect(state.links.at(-1)).toEqual({
-      name: "https://linear.app/team/",
-      url: "linear.app/team",
+  const url = (id: string, parentId = BOOKMARK_BAR): BookmarkNode => ({
+    id,
+    parentId,
+    kind: "url",
+    title: id.toUpperCase(),
+    url: `https://${id}.test/`,
+    createdAt: 0,
+  });
+  const folder = (id: string, parentId = BOOKMARK_BAR): BookmarkNode => ({
+    id,
+    parentId,
+    kind: "folder",
+    title: id,
+    createdAt: 0,
+  });
+  const ids = (state: BrowserState, parentId: string) =>
+    state.bookmarks.filter((node) => node.parentId === parentId).map((node) => node.id);
+
+  it("adiciona, ignora id repetido e põe na posição pedida", () => {
+    let state = run({ type: "bookmarks/add", nodes: [url("a"), url("b")] });
+    expect(browserReducer(state, { type: "bookmarks/add", nodes: [url("a")] })).toBe(state);
+    state = browserReducer(state, { type: "bookmarks/add", nodes: [url("c")], index: 0 });
+    expect(ids(state, BOOKMARK_BAR)).toEqual(["c", "a", "b"]);
+  });
+
+  it("edita nome e endereço; nome vazio mantém o antigo", () => {
+    let state = run({ type: "bookmarks/add", nodes: [url("a"), folder("f")] });
+    state = browserReducer(state, {
+      type: "bookmarks/update",
+      id: "a",
+      title: "Alfa",
+      url: "https://alfa.test/",
     });
-    state = browserReducer(state, { type: "links/toggle-current" });
-    expect(state.links.some((link) => link.url === "linear.app/team")).toBe(false);
+    expect(state.bookmarks[0]).toMatchObject({ title: "Alfa", url: "https://alfa.test/" });
+    const same = browserReducer(state, { type: "bookmarks/update", id: "a", title: "  " });
+    expect(same).toBe(state);
+    // Pasta não ganha endereço.
+    state = browserReducer(state, { type: "bookmarks/update", id: "f", url: "https://x.test/" });
+    expect(state.bookmarks[1]!.url).toBeUndefined();
   });
 
-  it("não favorita aba anônima nem a página inicial", () => {
-    let state = run();
-    expect(browserReducer(state, { type: "links/toggle-current" })).toBe(state);
-    state = browserReducer(state, { type: "tab/new", private: true });
-    state = browserReducer(state, { type: "nav/push", entry: page("segredo.com") });
-    expect(browserReducer(state, { type: "links/toggle-current" }).links).toEqual(state.links);
+  it("move entre pastas e reordena; pasta não entra nela mesma", () => {
+    let state = run({
+      type: "bookmarks/add",
+      nodes: [folder("f"), folder("g", "f"), url("a"), url("b"), url("c", BOOKMARK_OTHER)],
+    });
+    state = browserReducer(state, {
+      type: "bookmarks/move",
+      id: "b",
+      parentId: BOOKMARK_BAR,
+      index: 0,
+    });
+    expect(ids(state, BOOKMARK_BAR)).toEqual(["b", "f", "a"]);
+    state = browserReducer(state, { type: "bookmarks/move", id: "c", parentId: "g" });
+    expect(ids(state, "g")).toEqual(["c"]);
+    expect(browserReducer(state, { type: "bookmarks/move", id: "f", parentId: "g" })).toBe(state);
+    expect(browserReducer(state, { type: "bookmarks/move", id: "a", parentId: "a" })).toBe(state);
+    expect(browserReducer(state, { type: "bookmarks/move", id: "a", parentId: "nada" })).toBe(
+      state,
+    );
   });
 
-  it("favoritar todas ignora anônimas e repetidas", () => {
-    let state = withPages("https://github.com", "https://novo.dev/");
-    state = browserReducer(state, { type: "tab/new", private: true });
-    state = browserReducer(state, { type: "nav/push", entry: page("https://segredo.com") });
-    state = browserReducer(state, { type: "links/bookmark-all" });
-    expect(state.links.map((link) => link.url)).toEqual([
-      "github.com",
-      "figma.com",
-      "notion.so",
-      "linear.app",
-      "novo.dev",
-    ]);
+  it("excluir pasta leva tudo que está dentro", () => {
+    let state = run({
+      type: "bookmarks/add",
+      nodes: [folder("f"), folder("g", "f"), url("a", "g"), url("b")],
+    });
+    state = browserReducer(state, { type: "bookmarks/remove", id: "f" });
+    expect(state.bookmarks.map((node) => node.id)).toEqual(["b"]);
+  });
+
+  it("páginas da casca: reaproveita a aba, ocupa a nova aba ou abre outra", () => {
+    const history = { title: "Histórico", url: HISTORY_URL, kind: "internal" as const };
+    // Aba atual é a página inicial: o histórico abre nela.
+    let state = run({ type: "nav/open-internal", entry: history });
+    expect(state.tabs).toHaveLength(1);
+    expect(entryOf(state.tabs[0]!).url).toBe(HISTORY_URL);
+    // Aba com site: abre ao lado, o site fica.
+    state = browserReducer(state, { type: "nav/push", entry: page("https://a.com") });
+    state = browserReducer(state, { type: "tab/new" });
+    state = browserReducer(state, { type: "nav/push", entry: page("https://b.com") });
+    const before = state.tabs.length;
+    state = browserReducer(state, {
+      type: "nav/open-internal",
+      entry: { title: "Favoritos", url: BOOKMARKS_URL, kind: "internal" },
+    });
+    expect(state.tabs).toHaveLength(before + 1);
+    expect(entryOf(activeTabOf(state)).url).toBe(BOOKMARKS_URL);
+    // Já aberta: só ativa.
+    state = browserReducer(state, { type: "tab/activate", id: state.tabs[0]!.id });
+    const again = browserReducer(state, {
+      type: "nav/open-internal",
+      entry: { title: "Favoritos", url: BOOKMARKS_URL, kind: "internal" },
+    });
+    expect(again.tabs).toHaveLength(state.tabs.length);
+    expect(entryOf(activeTabOf(again)).url).toBe(BOOKMARKS_URL);
   });
 
   it("pausar proteção por site não duplica hosts", () => {
@@ -227,6 +319,7 @@ describe("hydrate", () => {
         activeId: 1700000000001,
         links: null,
         closedTabs: [],
+        bookmarks: [],
       },
     });
     expect(state.hydrated).toBe(true);
@@ -235,6 +328,29 @@ describe("hydrate", () => {
     expect(state.prefs.dark).toBe(true);
     expect(state.links).toBe(initialState.links);
     expect(browserReducer(state, { type: "tab/new" }).activeId).toBe(1700000000002);
+  });
+
+  it("antes da 1.6: os atalhos que a estrela salvou viram favoritos da barra", () => {
+    const state = browserReducer(initialState, {
+      type: "hydrate",
+      payload: {
+        prefs: initialState.prefs,
+        tabs: null,
+        activeId: null,
+        links: [...initialState.links, { name: "Linear team", url: "linear.app/team" }],
+        closedTabs: [],
+        bookmarks: null,
+      },
+    });
+    // Os atalhos padrão continuam só na página inicial.
+    expect(state.bookmarks).toEqual([
+      expect.objectContaining({
+        parentId: BOOKMARK_BAR,
+        title: "Linear team",
+        url: "https://linear.app/team",
+      }),
+    ]);
+    expect(state.links).toHaveLength(initialState.links.length + 1);
   });
 
   it("sem nada salvo, só marca como carregado", () => {

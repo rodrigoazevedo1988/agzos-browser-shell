@@ -45,7 +45,12 @@ export function navState(state: BrowserState, desktop: boolean) {
   };
 }
 
-export function isFavorite(state: BrowserState): boolean {
+/** Favorito da página da aba ativa (a estrela da omnibox). */
+export function currentBookmark(state: BrowserState) {
   const current = entryOf(activeTabOf(state));
-  return state.links.some((link) => normalizeUrlKey(link.url) === normalizeUrlKey(current.url));
+  if (current.kind !== "page") return undefined;
+  const key = normalizeUrlKey(current.url);
+  return state.bookmarks.find(
+    (node) => node.kind === "url" && node.url !== undefined && normalizeUrlKey(node.url) === key,
+  );
 }

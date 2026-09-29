@@ -1,6 +1,7 @@
+import { BOOKMARKS_LIMIT, moveNode, seedFromLinks, subtreeIds } from "../bookmarks";
 import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
-import type { ClosedTab, Entry, QuickLink, Tab } from "../types";
-import { entryOf, normalizeUrlKey, orderTabs } from "./selectors";
+import type { BookmarkNode, ClosedTab, Entry, QuickLink, Tab } from "../types";
+import { entryOf, orderTabs } from "./selectors";
 import {
   CLOSED_TABS_LIMIT,
   HOME_URL,
@@ -17,6 +18,7 @@ export type HydratePayload = {
   activeId: number | null;
   links: QuickLink[] | null;
   closedTabs: ClosedTab[];
+  bookmarks: BookmarkNode[] | null;
 };
 
 export type BrowserAction =
@@ -37,12 +39,21 @@ export type BrowserAction =
   | { type: "tab/reopen-closed" }
   | { type: "tabs/reset" }
   | { type: "nav/push"; entry: Entry }
+  /**
+   * Página da casca (histórico, favoritos): reaproveita a aba que já a mostra, ocupa a
+   * aba atual se ela não tem site aberto, ou abre numa aba nova (a página do site fica).
+   */
+  | { type: "nav/open-internal"; entry: Entry }
   | { type: "nav/step"; delta: number }
   | { type: "address/set"; value: string }
   | { type: "links/add"; link: QuickLink }
   | { type: "links/remove"; url: string }
-  | { type: "links/toggle-current" }
-  | { type: "links/bookmark-all" }
+  /** Novos favoritos/pastas, no fim de cada pasta (ou em `index`, quando há um só). */
+  | { type: "bookmarks/add"; nodes: BookmarkNode[]; index?: number }
+  | { type: "bookmarks/update"; id: string; title?: string; url?: string }
+  | { type: "bookmarks/move"; id: string; parentId: string; index?: number }
+  /** Remove o nó e, se for pasta, tudo dentro dela. */
+  | { type: "bookmarks/remove"; id: string }
   | { type: "prefs/set"; patch: Partial<Prefs> }
   | { type: "prefs/pause-host"; host: string; pause: boolean }
   | {
@@ -115,6 +126,7 @@ function activate(state: BrowserState, tab: Tab): BrowserState {
     ...state,
     activeId: tab.id,
     address: entryOf(tab).url,
+    addressEdited: false,
     viewNav: null,
     find: null,
     recent,
@@ -202,6 +214,8 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         hydrated: true,
         prefs: saved.prefs,
         links: saved.links ?? defaultLinks,
+        // Antes da 1.6 a estrela salvava nos atalhos: eles viram favoritos da barra.
+        bookmarks: saved.bookmarks ?? seedFromLinks(saved.links ?? [], defaultLinks, 0),
         closedTabs: saved.closedTabs.slice(-CLOSED_TABS_LIMIT),
         tabs,
         nextId,
@@ -335,8 +349,28 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       return {
         ...next,
         address: action.entry.url,
+        addressEdited: false,
         requestedUrl: { id: state.activeId, url: action.entry.url },
       };
+    }
+
+    case "nav/open-internal": {
+      const showing = state.tabs.find(
+        (tab) => !tab.private && entryOf(tab).url === action.entry.url,
+      );
+      if (showing) return showing.id === state.activeId ? state : activate(state, showing);
+      const active = state.tabs.find((tab) => tab.id === state.activeId);
+      if (active && !active.private && entryOf(active).kind !== "page") {
+        const next = mapTab(state, active.id, (tab) => ({
+          ...tab,
+          history: [...tab.history.slice(0, tab.index + 1), action.entry],
+          index: tab.index + 1,
+        }));
+        return { ...next, address: action.entry.url, addressEdited: false, viewNav: null };
+      }
+      const tab: Tab = { id: state.nextId, history: [action.entry], index: 0 };
+      const tabs = active ? insertAfter(state.tabs, active.id, tab) : [...state.tabs, tab];
+      return activate({ ...state, tabs, nextId: state.nextId + 1 }, tab);
     }
 
     case "nav/step": {
@@ -347,11 +381,11 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         address = tab.history[index]!.url;
         return { ...tab, index };
       });
-      return next === state ? state : { ...next, address };
+      return next === state ? state : { ...next, address, addressEdited: false };
     }
 
     case "address/set":
-      return { ...state, address: action.value };
+      return { ...state, address: action.value, addressEdited: true };
 
     case "links/add":
       return { ...state, links: [...state.links, action.link] };
@@ -359,34 +393,39 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     case "links/remove":
       return { ...state, links: state.links.filter((link) => link.url !== action.url) };
 
-    case "links/toggle-current": {
-      const tab = state.tabs.find((item) => item.id === state.activeId);
-      const current = tab ? entryOf(tab) : homeEntry;
-      if (current.kind === "home" || tab?.private) return state;
-      const key = normalizeUrlKey(current.url);
-      const exists = state.links.some((link) => normalizeUrlKey(link.url) === key);
-      const clean = current.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-      return {
-        ...state,
-        links: exists
-          ? state.links.filter((link) => normalizeUrlKey(link.url) !== key)
-          : [...state.links, { name: current.title, url: clean }],
-      };
+    case "bookmarks/add": {
+      const known = new Set(state.bookmarks.map((node) => node.id));
+      const fresh = action.nodes.filter((node) => !known.has(node.id));
+      if (!fresh.length || state.bookmarks.length + fresh.length > BOOKMARKS_LIMIT) return state;
+      let bookmarks = [...state.bookmarks, ...fresh];
+      if (fresh.length === 1 && action.index !== undefined) {
+        bookmarks = moveNode(bookmarks, fresh[0]!.id, fresh[0]!.parentId, action.index);
+      }
+      return { ...state, bookmarks };
     }
 
-    case "links/bookmark-all": {
-      const known = new Set(state.links.map((link) => normalizeUrlKey(link.url)));
-      const additions: QuickLink[] = [];
-      for (const tab of state.tabs) {
-        const entry = entryOf(tab);
-        if (tab.private || entry.kind !== "page") continue;
-        const url = entry.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-        const key = normalizeUrlKey(url);
-        if (known.has(key)) continue;
-        known.add(key);
-        additions.push({ name: entry.title, url });
-      }
-      return additions.length ? { ...state, links: [...state.links, ...additions] } : state;
+    case "bookmarks/update": {
+      let changed = false;
+      const bookmarks = state.bookmarks.map((node) => {
+        if (node.id !== action.id) return node;
+        const title = action.title?.trim() || node.title;
+        const url = node.kind === "url" && action.url ? action.url : node.url;
+        if (title === node.title && url === node.url) return node;
+        changed = true;
+        return { ...node, title, url };
+      });
+      return changed ? { ...state, bookmarks } : state;
+    }
+
+    case "bookmarks/move": {
+      const bookmarks = moveNode(state.bookmarks, action.id, action.parentId, action.index);
+      return bookmarks === state.bookmarks ? state : { ...state, bookmarks };
+    }
+
+    case "bookmarks/remove": {
+      if (!state.bookmarks.some((node) => node.id === action.id)) return state;
+      const doomed = subtreeIds(state.bookmarks, action.id);
+      return { ...state, bookmarks: state.bookmarks.filter((node) => !doomed.has(node.id)) };
     }
 
     case "prefs/set":
@@ -409,9 +448,15 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         return { ...tab, history };
       });
       if (action.id !== state.activeId) return next;
+      // Texto digitado sobrevive a título/recarga da mesma página; navegar para outro
+      // endereço (link na página) mostra o endereço novo.
+      const before = state.tabs.find((tab) => tab.id === action.id);
+      const keep =
+        state.addressEdited && before !== undefined && entryOf(before).url === action.url;
       return {
         ...next,
-        address: action.url,
+        address: keep ? state.address : action.url,
+        addressEdited: keep,
         viewNav: { canBack: action.canBack, canForward: action.canForward },
       };
     }

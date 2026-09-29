@@ -161,12 +161,148 @@ test("aba anônima nunca entra em 'reabrir guia fechada'", async ({ page }) => {
   expect(stored).not.toContain("segredo-anonimo");
 });
 
-test("favoritar adiciona atalho na página inicial", async ({ page }) => {
+test("1.6: a estrela salva na barra de favoritos, com nome e pasta editáveis", async ({ page }) => {
   await go(page, "linear.app/team");
   await page.getByLabel("Favoritar página").click();
   await expect(page.getByLabel("Favoritar página")).toHaveAttribute("aria-pressed", "true");
+  const editor = page.getByRole("complementary", { name: "Favorito adicionado" });
+  await expect(editor).toBeVisible();
+  await editor.getByLabel("Nome do favorito").fill("Linear do time");
+  await editor.getByRole("button", { name: "Concluído" }).click();
+  const bar = page.getByRole("navigation", { name: "Barra de favoritos" });
+  await expect(bar.getByRole("button", { name: "Linear do time" })).toBeVisible();
+  // Persistido e a página inicial continua só com os atalhos.
+  await reload(page);
+  await expect(bar.getByRole("button", { name: "Linear do time" })).toBeVisible();
   await page.keyboard.press("Control+t");
-  await expect(page.locator(".quick-links, .start-page").getByText("linear.app")).toBeVisible();
+  await expect(page.locator(".quick-links").getByText("Linear do time")).toHaveCount(0);
+  // Clicar no favorito abre na aba atual.
+  await bar.getByRole("button", { name: "Linear do time" }).click();
+  await expect(omnibox(page)).toHaveValue("https://linear.app/team");
+});
+
+test("1.6: pastas na barra, menu da pasta e gerenciador de favoritos", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "figma.com");
+  // Ctrl+Shift+D: as guias abertas viram uma pasta nova na barra.
+  await page.keyboard.press("Control+Shift+D");
+  const editor = page.getByRole("complementary", { name: "Editar pasta" });
+  await editor.getByLabel("Nome do favorito").fill("Design");
+  await editor.getByRole("button", { name: "Concluído" }).click();
+  const bar = page.getByRole("navigation", { name: "Barra de favoritos" });
+  await bar.getByRole("button", { name: "Design" }).click();
+  await expect(page.getByRole("menuitem", { name: "github.com" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "figma.com" }).click();
+  await expect(omnibox(page)).toHaveValue("https://figma.com");
+
+  // Gerenciador: nova pasta, mover favorito para ela e excluir.
+  await page.keyboard.press("Control+Shift+O");
+  await expect(page.getByRole("heading", { name: "Favoritos", level: 1 })).toBeVisible();
+  await expect(omnibox(page)).toHaveValue("agzos://favoritos");
+  const manager = page.locator(".bookmarks-manager");
+  await manager.getByRole("button", { name: "Design" }).first().click();
+  await expect(manager.locator(".library-folder-view .library-row")).toHaveCount(2);
+  await expect(manager.locator(".library-link").getByText("github.com").first()).toBeVisible();
+  await manager.getByLabel("Pesquisar favoritos").fill("figma");
+  await expect(manager.locator(".library-folder-view .library-row")).toHaveCount(1);
+  await manager.getByLabel("Excluir figma.com").click();
+  await expect(manager.locator(".library-folder-view .library-row")).toHaveCount(0);
+
+  // Ctrl+Shift+B esconde e mostra a barra.
+  await page.keyboard.press("Control+Shift+B");
+  await expect(bar).toHaveCount(0);
+  await page.keyboard.press("Control+Shift+B");
+  await expect(bar).toBeVisible();
+});
+
+test("1.6: importa favoritos exportados pelo Chrome e exporta de volta", async ({ page }) => {
+  await page.keyboard.press("Control+Shift+O");
+  const manager = page.locator(".bookmarks-manager");
+  await manager.getByLabel("Arquivo de favoritos").setInputFiles({
+    name: "bookmarks.html",
+    mimeType: "text/html",
+    buffer: Buffer.from(`<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<DL><p>
+  <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>
+  <DL><p>
+    <DT><A HREF="https://news.ycombinator.com/">Hacker News</A>
+    <DT><H3>Leituras</H3>
+    <DL><p><DT><A HREF="https://lwn.net/">LWN</A></DL><p>
+  </DL><p>
+</DL><p>`),
+  });
+  await expect(page.getByRole("status")).toContainText("2 favoritos importados");
+  await expect(manager.locator(".library-link").getByText("Hacker News")).toBeVisible();
+  await expect(manager.getByRole("button", { name: /Leituras/ }).first()).toBeVisible();
+  const download = page.waitForEvent("download");
+  await manager.getByRole("button", { name: "Exportar" }).click();
+  const file = await download;
+  const html = await (await file.createReadStream()).toArray();
+  expect(Buffer.concat(html).toString()).toContain('HREF="https://lwn.net/"');
+});
+
+test("1.6: histórico registra as visitas, pesquisa e apaga (aba anônima fica de fora)", async ({
+  page,
+}) => {
+  await go(page, "github.com");
+  await go(page, "linear.app/team");
+  await page.getByRole("button", { name: "Nova aba anônima" }).first().click();
+  await go(page, "segredo-anonimo.example");
+  await page.keyboard.press("Control+h");
+  await expect(page.getByRole("heading", { name: "Histórico", level: 1 })).toBeVisible();
+  const history = page.locator(".library-page");
+  await expect(history.locator(".library-row")).toHaveCount(2);
+  await expect(history.getByText(/^Hoje/)).toBeVisible();
+  await expect(history.getByText("segredo-anonimo")).toHaveCount(0);
+  await history.getByLabel("Pesquisar no histórico").fill("linear");
+  await expect(history.locator(".library-row")).toHaveCount(1);
+  await history.getByLabel(/^Remover .* do histórico$/).click();
+  await expect(history.getByText('Nada no histórico com "linear".')).toBeVisible();
+  await history.getByLabel("Pesquisar no histórico").fill("");
+  await history.getByLabel("Período para limpar").selectOption("all");
+  await history.getByRole("button", { name: "Limpar histórico" }).click();
+  await expect(history.getByText("Seu histórico está vazio.")).toBeVisible();
+});
+
+test("1.6: omnibox sugere histórico, favoritos e abas; autocompleta o domínio", async ({
+  page,
+}) => {
+  await go(page, "github.com/agzos");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app/team");
+  await page.keyboard.press("Control+t");
+
+  // Autocompletar: "git" vira "github.com" com o resto selecionado.
+  await omnibox(page).fill("");
+  await omnibox(page).pressSequentially("git");
+  await expect(omnibox(page)).toHaveValue("github.com");
+  const list = page.getByRole("listbox", { name: "Sugestões" });
+  await expect(list.getByRole("option").first()).toContainText("Pesquisar no DuckDuckGo");
+  // github.com/agzos está aberta em outra aba: vira "Mudar para esta guia".
+  await expect(
+    list.getByRole("option", { name: /github\.com.*Mudar para esta guia/ }),
+  ).toBeVisible();
+  // Digitar por cima da parte selecionada continua normal.
+  await omnibox(page).press("Backspace");
+  await expect(omnibox(page)).toHaveValue("git");
+
+  // Aba aberta: "Mudar para esta guia" ativa a aba em vez de abrir outra.
+  await omnibox(page).fill("");
+  await omnibox(page).pressSequentially("linear");
+  const option = list.getByRole("option", { name: /Mudar para esta guia/ });
+  await expect(option).toBeVisible();
+  await option.click();
+  await expect(tabs(page)).toHaveCount(3);
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("linear.app");
+
+  // Setas + Enter escolhem; Esc fecha a lista.
+  await omnibox(page).click();
+  await omnibox(page).fill("");
+  await omnibox(page).pressSequentially("agzos");
+  await expect(list).toBeVisible();
+  await omnibox(page).press("Escape");
+  await expect(list).toHaveCount(0);
 });
 
 test("painéis abrem e fecham", async ({ page }) => {
@@ -267,6 +403,7 @@ test("1.5: Ctrl+D favorita, Alt+← volta", async ({ page }) => {
   await go(page, "linear.app/team");
   await page.keyboard.press("Control+d");
   await expect(page.getByLabel("Favoritar página")).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Concluído" }).click();
   await go(page, "figma.com/files");
   await page.keyboard.press("Alt+ArrowLeft");
   await expect(omnibox(page)).toHaveValue("https://linear.app/team");

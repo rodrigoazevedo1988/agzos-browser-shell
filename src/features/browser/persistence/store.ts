@@ -51,6 +51,21 @@ export function createLocalStore(storage: StorageLike): BrowserStore {
 export function createDesktopStore(bridge: DesktopBridge, storage: StorageLike): BrowserStore {
   const fallback = createLocalStore(storage);
   let available = true;
+  // Última versão gravada de cada seção: só o que mudou vai para o SQLite (trocar de aba
+  // não regrava a árvore de favoritos inteira).
+  const written = new Map<string, string>();
+  const changedSections = (snapshot: Snapshot) => {
+    const changed: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(sectionsOf(snapshot))) {
+      const json = JSON.stringify(value);
+      if (written.get(key) === json) continue;
+      changed[key] = value;
+    }
+    return changed;
+  };
+  const remember = (sections: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(sections)) written.set(key, JSON.stringify(value));
+  };
   return {
     kind: "sqlite",
     debounceMs: 300,
@@ -71,7 +86,10 @@ export function createDesktopStore(bridge: DesktopBridge, storage: StorageLike):
     },
     async save(snapshot) {
       if (!available) return fallback.save(snapshot);
-      await bridge.stateSave(sectionsOf(snapshot));
+      const sections = changedSections(snapshot);
+      if (!Object.keys(sections).length) return;
+      const result = await bridge.stateSave(sections);
+      if (result.ok) remember(sections);
     },
   };
 }
@@ -83,6 +101,7 @@ function sectionsOf(snapshot: Snapshot): Record<string, unknown> {
     session: snapshot.session,
     links: snapshot.links,
     closedTabs: snapshot.closedTabs,
+    bookmarks: snapshot.bookmarks,
   };
 }
 

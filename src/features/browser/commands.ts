@@ -3,7 +3,7 @@ import type { Dispatch } from "react";
 import type { DesktopBridge } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
 import { activeTabOf, entryOf } from "./store/selectors";
-import type { BrowserState } from "./store/state";
+import { BOOKMARKS_URL, HISTORY_URL, type BrowserState } from "./store/state";
 
 /**
  * Registro único de comandos do navegador. Atalhos de teclado, o menu de contexto da
@@ -42,7 +42,10 @@ export type CommandId =
   | "zoom.in"
   | "zoom.out"
   | "zoom.reset"
-  | "omnibox.focus";
+  | "omnibox.focus"
+  | "history.open"
+  | "bookmarks.manager"
+  | "bookmarks.toggle-bar";
 
 /**
  * `key` é o `KeyboardEvent.key` em minúsculas. `mod` (Ctrl ou ⌘) vale true quando omitido.
@@ -65,6 +68,10 @@ export type CommandContext = {
     step: (delta: -1 | 1) => void;
     openFind: () => void;
     toggleDownloads: () => void;
+    /** Favorita a página atual (se ainda não for) e abre a edição do favorito. */
+    bookmarkPage: () => void;
+    /** Salva as guias abertas numa pasta nova da barra de favoritos. */
+    bookmarkAllTabs: () => void;
   };
 };
 
@@ -188,7 +195,7 @@ export const commands: Command[] = [
     id: "tabs.bookmark-all",
     label: "Adicionar todas as guias aos favoritos…",
     shortcuts: [{ key: "d", shift: true }],
-    run: ({ dispatch }) => dispatch({ type: "links/bookmark-all" }),
+    run: ({ ui }) => ui.bookmarkAllTabs(),
   },
   {
     id: "tabs.vertical",
@@ -259,7 +266,40 @@ export const commands: Command[] = [
     id: "page.favorite",
     label: "Adicionar aos favoritos",
     shortcuts: [{ key: "d" }],
-    run: ({ dispatch }) => dispatch({ type: "links/toggle-current" }),
+    enabled: ({ state }) => {
+      const tab = activeTabOf(state);
+      return !tab.private && entryOf(tab).kind === "page";
+    },
+    run: ({ ui }) => ui.bookmarkPage(),
+  },
+  {
+    id: "history.open",
+    label: "Histórico",
+    // ⌘Y é o do Safari/Chrome no Mac (⌘H esconde o app).
+    shortcuts: [{ key: "h" }, { key: "y" }],
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Histórico", url: HISTORY_URL, kind: "internal" },
+      }),
+  },
+  {
+    id: "bookmarks.manager",
+    label: "Gerenciar favoritos",
+    shortcuts: [{ key: "o", shift: true }],
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Favoritos", url: BOOKMARKS_URL, kind: "internal" },
+      }),
+  },
+  {
+    id: "bookmarks.toggle-bar",
+    label: ({ state }) =>
+      state.prefs.bookmarksBar ? "Ocultar barra de favoritos" : "Mostrar barra de favoritos",
+    shortcuts: [{ key: "b", shift: true }],
+    run: ({ state, dispatch }) =>
+      dispatch({ type: "prefs/set", patch: { bookmarksBar: !state.prefs.bookmarksBar } }),
   },
   {
     id: "page.find",
