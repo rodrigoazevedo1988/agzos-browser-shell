@@ -18,6 +18,7 @@ import type {
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
 export const BOOKMARKS_URL = "agzos://favoritos";
+export const SETTINGS_URL = "agzos://configuracoes";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 

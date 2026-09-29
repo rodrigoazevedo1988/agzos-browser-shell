@@ -135,9 +135,12 @@ test("sessão, tema e motor persistem; aba anônima não", async ({ page }) => {
   await go(page, "notion.so");
   await expect(tabs(page)).toHaveCount(2);
   await page.getByRole("button", { name: "Usar tema escuro" }).click();
-  await page.getByRole("button", { name: "Configurações" }).click();
+  await page.getByRole("button", { name: "Menu do Agzos" }).click();
+  await page.getByRole("menuitem", { name: "Configurações" }).click();
+  await page.getByRole("button", { name: "Mecanismo de pesquisa" }).click();
   await page.getByRole("button", { name: /Yandex/ }).click();
-  await page.getByRole("button", { name: "Fechar configurações" }).click();
+  // A página de configurações abriu numa guia nova: fecha para a sessão ficar como antes.
+  await page.keyboard.press("Control+w");
 
   await reload(page);
   await expect(tabs(page)).toHaveCount(1);
@@ -467,8 +470,8 @@ test("guias verticais: sem a faixa de cima; o ⋯ vai para a toolbar", async ({ 
   await page.getByText("Mostrar guias verticalmente").click();
   await expect(page.locator(".tabs-rail")).toBeVisible();
   await expect(page.locator(".titlebar")).toHaveCount(0);
-  await page.locator(".toolbar").getByRole("button", { name: "Configurações" }).click();
-  await expect(page.locator(".key-panel")).toHaveCount(1);
+  await page.locator(".toolbar").getByRole("button", { name: "Menu do Agzos" }).click();
+  await expect(page.getByRole("menu", { name: "Menu do Agzos" })).toBeVisible();
 });
 
 test("1.5.1: arrastar reordena as guias (horizontal e vertical) e Ctrl+Shift+PgUp/PgDn move", async ({
@@ -527,4 +530,55 @@ test("1.5.1: arrastar reordena as guias (horizontal e vertical) e Ctrl+Shift+PgU
   await page.mouse.move(top!.x + top!.width / 2, bottom!.y + bottom!.height - 2, { steps: 8 });
   await page.mouse.up();
   await expect.poll(() => titles(rail)).toEqual(["github.com", "figma.com", "linear.app"]);
+});
+
+test("1.5.2: menu do ⋯ com o essencial e página de configurações com seções e busca", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Menu do Agzos" }).click();
+  const menu = page.getByRole("menu", { name: "Menu do Agzos" });
+  await expect(menu.getByRole("menuitem", { name: /Nova guia/ }).first()).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Histórico/ })).toBeVisible();
+  // Tema pelo menu.
+  await menu.getByRole("switch", { name: "Tema escuro" }).click();
+  await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  // Ctrl+, abre a página completa.
+  await page.keyboard.press("Control+,");
+  await expect(omnibox(page)).toHaveValue("agzos://configuracoes");
+  const nav = page.getByRole("navigation", { name: "Seções das configurações" });
+  await expect(nav.getByRole("button", { name: "Aparência" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.getByRole("switch", { name: "Tema escuro" }).click();
+  await expect(page.locator(".browser-stage")).not.toHaveClass(/dark/);
+  await nav.getByRole("button", { name: "Atalhos de teclado" }).click();
+  await expect(page.getByText("Ctrl+Shift+P", { exact: true })).toBeVisible();
+  // Busca em todas as seções, palavra por palavra.
+  await page.getByLabel("Pesquise nas configurações").fill("atalho fav");
+  await expect(page.getByText("Adicionar aos favoritos")).toBeVisible();
+  await page.getByLabel("Pesquise nas configurações").fill("escudo");
+  await expect(
+    page.getByRole("switch", { name: "Bloquear anúncios e rastreadores" }),
+  ).toBeVisible();
+  await page.getByLabel("Pesquise nas configurações").fill("xyzzy");
+  await expect(page.getByText(/Nenhuma configuração/)).toBeVisible();
+  // Pela barra de endereço, com o nome em inglês também.
+  await page.keyboard.press("Control+t");
+  await go(page, "agzos://settings");
+  await expect(omnibox(page)).toHaveValue("agzos://configuracoes");
+});
+
+test("1.5.2: pausar o mouse numa guia mostra a prévia", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await tabs(page).first().hover();
+  const card = page.getByRole("tooltip", { name: "Prévia: github.com" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("github.com");
+  await page.mouse.move(700, 600);
+  await expect(card).toHaveCount(0);
 });

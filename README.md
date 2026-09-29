@@ -47,6 +47,9 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   sessão restaurada após crash (com modo seguro), telas de erro e hibernação de guias.
 - [PRD v1.7.1 — Novidades, PiP e guias](docs/prd/v1.7.1-novidades-pip-guias.md): aviso de
   atualização com as novidades, picture-in-picture em qualquer player e guias arrastáveis.
+- [PRD v1.7.2 — Configurações e prévia](docs/prd/v1.7.2-configuracoes-e-previa.md):
+  Ctrl+Tab ao soltar, prévia da guia com RAM/CPU, menu ⋯ enxuto, página de configurações
+  completa e barra de menus do Mac.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

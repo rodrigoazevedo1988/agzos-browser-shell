@@ -12,6 +12,10 @@ export type TabHandlers = {
   onContextMenu: (event: MouseEvent, tab: Tab) => void;
   onTogglePin: (id: number) => void;
   onClose: (id: number) => void;
+  /** Mouse parou na guia (prévia). */
+  onHoverStart?: (tab: Tab, element: HTMLElement) => void;
+  /** Saiu da guia; `immediate` ao clicar ou começar a arrastar. */
+  onHoverEnd?: (immediate?: boolean) => void;
 };
 
 export function TabItem({
@@ -62,6 +66,9 @@ export function TabItem({
         handlers.onClose(tab.id);
       }}
       onContextMenu={(event) => handlers.onContextMenu(event, tab)}
+      onMouseEnter={(event) => handlers.onHoverStart?.(tab, event.currentTarget)}
+      onMouseLeave={() => handlers.onHoverEnd?.()}
+      onPointerDown={() => handlers.onHoverEnd?.(true)}
       className={cn(
         "browser-tab",
         active && "active",

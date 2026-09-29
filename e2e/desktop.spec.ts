@@ -674,7 +674,7 @@ test("painel aberto mostra a foto da página no lugar (não fica preto)", async 
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Página FOTO");
     await window.waitForTimeout(400);
-    await window.getByRole("button", { name: "Configurações" }).click();
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
     const photo = window.locator(".view-snapshot");
     await expect(photo).toBeVisible();
     expect(await photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(100);
@@ -896,8 +896,12 @@ test("1.6: permissão lembrada vale depois de reiniciar; bloqueio vira 'denied'"
     expect(await withGesture(second.app, url, "Notification.requestPermission()")).toBe("denied");
 
     // Configurações lista o site e volta para "Perguntar".
-    await window.getByRole("button", { name: "Configurações" }).click();
-    const settings = window.getByRole("complementary", { name: "Configurações" });
+    await window.keyboard.press("Control+,");
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Privacidade e segurança" })
+      .click();
+    const settings = window.locator(".settings-main");
     const select = settings.getByLabel(/^Notificações em 127\.0\.0\.1/);
     await expect(select).toHaveValue("block");
     await select.selectOption("ask");
@@ -985,13 +989,16 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
   let closed = false;
   app.on("close", () => (closed = true));
   try {
-    await window.getByRole("button", { name: "Configurações" }).click();
-    const settings = window.getByRole("complementary", { name: "Configurações" });
+    await window.keyboard.press("Control+,");
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Sobre o Agzos" })
+      .click();
+    const settings = window.locator(".settings-main");
     await settings.getByRole("button", { name: "Verificar agora" }).click();
     await expect(settings.getByText(/Versão 1\.99\.0 pronta/)).toBeVisible({ timeout: 20_000 });
-    await settings.getByRole("button", { name: "Fechar configurações" }).click();
     // Botão na barra: reinicia e instala.
-    await window.getByRole("button", { name: "Atualizar" }).click();
+    await window.getByRole("button", { name: "Atualizar", exact: true }).click();
     await expect.poll(() => closed, { timeout: 15_000 }).toBe(true);
     const result = path.join(work, "perfil", "atualizacoes", "resultado.txt");
     await expect.poll(() => fs.existsSync(result), { timeout: 15_000 }).toBe(true);
@@ -1319,8 +1326,8 @@ test("1.5.1: depois de atualizar, aviso com a versão, as novidades e confetes (
     await dialog.getByRole("button", { name: "Continuar navegando" }).click();
     await expect(dialog).toHaveCount(0);
     // Pelas Configurações, as novidades da versão atual (sem confetes).
-    await second.window.getByRole("button", { name: "Configurações" }).click();
-    await second.window.getByRole("button", { name: "Novidades desta versão" }).click();
+    await second.window.getByRole("button", { name: "Menu do Agzos" }).click();
+    await second.window.getByRole("menuitem", { name: "Novidades desta versão" }).click();
     const again = second.window.getByRole("dialog", { name: "Novidades desta versão" });
     await expect(again).toContainText(`Agzos Browser ${version}`);
     await expect(second.window.locator("canvas.confetti")).toHaveCount(0);
@@ -1364,6 +1371,137 @@ test("1.5.1: picture-in-picture pega o vídeo de qualquer player (até em iframe
     await keyInTab(app, `${origin}/com-video`, "P", ["control", "shift"]);
     await expect.poll(pipOn).toBe(false);
     await expect(window.getByRole("button", { name: "Picture-in-picture" })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+// --- 1.5.2: prévia da guia, Ctrl+Tab ao soltar, configurações. ---
+
+/** Cartão de prévia (camada própria acima da página): texto e se está à vista. */
+async function previewCard(app: ElectronApplication) {
+  return app.evaluate(async ({ BrowserWindow }) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      for (const child of window.contentView.children) {
+        const contents = (child as { webContents?: Electron.WebContents }).webContents;
+        if (!contents || !contents.getURL().startsWith("data:text/html")) continue;
+        const bounds = (child as Electron.WebContentsView).getBounds();
+        const text = (await contents.executeJavaScript("document.body.innerText")) as string;
+        const onTop = window.contentView.children.at(-1) === child;
+        return { visible: bounds.width > 0 && bounds.height > 0, text, onTop };
+      }
+    }
+    return { visible: false, text: "", onTop: false };
+  });
+}
+
+test("1.5.2: pausar o mouse na guia mostra a prévia por cima da página, com RAM e CPU", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/previa-a`);
+    await expect(tabs(window).first()).toContainText("Página PREVIA-A");
+    await window.waitForTimeout(700);
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/previa-b`);
+    await expect(tabs(window).last()).toContainText("Página PREVIA-B");
+
+    await tabs(window).first().hover();
+    await expect.poll(async () => (await previewCard(app)).visible).toBe(true);
+    const card = await previewCard(app);
+    expect(card.onTop).toBe(true);
+    expect(card.text).toContain("Página PREVIA-A");
+    expect(card.text).toContain("127.0.0.1");
+    expect(card.text).toMatch(/Memória \(RAM\)\s*\d+ MB/);
+    expect(card.text).toContain("CPU");
+    // Outra guia com o cartão aberto: troca na hora.
+    await tabs(window).last().hover();
+    await expect.poll(async () => (await previewCard(app)).text).toContain("Guia atual");
+    // Mouse fora das guias: some.
+    await window.mouse.move(700, 500);
+    await expect.poll(async () => (await previewCard(app)).visible).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.5.2: Ctrl+Tab com o foco na página confirma ao soltar o Ctrl (e Enter confirma)", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/troca-a`);
+    await expect(tabs(window).first()).toContainText("Página TROCA-A");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/troca-b`);
+    await expect(tabs(window).last()).toContainText("Página TROCA-B");
+    const active = window.locator(".tabs .browser-tab.active");
+    /** Tecla no webContents que tem o foco do sistema: a página ou a casca. */
+    const send = (
+      where: "page" | "shell",
+      type: "keyDown" | "keyUp",
+      keyCode: string,
+      modifiers: string[] = [],
+    ) =>
+      app.evaluate(
+        ({ webContents, BrowserWindow }, [target, place, kind, key, mods]) => {
+          const contents =
+            place === "shell"
+              ? BrowserWindow.getAllWindows()[0]!.webContents
+              : webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+          contents.sendInputEvent({
+            type: kind as "keyDown" | "keyUp",
+            keyCode: key as string,
+            modifiers: mods as ("control" | "shift")[],
+          });
+        },
+        [`${origin}/troca-b`, where, type, keyCode, modifiers] as const,
+      );
+    const focused = () =>
+      app.evaluate(({ webContents }) => webContents.getFocusedWebContents()?.getURL() ?? "");
+
+    // Ctrl apertado na página, Tab: o seletor abre e o foco vai para a casca.
+    await app.evaluate(({ webContents }, target) => {
+      webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === target)!
+        .focus();
+    }, `${origin}/troca-b`);
+    await send("page", "keyDown", "Control", ["control"]);
+    await send("page", "keyDown", "Tab", ["control"]);
+    await expect(window.locator(".tab-switcher")).toBeVisible();
+    await expect.poll(focused).toContain("/dist/index.html");
+    // O "soltar o Ctrl" chega à casca, que confirma a guia escolhida.
+    await send("shell", "keyUp", "Control");
+    await expect(active).toContainText("Página TROCA-A");
+    await expect(window.locator(".tab-switcher")).toHaveCount(0);
+
+    // Enter também confirma.
+    await tabs(window).last().click();
+    await expect(active).toContainText("Página TROCA-B");
+    await send("shell", "keyDown", "Control", ["control"]);
+    await send("shell", "keyDown", "Tab", ["control"]);
+    await expect(window.locator(".tab-switcher")).toBeVisible();
+    await send("shell", "keyDown", "Enter", ["control"]);
+    await expect(active).toContainText("Página TROCA-A");
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.5.2: configurações completas em agzos://configuracoes (Ctrl+,) e menu do ⋯", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    const menu = window.getByRole("menu", { name: "Menu do Agzos" });
+    await expect(menu.getByRole("menuitem", { name: /Nova janela/ })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Sair" })).toBeVisible();
+    await menu.getByRole("menuitem", { name: /Configurações/ }).click();
+    await expect(omnibox(window)).toHaveValue("agzos://configuracoes");
+    const nav = window.getByRole("navigation", { name: "Seções das configurações" });
+    // Seções que só existem no app.
+    await nav.getByRole("button", { name: "Desempenho" }).click();
+    await expect(window.getByRole("switch", { name: "Hibernar guias sem uso" })).toBeVisible();
+    await nav.getByRole("button", { name: "Downloads" }).click();
+    // AGZOS_DOWNLOADS_DIR do teste: <perfil>/Downloads.
+    await expect(window.locator(".settings-main")).toContainText(/agzos-e2e-.*Downloads/);
   } finally {
     await app.close();
   }

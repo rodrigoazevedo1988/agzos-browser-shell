@@ -5,6 +5,7 @@ import {
   CLOSED_TABS_LIMIT,
   HIBERNATE_MINUTES,
   HISTORY_URL,
+  SETTINGS_URL,
   defaultPrefs,
   type BrowserState,
   type Prefs,
@@ -34,7 +35,7 @@ export const SNAPSHOT_SECTIONS = [
   "bookmarks",
 ] as const;
 
-const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL]);
+const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL]);
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
