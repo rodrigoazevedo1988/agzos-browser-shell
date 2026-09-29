@@ -3,13 +3,17 @@ set -e
 
 VERSION="1.3.4"
 # Arquivos do processo principal que vão para resources/app/electron.
-ELECTRON_FILES=(main.cjs preload.cjs db.cjs)
+# adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
+ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
 cd /var/www/agzos-browser
 sed -i -E "s/\"version\": \"[0-9.]+\"/\"version\": \"$VERSION\"/" package.json
 bun run desktop:build
+for f in "${ELECTRON_FILES[@]}"; do
+  [ -f "electron/$f" ] || { echo "electron/$f ausente depois do desktop:build" >&2; exit 1; }
+done
 
 SCRATCH="/tmp/electron-build"
 mkdir -p "$SCRATCH"

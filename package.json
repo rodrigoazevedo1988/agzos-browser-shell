@@ -58,6 +58,7 @@
   "devDependencies": {
     "@electron/packager": "^20.3.0",
     "@eslint/js": "^9.32.0",
+    "@ghostery/adblocker": "2.18.2",
     "@lovable.dev/vite-tanstack-config": "^2.24.0",
     "@playwright/test": "1.56.1",
     "@types/node": "^22.16.5",
@@ -90,7 +91,8 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "desktop:dev": "electron . --dev-url=http://localhost:8080",
-    "desktop:build": "vite build --config electron/vite.config.mjs && node electron/prepare-build.cjs",
+    "desktop:build": "bun run desktop:vendor && vite build --config electron/vite.config.mjs && node electron/prepare-build.cjs",
+    "desktop:vendor": "bun build electron/adblocker.entry.cjs --target=node --format=cjs --minify --outfile=electron/adblocker.vendor.cjs",
     "desktop:start": "electron .",
     "desktop:package:linux": "bun run desktop:build && electron-packager . \"Agzos Browser\" --platform=linux --arch=x64 --out=electron-release --overwrite --ignore='^/node_modules' --ignore='^/src' --ignore='^/public' --ignore='^/electron-release' --ignore='^/.output' --ignore='^/.git'",
     "lint": "eslint .",

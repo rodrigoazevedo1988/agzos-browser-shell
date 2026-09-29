@@ -15,7 +15,7 @@ export function Viewport({
   state,
   tab,
   loading,
-  blockedCount,
+  blockedToday,
   desktop,
   onOpen,
   onAddLink,
@@ -25,7 +25,7 @@ export function Viewport({
   state: BrowserState;
   tab: Tab;
   loading: boolean;
-  blockedCount: number;
+  blockedToday: number | null;
   desktop: DesktopBridge | null;
   onOpen: (value: string) => void;
   onAddLink: (link: QuickLink) => void;
@@ -69,7 +69,7 @@ export function Viewport({
       <StartPage
         links={state.links}
         engine={engineOf(state.prefs.engine)}
-        blocked={blockedCount}
+        blocked={blockedToday}
         onOpen={onOpen}
         onAdd={onAddLink}
         onRemove={onRemoveLink}

@@ -62,6 +62,26 @@ export function useDesktopSync({
           case "crashed":
             dispatch({ type: "view/crashed", id: event.id });
             return;
+          case "blocked":
+            dispatch({
+              type: "view/blocked",
+              id: event.id,
+              count: event.count,
+              trackers: event.trackers,
+            });
+            return;
+          case "zoom":
+            dispatch({ type: "view/zoom", id: event.id, factor: event.factor });
+            return;
+          case "find":
+            dispatch({ type: "view/find", id: event.id, active: event.active, total: event.total });
+            return;
+          case "thumbnail":
+            dispatch({ type: "view/thumbnail", id: event.id, dataUrl: event.dataUrl });
+            return;
+          case "download-navigation":
+            dispatch({ type: "view/download-navigation", id: event.id, urls: event.urls });
+            return;
           case "login-rejected":
             dispatch({
               type: "view/login-rejected",
@@ -81,9 +101,37 @@ export function useDesktopSync({
       desktop.onHotkey((input) => runHotkeyRef.current(input)),
       desktop.onTabMenuAction(({ action, tabId }) => runCommandRef.current(action, tabId)),
       desktop.onRequestPermission((request) => permissionRef.current(request)),
+      desktop.onDownload((record) => dispatch({ type: "downloads/upsert", record })),
+      desktop.onModifierUp(() => dispatch({ type: "switcher/commit" })),
+      desktop.onAdblockStats((stats) => dispatch({ type: "adblock/stats", stats })),
     ];
+    // Estado inicial do que vive no main (downloads salvos, estatística do dia).
+    void desktop.downloadsList().then((list) => dispatch({ type: "downloads/set", list }));
+    void desktop.adblockStats().then((stats) => dispatch({ type: "adblock/stats", stats }));
     return () => offs.forEach((off) => off());
   }, [desktop, dispatch, runCommandRef, runHotkeyRef]);
+
+  // Seletor do Ctrl+Tab abriu: miniatura fresca da aba atual antes de a esconder.
+  const switcherOpen = state.switcher !== null;
+  const activeRef = useRef(state.activeId);
+  activeRef.current = state.activeId;
+  useEffect(() => {
+    if (desktop && switcherOpen) void desktop.captureTab(activeRef.current);
+  }, [desktop, switcherOpen]);
+
+  const { shield, pausedHosts } = state.prefs;
+  useEffect(() => {
+    if (desktop && state.hydrated) void desktop.adblockConfig({ shield, pausedHosts });
+  }, [desktop, state.hydrated, shield, pausedHosts]);
+
+  // Barra de busca fechada (Esc, ✕ ou troca de aba) → limpa os destaques daquela aba.
+  const findTab = state.find?.id ?? null;
+  const lastFindTab = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = lastFindTab.current;
+    lastFindTab.current = findTab;
+    if (desktop && previous !== null && previous !== findTab) void desktop.findStop(previous);
+  }, [desktop, findTab]);
 
   // Aba que saiu do estado → fecha o WebContentsView correspondente.
   const knownIds = useRef<Set<number>>(new Set(state.tabs.map((tab) => tab.id)));

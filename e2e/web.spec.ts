@@ -212,3 +212,114 @@ test("migra as chaves da 1.3 no primeiro load", async ({ page }) => {
   const keys = await page.evaluate(() => Object.keys(window.localStorage).sort());
   expect(keys).toEqual(["agzos-credentials", "agzos-state"]);
 });
+
+test("1.5: Ctrl+Tab alterna pela ordem de uso; Ctrl+PgDn/1/9 pela barra", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  await page.keyboard.press("Control+t");
+  const active = page.locator(".tabs .browser-tab.active");
+  await expect(active).toContainText("Nova aba");
+  // Toque rápido: volta para a última usada (linear), e de novo para a nova aba.
+  await page.keyboard.press("Control+Tab");
+  await expect(active).toContainText("linear.app");
+  await page.keyboard.press("Control+Tab");
+  await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+PageDown");
+  await expect(active).toContainText("github.com");
+  await page.keyboard.press("Control+2");
+  await expect(active).toContainText("linear.app");
+  await page.keyboard.press("Control+9");
+  await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+1");
+  await expect(active).toContainText("github.com");
+});
+
+test("1.5: segurando o Ctrl, o seletor mostra as abas e soltar confirma", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  await page.keyboard.press("Control+t");
+  await go(page, "figma.com");
+  await page.keyboard.down("Control");
+  await page.keyboard.press("Tab");
+  const switcher = page.getByRole("listbox", { name: "Alternar guias" });
+  await expect(switcher).toBeVisible();
+  await expect(switcher.getByRole("option")).toHaveCount(3);
+  await expect(switcher.getByRole("option", { selected: true })).toContainText("linear.app");
+  await page.keyboard.press("Tab");
+  await expect(switcher.getByRole("option", { selected: true })).toContainText("github.com");
+  await page.keyboard.up("Control");
+  await expect(switcher).toHaveCount(0);
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("github.com");
+
+  // Esc cancela e fica na aba atual.
+  await page.keyboard.down("Control");
+  await page.keyboard.press("Tab");
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.up("Control");
+  await expect(switcher).toHaveCount(0);
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("github.com");
+});
+
+test("1.5: Ctrl+D favorita, Alt+← volta", async ({ page }) => {
+  await go(page, "linear.app/team");
+  await page.keyboard.press("Control+d");
+  await expect(page.getByLabel("Favoritar página")).toHaveAttribute("aria-pressed", "true");
+  await go(page, "figma.com/files");
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(omnibox(page)).toHaveValue("https://linear.app/team");
+});
+
+test("1.5: na web, privacidade e downloads explicam que o recurso é do app", async ({ page }) => {
+  await expect(page.getByText(/anúncios e rastreadores bloqueados hoje/)).toBeVisible();
+  await page.locator(".privacy-pill").click();
+  await expect(
+    page.getByText("O bloqueio real funciona no app Agzos para computador"),
+  ).toBeVisible();
+  await page.keyboard.press("Control+j");
+  await expect(page.getByText("Downloads funcionam no app Agzos para computador.")).toBeVisible();
+  // Sem downloads, o botão da barra não aparece (a barra fica igual à 1.4).
+  await expect(page.getByRole("button", { name: "Downloads", exact: true })).toHaveCount(0);
+});
+
+test("UX: abas pelo teclado (setas, Home/End, Delete) e nome acessível da fixada", async ({
+  page,
+}) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  await page.keyboard.press("Control+t");
+  await go(page, "figma.com");
+  await tabs(page).first().focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tabs(page).nth(1)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(tabs(page).nth(2)).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(tabs(page).first()).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(tabs(page).nth(2)).toBeFocused();
+  await page.keyboard.press("Delete");
+  await expect(tabs(page)).toHaveCount(2);
+  await expect(tabs(page).nth(1)).toBeFocused();
+
+  await tabs(page)
+    .first()
+    .getByLabel(/^Fixar /)
+    .click({ force: true });
+  await expect(page.getByRole("tab", { name: "github.com, fixada" })).toBeVisible();
+});
+
+test("UX: Esc fecha o painel aberto; clique do meio fecha a aba", async ({ page }) => {
+  await page.getByRole("button", { name: "Abrir Agzos Key" }).click();
+  await expect(page.locator(".key-panel")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".key-panel")).toHaveCount(0);
+
+  await page.keyboard.press("Control+t");
+  await expect(tabs(page)).toHaveCount(2);
+  await tabs(page).last().click({ button: "middle" });
+  await expect(tabs(page)).toHaveCount(1);
+});

@@ -11,32 +11,35 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { AiSidebar, type ChatMessage, initialChat } from "@/features/ai/sidebar";
+import { batchProgress } from "@/features/downloads/format";
+import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { SettingsPanel } from "@/features/settings/panel";
 import { cn } from "@/lib/utils";
 
-import { commandForKey, runCommand, type CommandContext } from "./commands";
+import { commandForKey, isEnabled, runCommand, type CommandContext } from "./commands";
 import { desktopBridge, type DesktopPermissionRequest } from "./desktop";
 import { useDesktopSync } from "./desktop-sync";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
 import { useCredentials } from "./persistence/use-credentials";
 import { usePersistence } from "./persistence/use-persistence";
-import { blockedFor } from "./privacy";
 import { browserReducer } from "./store/reducer";
 import { activeTabOf, entryOf, hostOf, isFavorite, navState, orderTabs } from "./store/selectors";
 import { initialState, type Prefs } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
 import type { Tab } from "./types";
+import { FindBar } from "./ui/find-bar";
 import { PermissionBar } from "./ui/permission-bar";
+import { TabSwitcher } from "./ui/tab-switcher";
 import { TabRail, TabStrip } from "./ui/tab-list";
 import type { TabHandlers } from "./ui/tab-item";
 import { Toolbar } from "./ui/toolbar";
 import { Viewport } from "./ui/viewport";
 
-type Panel = "key" | "privacy" | "settings";
+type Panel = "key" | "privacy" | "settings" | "downloads";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -68,6 +71,9 @@ export function AgzosBrowser() {
   const [loading, setLoading] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState<number | null>(null);
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
+  const [findFocus, setFindFocus] = useState(0);
+  // O seletor só aparece se o Ctrl continuar pressionado: toque rápido troca sem piscar.
+  const [switcherVisible, setSwitcherVisible] = useState(false);
   const [credentials, setCredentials] = useCredentials(desktop);
   const omniboxRef = useRef<HTMLInputElement | null>(null);
   const tabMenu = useContextMenu();
@@ -82,10 +88,12 @@ export function AgzosBrowser() {
 
   const currentHost = hostOf(current.url);
   const privacyHost = currentHost ?? "inicio";
-  const trackers = useMemo(() => blockedFor(privacyHost), [privacyHost]);
   const paused = prefs.pausedHosts.includes(privacyHost);
   const protectedNow = prefs.shield && !paused;
-  const blockedCount = protectedNow ? trackers.length : 0;
+  const pageBlocked = state.blocked[activeTab.id];
+  const blockedCount = protectedNow ? (pageBlocked?.count ?? 0) : 0;
+  const blockedToday = prefs.shield ? (state.adblock?.today ?? 0) : null;
+  const downloadBatch = useMemo(() => batchProgress(state.downloads), [state.downloads]);
 
   const setPrefs = useCallback(
     (patch: Partial<Prefs>) => dispatch({ type: "prefs/set", patch }),
@@ -132,11 +140,24 @@ export function AgzosBrowser() {
     omniboxRef.current?.select();
   }, []);
 
+  const openFind = useCallback(() => {
+    dispatch({ type: "find/open" });
+    setFindFocus((value) => value + 1);
+  }, []);
+
   const ctx: CommandContext = {
     state,
     dispatch,
     desktop,
-    ui: { focusOmnibox, reload, requestClose, copy: (id, value) => void copyText(id, value) },
+    ui: {
+      focusOmnibox,
+      reload,
+      requestClose,
+      copy: (id, value) => void copyText(id, value),
+      step: (delta) => step(delta),
+      openFind,
+      toggleDownloads: () => togglePanel("downloads"),
+    },
   };
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
@@ -160,7 +181,8 @@ export function AgzosBrowser() {
         shift: event.shiftKey,
         alt: event.altKey,
       });
-      if (!command) return;
+      // Atalho desabilitado (ex.: Ctrl+F na web) fica com o navegador.
+      if (!command || !isEnabled(ctxRef.current, command)) return;
       event.preventDefault();
       runCommand(ctxRef.current, command.id, null, "keyboard");
     }
@@ -168,11 +190,44 @@ export function AgzosBrowser() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const switcherOpen = state.switcher !== null;
+  useEffect(() => {
+    if (!switcherOpen) {
+      setSwitcherVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSwitcherVisible(true), 140);
+    const commit = () => dispatch({ type: "switcher/commit" });
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Control" || event.key === "Meta") commit();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dispatch({ type: "switcher/cancel" });
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        commit();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keydown", onKeyDown);
+    // Perdeu o foco com o Ctrl ainda apertado (ex.: Alt+Tab do sistema): confirma.
+    window.addEventListener("blur", commit);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", commit);
+    };
+  }, [switcherOpen]);
+
   useDesktopSync({
     desktop,
     state,
     dispatch,
-    panelOpen: panel !== null,
+    // O WebContentsView fica por cima da casca: sai da frente com painel ou seletor aberto.
+    panelOpen: panel !== null || switcherVisible,
     runCommandRef,
     runHotkeyRef,
     onPermission: setPermission,
@@ -189,6 +244,7 @@ export function AgzosBrowser() {
   );
 
   function step(delta: -1 | 1) {
+    if (delta < 0 ? !nav.canBack : !nav.canForward) return;
     flash();
     if (nav.viewDriven && desktop) {
       void (delta < 0 ? desktop.goBack(activeTab.id) : desktop.goForward(activeTab.id));
@@ -261,6 +317,16 @@ export function AgzosBrowser() {
     onStripMenu: openStripMenu,
   };
 
+  // Esc fecha o painel aberto (rota de saída de qualquer painel).
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setPanel(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
+
   const togglePanel = (target: Panel) => setPanel((open) => (open === target ? null : target));
 
   return (
@@ -302,6 +368,13 @@ export function AgzosBrowser() {
           loading={loading}
           favorite={isFavorite(state)}
           blockedCount={blockedCount}
+          zoom={state.zoom[activeTab.id] ?? 1}
+          downloads={{
+            visible: desktop !== null && state.downloads.length > 0,
+            open: panel === "downloads",
+            active: downloadBatch.active,
+            fraction: downloadBatch.fraction,
+          }}
           keyOpen={panel === "key"}
           dark={prefs.dark}
           aiOpen={prefs.aiOpen}
@@ -313,10 +386,28 @@ export function AgzosBrowser() {
           onSubmit={openAddress}
           onToggleFavorite={() => dispatch({ type: "links/toggle-current" })}
           onTogglePrivacy={() => togglePanel("privacy")}
+          onResetZoom={() => void desktop?.zoom(activeTab.id, 0)}
+          onToggleDownloads={() => togglePanel("downloads")}
           onToggleKey={() => togglePanel("key")}
           onToggleDark={() => setPrefs({ dark: !prefs.dark })}
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
         />
+
+        {state.find && state.find.id === activeTab.id && (
+          <FindBar
+            result={state.find}
+            focusSignal={findFocus}
+            onSearch={(text, options) => {
+              if (!desktop) return;
+              if (text) void desktop.findStart(activeTab.id, text, options);
+              else {
+                void desktop.findStop(activeTab.id);
+                dispatch({ type: "view/find", id: activeTab.id, active: 0, total: 0 });
+              }
+            }}
+            onClose={() => dispatch({ type: "find/clear" })}
+          />
+        )}
 
         <div className="browser-body">
           {prefs.orientation === "vertical" && (
@@ -331,7 +422,7 @@ export function AgzosBrowser() {
               state={state}
               tab={activeTab}
               loading={loading}
-              blockedCount={blockedCount}
+              blockedToday={blockedToday}
               desktop={desktop}
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
@@ -365,8 +456,37 @@ export function AgzosBrowser() {
             onPauseChange={(pause) =>
               dispatch({ type: "prefs/pause-host", host: privacyHost, pause })
             }
-            trackers={trackers}
+            count={blockedCount}
+            trackers={protectedNow ? (pageBlocked?.trackers ?? []) : []}
             protectedNow={protectedNow}
+            desktop={desktop !== null}
+            stats={state.adblock}
+            onUpdateLists={async () => {
+              if (!desktop) return;
+              await desktop.adblockUpdate();
+              dispatch({ type: "adblock/stats", stats: await desktop.adblockStats() });
+            }}
+            onClose={() => setPanel(null)}
+          />
+        )}
+        {panel === "downloads" && (
+          <DownloadsPanel
+            downloads={state.downloads}
+            desktop={desktop !== null}
+            onAction={(id, action) => {
+              if (!desktop) return;
+              void desktop.downloadAction(id, action).then(async ({ ok }) => {
+                if (ok && action === "remove") {
+                  dispatch({ type: "downloads/set", list: await desktop.downloadsList() });
+                }
+              });
+            }}
+            onClear={() => {
+              if (!desktop) return;
+              void desktop
+                .downloadsClear()
+                .then((list) => dispatch({ type: "downloads/set", list }));
+            }}
             onClose={() => setPanel(null)}
           />
         )}
@@ -405,6 +525,16 @@ export function AgzosBrowser() {
             void desktop?.respondPermission(permission.id, allow, remember);
             setPermission(null);
           }}
+        />
+      )}
+      {state.switcher && switcherVisible && (
+        <TabSwitcher
+          tabs={state.switcher.ids.flatMap((id) => state.tabs.filter((tab) => tab.id === id))}
+          index={state.switcher.index}
+          thumbnails={state.thumbnails}
+          onSelect={(index) => dispatch({ type: "switcher/select", index })}
+          onCommit={(index) => dispatch({ type: "switcher/commit", index })}
+          onCancel={() => dispatch({ type: "switcher/cancel" })}
         />
       )}
       {tabMenu.menu && (

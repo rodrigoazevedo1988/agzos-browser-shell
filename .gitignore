@@ -37,3 +37,6 @@ playwright-report/
 
 # Command Code (config local)
 .commandcode/
+
+# Bundle do motor de filtros, gerado no desktop:build
+electron/adblocker.vendor.cjs

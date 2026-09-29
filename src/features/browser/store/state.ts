@@ -1,3 +1,4 @@
+import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
 import type { ClosedTab, EngineId, Entry, QuickLink, Tab, TabOrientation } from "../types";
 
 export const HOME_URL = "agzos://inicio";
@@ -32,6 +33,8 @@ export const defaultPrefs: Prefs = {
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };
+export type PageBlocked = { count: number; trackers: BlockedTracker[] };
+export type FindResult = { id: number; active: number; total: number };
 
 export type BrowserState = {
   // Persistido (ver persistence/snapshot.ts).
@@ -50,6 +53,19 @@ export type BrowserState = {
   loginRejected: Record<number, string>;
   requestedUrl: { id: number; url: string } | null;
   fullscreen: boolean;
+  /** Bloqueios reais do adblock na página atual de cada aba (desktop). */
+  blocked: Record<number, PageBlocked>;
+  /** Zoom de cada aba (1 = 100 %). */
+  zoom: Record<number, number>;
+  find: FindResult | null;
+  downloads: DownloadRecord[];
+  adblock: AdblockStats | null;
+  /** Abas em ordem de uso, a mais recente primeiro (Ctrl+Tab). */
+  recent: number[];
+  /** Seletor do Ctrl+Tab aberto: abas em ordem de uso e a selecionada. */
+  switcher: { ids: number[]; index: number } | null;
+  /** Miniatura (data URL) da última vez que cada aba esteve visível (desktop). */
+  thumbnails: Record<number, string>;
 };
 
 export const initialState: BrowserState = {
@@ -67,4 +83,12 @@ export const initialState: BrowserState = {
   loginRejected: {},
   requestedUrl: null,
   fullscreen: false,
+  blocked: {},
+  zoom: {},
+  find: null,
+  downloads: [],
+  adblock: null,
+  recent: [1],
+  switcher: null,
+  thumbnails: {},
 };

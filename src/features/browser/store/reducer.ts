@@ -1,3 +1,4 @@
+import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
 import type { ClosedTab, Entry, QuickLink, Tab } from "../types";
 import { entryOf, normalizeUrlKey, orderTabs } from "./selectors";
 import {
@@ -23,6 +24,10 @@ export type BrowserAction =
   | { type: "tab/new"; private?: boolean; rightOf?: number }
   | { type: "tab/open-page"; entry: Entry }
   | { type: "tab/activate"; id: number }
+  /** Próxima (1) ou anterior (-1) na ordem exibida, dando a volta. */
+  | { type: "tab/activate-relative"; delta: 1 | -1 }
+  /** Posição na ordem exibida (0 = primeira); -1 = última. */
+  | { type: "tab/activate-index"; index: number }
   | { type: "tab/close"; id: number }
   | { type: "tab/close-others"; id: number }
   | { type: "tab/close-side"; id: number; direction: 1 | -1 }
@@ -54,12 +59,37 @@ export type BrowserAction =
   | { type: "view/crashed"; id: number }
   | { type: "view/recovered"; id: number }
   | { type: "view/login-rejected"; id: number; continueUrl: string | null }
-  | { type: "fullscreen/set"; active: boolean };
+  | { type: "fullscreen/set"; active: boolean }
+  | { type: "view/blocked"; id: number; count: number; trackers: BlockedTracker[] }
+  | { type: "view/zoom"; id: number; factor: number }
+  /** A navegação virou download: a URL do arquivo sai do histórico da aba. */
+  | { type: "view/download-navigation"; id: number; urls: string[] }
+  | { type: "view/find"; id: number; active: number; total: number }
+  /** Abre a barra de busca na aba ativa. */
+  | { type: "find/open" }
+  | { type: "find/clear" }
+  | { type: "downloads/set"; list: DownloadRecord[] }
+  | { type: "downloads/upsert"; record: DownloadRecord }
+  | { type: "adblock/stats"; stats: AdblockStats }
+  /** Ctrl+Tab / Ctrl+Shift+Tab: abre o seletor (ordem de uso) ou anda nele. */
+  | { type: "switcher/step"; delta: 1 | -1 }
+  | { type: "switcher/select"; index: number }
+  /** Soltou o Ctrl (ou clicou): ativa a aba selecionada. */
+  | { type: "switcher/commit"; index?: number }
+  | { type: "switcher/cancel" }
+  | { type: "view/thumbnail"; id: number; dataUrl: string };
 
 function homeTab(id: number, isPrivate?: boolean): Tab {
   return isPrivate
     ? { id, history: [homeEntry], index: 0, private: true }
     : { id, history: [homeEntry], index: 0 };
+}
+
+function withoutKeys<T>(record: Record<number, T>, ids: Set<number>): Record<number, T> {
+  if (!Object.keys(record).some((key) => ids.has(Number(key)))) return record;
+  const next = { ...record };
+  for (const id of ids) delete next[id];
+  return next;
 }
 
 function withoutId(list: number[], id: number) {
@@ -79,7 +109,26 @@ function rememberClosed(closed: ClosedTab[], tabs: Tab[]): ClosedTab[] {
 }
 
 function activate(state: BrowserState, tab: Tab): BrowserState {
-  return { ...state, activeId: tab.id, address: entryOf(tab).url, viewNav: null };
+  const recent =
+    state.recent[0] === tab.id ? state.recent : [tab.id, ...withoutId(state.recent, tab.id)];
+  return {
+    ...state,
+    activeId: tab.id,
+    address: entryOf(tab).url,
+    viewNav: null,
+    find: null,
+    recent,
+  };
+}
+
+/** Abas na ordem do Ctrl+Tab: usadas mais recentemente primeiro, depois as nunca vistas. */
+export function recentOrder(state: BrowserState): number[] {
+  const alive = new Set(state.tabs.map((tab) => tab.id));
+  const seen = state.recent.filter((id) => alive.has(id));
+  const rest = orderTabs(state.tabs)
+    .map((tab) => tab.id)
+    .filter((id) => !seen.includes(id));
+  return [...seen, ...rest];
 }
 
 function insertAfter(tabs: Tab[], id: number, tab: Tab): Tab[] {
@@ -108,6 +157,11 @@ function removeTabs(state: BrowserState, doomed: Tab[], fallbackId?: number): Br
   const cleanup = {
     audioPlaying: state.audioPlaying.filter((id) => !ids.has(id)),
     crashed: state.crashed.filter((id) => !ids.has(id)),
+    blocked: withoutKeys(state.blocked, ids),
+    zoom: withoutKeys(state.zoom, ids),
+    thumbnails: withoutKeys(state.thumbnails, ids),
+    recent: state.recent.filter((id) => !ids.has(id)),
+    switcher: null,
   };
 
   if (!remaining.length) {
@@ -153,6 +207,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         nextId,
         activeId: active.id,
         address: entryOf(active).url,
+        recent: [active.id],
       };
     }
 
@@ -173,6 +228,21 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     case "tab/activate": {
       const tab = state.tabs.find((item) => item.id === action.id);
       return tab ? activate(state, tab) : state;
+    }
+
+    case "tab/activate-relative": {
+      const display = orderTabs(state.tabs);
+      if (display.length < 2) return state;
+      const index = display.findIndex((tab) => tab.id === state.activeId);
+      const target = display[(index + action.delta + display.length) % display.length]!;
+      return activate(state, target);
+    }
+
+    case "tab/activate-index": {
+      const display = orderTabs(state.tabs);
+      const target = action.index < 0 ? display[display.length - 1] : display[action.index];
+      if (!target || target.id === state.activeId) return state;
+      return activate(state, target);
     }
 
     case "tab/close": {
@@ -250,6 +320,9 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         audioPlaying: [],
         loginRejected: {},
         requestedUrl: null,
+        recent: [tab.id],
+        switcher: null,
+        thumbnails: {},
       };
     }
 
@@ -375,6 +448,109 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
 
     case "fullscreen/set":
       return { ...state, fullscreen: action.active };
+
+    case "view/blocked":
+      if (!state.tabs.some((tab) => tab.id === action.id)) return state;
+      return {
+        ...state,
+        blocked: {
+          ...state.blocked,
+          [action.id]: { count: action.count, trackers: action.trackers },
+        },
+      };
+
+    case "view/download-navigation": {
+      const tab = state.tabs.find((item) => item.id === action.id);
+      const entry = tab?.history[tab.index];
+      if (!tab || !entry || entry.kind !== "page" || !action.urls.includes(entry.url)) {
+        return state;
+      }
+      if (tab.index === 0 || tab.history[tab.index - 1]!.kind === "home") {
+        // Aba sem página antes do arquivo (como a guia em branco que o Chrome fecha): vira
+        // uma aba nova, com outro id, para o main descartar o WebContentsView vazio.
+        const replacement = homeTab(state.nextId, tab.private);
+        const tabs = state.tabs.map((item) =>
+          item.id === tab.id ? { ...replacement, ...(tab.pinned ? { pinned: true } : {}) } : item,
+        );
+        const next = { ...state, tabs, nextId: state.nextId + 1 };
+        return state.activeId === tab.id
+          ? activate(
+              next,
+              tabs.find((item) => item.id === replacement.id)!,
+            )
+          : next;
+      }
+      const next = mapTab(state, tab.id, (item) => ({
+        ...item,
+        history: item.history.slice(0, item.index),
+        index: item.index - 1,
+      }));
+      if (state.activeId !== tab.id) return next;
+      return { ...next, address: tab.history[tab.index - 1]!.url, requestedUrl: null };
+    }
+
+    case "view/zoom":
+      if (state.zoom[action.id] === action.factor) return state;
+      return { ...state, zoom: { ...state.zoom, [action.id]: action.factor } };
+
+    case "view/find":
+      // Resultado atrasado de uma busca já fechada ou de outra aba: ignora.
+      if (!state.find || action.id !== state.activeId) return state;
+      return { ...state, find: { id: action.id, active: action.active, total: action.total } };
+
+    case "find/open":
+      if (state.find?.id === state.activeId) return state;
+      return { ...state, find: { id: state.activeId, active: 0, total: 0 } };
+
+    case "find/clear":
+      return state.find ? { ...state, find: null } : state;
+
+    case "downloads/set":
+      return { ...state, downloads: action.list };
+
+    case "downloads/upsert": {
+      const others = state.downloads.filter((item) => item.id !== action.record.id);
+      if (action.record.removed) return { ...state, downloads: others };
+      const exists = others.length !== state.downloads.length;
+      const downloads = exists
+        ? state.downloads.map((item) => (item.id === action.record.id ? action.record : item))
+        : [action.record, ...state.downloads];
+      return { ...state, downloads };
+    }
+
+    case "adblock/stats":
+      return { ...state, adblock: action.stats };
+
+    case "switcher/step": {
+      if (!state.switcher) {
+        const ids = recentOrder(state);
+        if (ids.length < 2) return state;
+        // A 1ª posição é a aba atual: Ctrl+Tab começa na anterior usada.
+        return { ...state, switcher: { ids, index: action.delta > 0 ? 1 : ids.length - 1 } };
+      }
+      const { ids, index } = state.switcher;
+      const next = (index + action.delta + ids.length) % ids.length;
+      return { ...state, switcher: { ids, index: next } };
+    }
+
+    case "switcher/select":
+      if (!state.switcher || !state.switcher.ids[action.index]) return state;
+      return { ...state, switcher: { ...state.switcher, index: action.index } };
+
+    case "switcher/commit": {
+      if (!state.switcher) return state;
+      const id = state.switcher.ids[action.index ?? state.switcher.index];
+      const closed = { ...state, switcher: null };
+      const tab = state.tabs.find((item) => item.id === id);
+      return tab && tab.id !== state.activeId ? activate(closed, tab) : closed;
+    }
+
+    case "switcher/cancel":
+      return state.switcher ? { ...state, switcher: null } : state;
+
+    case "view/thumbnail":
+      if (!state.tabs.some((tab) => tab.id === action.id)) return state;
+      return { ...state, thumbnails: { ...state.thumbnails, [action.id]: action.dataUrl } };
   }
 }
 
