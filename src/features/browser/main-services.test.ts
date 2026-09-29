@@ -47,10 +47,12 @@ const updaterModule = require(path.join(electronDir, "updater.cjs")) as {
     platform: string,
     options?: { exists: (file: string) => boolean },
   ) => { kind: string; dir: string; relaunch: string } | null;
-  helperScript: (
+  installerRunner: (
     platform: string,
-    options: Record<string, unknown>,
-  ) => { name: string; content: string };
+    staged: string,
+    execPath: string,
+    options?: { exists?: (file: string) => boolean; read?: (file: string) => string },
+  ) => string;
   createUpdater: (options: Record<string, unknown>) => {
     state(): UpdateState;
     check(): Promise<UpdateState>;
@@ -144,7 +146,7 @@ describe("sugestões do buscador", () => {
 });
 
 describe("atualização automática", () => {
-  const { compareVersions, platformKey, parseManifest, installTarget, helperScript } =
+  const { compareVersions, platformKey, parseManifest, installTarget, installerRunner } =
     updaterModule;
 
   it("compara versões e escolhe o pacote da plataforma", () => {
@@ -212,26 +214,102 @@ describe("atualização automática", () => {
     ).toBeNull();
   });
 
-  it("scripts de instalação: aspas seguras e cópia sem apagar nada na pasta", () => {
-    const options = {
-      pid: 42,
-      staged: "/tmp/it's novo",
-      target: "C:\\Users\\Zé\\Agzos",
-      relaunch: "C:\\Users\\Zé\\Agzos\\AgzosBrowser.exe",
-      result: "/tmp/r.txt",
-      version: "1.4.0",
-      reopen: true,
-    };
-    const windows = helperScript("win32", options).content;
-    expect(windows).toContain("robocopy $staged $target /E");
-    expect(windows).not.toContain("/MIR");
-    expect(windows).toContain("$staged = '/tmp/it''s novo'");
-    expect(windows).toContain("Start-Process -FilePath 'C:\\Users\\Zé\\Agzos\\AgzosBrowser.exe'");
-    const linux = helperScript("linux", { ...options, reopen: false }).content;
-    expect(linux).toContain(`STAGED='/tmp/it'\\''s novo'`);
-    expect(linux).toContain('cp -a "$STAGED/." "$TARGET/"');
-    expect(linux).not.toContain("nohup");
-    expect(helperScript("darwin", options).content).toContain('open "$TARGET"');
+  it("o instalador roda no executável da versão nova (o atual vai ser sobrescrito)", () => {
+    const exists = () => true;
+    expect(installerRunner("win32", "C:\\novo", "C:\\Agzos\\AgzosBrowser.exe", { exists })).toBe(
+      "C:\\novo\\AgzosBrowser.exe",
+    );
+    // Mac: o nome vem do Info.plist do .app novo (a 1.4.1 renomeou "Electron").
+    const plist = "<dict><key>CFBundleExecutable</key>\n<string>Agzos Browser</string></dict>";
+    expect(
+      installerRunner("darwin", "/t/novo/Agzos Browser.app", "/A.app/Contents/MacOS/Electron", {
+        exists,
+        read: () => plist,
+      }),
+    ).toBe("/t/novo/Agzos Browser.app/Contents/MacOS/Agzos Browser");
+    // Pacote sem o executável: cai no atual.
+    expect(
+      installerRunner("linux", "/t/novo", "/opt/agzos/agzos-browser", { exists: () => false }),
+    ).toBe("/opt/agzos/agzos-browser");
+  });
+
+  it("instalador: espera o app fechar, copia por cima, reabre e registra no log", async () => {
+    const root = tempDir("agzos-inst-");
+    const staged = path.join(root, "novo");
+    const target = path.join(root, "instalado");
+    fs.mkdirSync(path.join(staged, "resources", "app"), { recursive: true });
+    fs.mkdirSync(path.join(target, "resources", "app"), { recursive: true });
+    fs.writeFileSync(path.join(staged, "resources", "app", "package.json"), "novo");
+    fs.writeFileSync(path.join(target, "resources", "app", "package.json"), "velho");
+    fs.writeFileSync(path.join(target, "do-usuario.txt"), "fica");
+    fs.writeFileSync(
+      path.join(staged, "agzos-browser"),
+      `#!/bin/sh\necho "$ELECTRON_RUN_AS_NODE" > "${root}/reaberto.txt"\n`,
+      { mode: 0o755 },
+    );
+    const app = spawn("sleep", ["30"]);
+    const config = path.join(root, "instalar.json");
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        pid: app.pid,
+        staged,
+        target,
+        kind: "folder",
+        relaunch: path.join(target, "agzos-browser"),
+        reopen: true,
+        version: "9.9.9",
+        result: path.join(root, "resultado.txt"),
+        log: path.join(root, "instalar.log"),
+      }),
+    );
+    const installer = spawn(
+      process.execPath,
+      [path.join(electronDir, "install-update.cjs"), config],
+      {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      },
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(fs.existsSync(path.join(root, "resultado.txt"))).toBe(false);
+      app.kill();
+      await new Promise((resolve) => installer.on("exit", resolve));
+      expect(fs.readFileSync(path.join(root, "resultado.txt"), "utf8").trim()).toBe("ok 9.9.9");
+      expect(fs.readFileSync(path.join(target, "resources", "app", "package.json"), "utf8")).toBe(
+        "novo",
+      );
+      expect(fs.readFileSync(path.join(target, "do-usuario.txt"), "utf8")).toBe("fica");
+      // Reaberto como app normal (sem o modo Node).
+      await expect.poll(() => fs.existsSync(path.join(root, "reaberto.txt"))).toBe(true);
+      expect(fs.readFileSync(path.join(root, "reaberto.txt"), "utf8").trim()).toBe("");
+      expect(fs.readFileSync(path.join(root, "instalar.log"), "utf8")).toMatch(/app fechado/);
+    } finally {
+      app.kill();
+      installer.kill();
+    }
+  });
+
+  it("falha da instalação anterior fica visível, mesmo depois de verificar de novo", async () => {
+    const workDir = tempDir("agzos-falha-");
+    fs.writeFileSync(path.join(workDir, "resultado.txt"), "failed EBUSY arquivo em uso\n");
+    const updater = updaterModule.createUpdater({
+      feedUrl: "https://agzosagency.com.br/browser/latest.json",
+      currentVersion: "1.4.0",
+      platform: "linux",
+      arch: "x64",
+      execPath: "/nao/existe/agzos-browser",
+      workDir,
+      fetchImpl: async () => new Response(JSON.stringify({ version: "1.4.0" })),
+    });
+    expect(updater.state()).toMatchObject({
+      installError: "A última atualização não foi instalada (EBUSY arquivo em uso).",
+      logFile: path.join(workDir, "instalar.log"),
+    });
+    expect(await updater.check()).toMatchObject({
+      status: "up-to-date",
+      installError: expect.stringContaining("EBUSY"),
+    });
   });
 
   it("de ponta a ponta no Linux: verifica, baixa, confere, extrai e instala por cima ao fechar", async () => {
@@ -289,6 +367,8 @@ describe("atualização automática", () => {
         fetchImpl: fetch,
         emit: (state: UpdateState) => states.push(state.status),
         pid: app.pid,
+        // O pacote do teste não tem Electron: o instalador roda neste Node.
+        runner: process.execPath,
       });
     try {
       // SHA-256 errado: recusa.

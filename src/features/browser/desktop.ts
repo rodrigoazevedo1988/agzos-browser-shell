@@ -16,6 +16,10 @@ export type UpdateState = {
   error: string | null;
   notes?: string;
   page?: string;
+  /** A última instalação falhou (continua visível mesmo depois de baixar de novo). */
+  installError?: string | null;
+  /** Log do instalador (para mandar ao suporte). */
+  logFile?: string;
   checkedAt?: number;
 };
 
