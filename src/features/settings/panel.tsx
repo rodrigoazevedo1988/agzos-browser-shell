@@ -8,6 +8,7 @@ import type {
   UpdateState,
 } from "@/features/browser/desktop";
 import { engines } from "@/features/browser/engines";
+import { HIBERNATE_MINUTES } from "@/features/browser/store/state";
 import type { EngineId } from "@/features/browser/types";
 import { PermissionSelect } from "@/features/site/panel";
 import { PERMISSION_LABELS } from "@/features/site/permissions";
@@ -47,6 +48,7 @@ export function SettingsPanel({
   setSearchSuggestions,
   permissions,
   onPermissionChange,
+  hibernation,
   update,
   onCheckUpdate,
   onInstallUpdate,
@@ -70,6 +72,12 @@ export function SettingsPanel({
   /** null na web (permissões só existem no app). */
   permissions: SitePermission[] | null;
   onPermissionChange: (origin: string, type: PermissionType, value: PermissionValue | null) => void;
+  /** null na web (lá não há páginas nativas para hibernar). */
+  hibernation: {
+    enabled: boolean;
+    minutes: number;
+    onChange: (patch: { hibernate?: boolean; hibernateMinutes?: number }) => void;
+  } | null;
   /** null quando o app não se atualiza sozinho (web, dev). */
   update: UpdateState | null;
   onCheckUpdate: () => void;
@@ -141,6 +149,35 @@ export function SettingsPanel({
         checked={searchSuggestions}
         onChange={setSearchSuggestions}
       />
+      {hibernation && (
+        <>
+          <Toggle
+            label="Hibernar guias sem uso"
+            hint="Libera a memória das guias paradas; elas recarregam ao voltar"
+            checked={hibernation.enabled}
+            onChange={(hibernate) => hibernation.onChange({ hibernate })}
+          />
+          {hibernation.enabled && (
+            <label className="settings-select">
+              <span>Hibernar depois de</span>
+              <select
+                value={hibernation.minutes}
+                onChange={(event) =>
+                  hibernation.onChange({ hibernateMinutes: Number(event.target.value) })
+                }
+              >
+                {[...HIBERNATE_MINUTES]
+                  .sort((a, b) => a - b)
+                  .map((minutes) => (
+                    <option key={minutes} value={minutes}>
+                      {minutes < 60 ? `${minutes} minutos` : `${minutes / 60} h`}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+        </>
+      )}
       <div className="settings-links">
         <Button variant="outline" size="sm" onClick={onOpenHistory}>
           <History /> Histórico
@@ -222,6 +259,9 @@ export function SettingsPanel({
           </li>
           <li>
             <kbd>⌘/Ctrl T</kbd> Nova aba
+          </li>
+          <li>
+            <kbd>⌘/Ctrl N</kbd> Nova janela
           </li>
           <li>
             <kbd>⌘/Ctrl W</kbd> Fechar aba

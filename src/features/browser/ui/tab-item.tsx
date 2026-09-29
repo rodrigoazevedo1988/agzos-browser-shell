@@ -18,12 +18,14 @@ export function TabItem({
   tab,
   active,
   playing,
+  hibernated = false,
   confirmingClose,
   handlers,
 }: {
   tab: Tab;
   active: boolean;
   playing: boolean;
+  hibernated?: boolean;
   confirmingClose: boolean;
   handlers: TabHandlers;
 }) {
@@ -33,7 +35,7 @@ export function TabItem({
       type="button"
       role="tab"
       aria-selected={active}
-      title={entry.title}
+      title={hibernated ? `${entry.title} (hibernada para economizar memória)` : entry.title}
       // O título some nas fixadas (só o ícone): o nome acessível não pode depender dele.
       aria-label={[
         entry.title,
@@ -41,6 +43,7 @@ export function TabItem({
         tab.private && "anônima",
         playing && !tab.muted && "tocando áudio",
         tab.muted && "sem som",
+        hibernated && "hibernada",
       ]
         .filter(Boolean)
         .join(", ")}
@@ -61,6 +64,7 @@ export function TabItem({
         active && "active",
         tab.pinned && "pinned",
         tab.private && "private",
+        hibernated && "hibernated",
       )}
     >
       {tab.private ? (

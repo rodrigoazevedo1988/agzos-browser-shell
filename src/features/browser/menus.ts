@@ -10,9 +10,9 @@ import type { ContextMenuGroup } from "./tab-menu";
 type MenuLayout = (CommandId[] | "separator")[];
 
 export const TAB_MENU: MenuLayout = [
-  ["tab.new-right", "tab.reopen-closed", "tab.duplicate"],
+  ["window.new", "tab.new-right", "tab.reopen-closed", "tab.duplicate", "tab.move-to-window"],
   "separator",
-  ["tab.toggle-pin", "tab.toggle-mute"],
+  ["tab.toggle-pin", "tab.toggle-mute", "tab.hibernate"],
   "separator",
   ["tab.reload", "tab.copy-url"],
   "separator",
@@ -24,7 +24,7 @@ export const TAB_MENU: MenuLayout = [
 ];
 
 export const STRIP_MENU: MenuLayout = [
-  ["tab.new", "tab.reopen-closed"],
+  ["tab.new", "window.new", "tab.reopen-closed"],
   "separator",
   ["tabs.vertical", "tabs.horizontal"],
 ];

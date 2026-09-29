@@ -8,7 +8,12 @@ Since 1.5 the main process also runs:
 - `downloads.cjs`: `will-download` for every session, unique names in the Downloads folder, progress events, history in SQLite (private-tab downloads stay in memory).
 - `zoom.cjs`: Chrome zoom steps; per-host zoom persisted in `site_settings`.
 
-Test-only environment variables: `AGZOS_USER_DATA`, `AGZOS_DOWNLOADS_DIR`, `AGZOS_FILTER_LISTS` (JSON `{ "ads": [url], "privacy": [url] }`).
+Since 1.7 (app 1.5.0):
+
+- `windows.cjs`: several windows; each window's tabs and bounds are saved continuously in `meta:windows`, plus a run marker (`meta:running`) that detects an unclean exit (restore notice, safe mode when it crashed during the first minute).
+- `hibernate.cjs`: rules for hibernating hidden tabs (the page is closed and later restored with its navigation history).
+
+Test-only environment variables: `AGZOS_USER_DATA`, `AGZOS_DOWNLOADS_DIR`, `AGZOS_FILTER_LISTS` (JSON `{ "ads": [url], "privacy": [url] }`), `AGZOS_HIBERNATE_AFTER_MS`, `AGZOS_HIBERNATE_CHECK_MS`, `AGZOS_STABLE_AFTER_MS`.
 
 ## Development
 

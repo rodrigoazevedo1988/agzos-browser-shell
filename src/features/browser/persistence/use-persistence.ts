@@ -17,6 +17,8 @@ function loadOnce(store: BrowserStore) {
   return pending;
 }
 
+const MAX_DELAY_MS = 1000;
+
 /** Carrega o snapshot uma vez e grava as mudanças depois disso. */
 export function usePersistence(
   state: BrowserState,
@@ -26,6 +28,7 @@ export function usePersistence(
   const store = useMemo(() => injected ?? defaultBrowserStore(), [injected]);
   const pending = useRef<ReturnType<typeof snapshotOf> | null>(null);
   const timer = useRef<number | null>(null);
+  const pendingSince = useRef<number | null>(null);
 
   useEffect(() => {
     if (!store) return;
@@ -36,6 +39,12 @@ export function usePersistence(
     return () => {
       cancelled = true;
     };
+  }, [dispatch, store]);
+
+  // Outra janela mudou preferências, favoritos, atalhos ou guias fechadas.
+  useEffect(() => {
+    if (!store?.subscribe) return;
+    return store.subscribe((payload) => dispatch({ type: "sync", payload }));
   }, [dispatch, store]);
 
   const { hydrated, tabs, activeId, prefs, links, closedTabs, bookmarks } = state;
@@ -50,12 +59,20 @@ export function usePersistence(
     const flush = () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
+      pendingSince.current = null;
       const next = pending.current;
       pending.current = null;
       if (next) void store.save(next).catch(() => {});
     };
     pending.current = snapshot;
     if (store.debounceMs <= 0) {
+      flush();
+      return;
+    }
+    // Mudanças seguidas (página carregando, várias guias) adiam a gravação, mas não mais
+    // que MAX_DELAY_MS: num crash se perde no máximo esse tanto.
+    pendingSince.current ??= Date.now();
+    if (Date.now() - pendingSince.current >= MAX_DELAY_MS) {
       flush();
       return;
     }

@@ -87,7 +87,11 @@ const PAGES: Record<string, string> = {
   "/busca": `<!doctype html><title>Busca</title>
     <p>agzos um</p><p>outro texto</p><p>agzos dois</p><p>mais agzos três</p>`,
   "/baixar": `<!doctype html><title>Baixar</title><a href="/arquivo/relatorio.txt">relatório</a>`,
+  "/formulario": `<!doctype html><title>Formulário</title><input id="nome" value="">`,
 };
+
+// /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
+let unstableDown = true;
 
 test.beforeAll(async () => {
   server = http.createServer((request, response) => {
@@ -148,6 +152,10 @@ test.beforeAll(async () => {
       response.end(PAGES["/com-link"]!.replace("LINK", target));
       return;
     }
+    if (url === "/instavel" && unstableDown) {
+      request.socket.destroy();
+      return;
+    }
     const html = PAGES[url];
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     if (html) {
@@ -176,7 +184,6 @@ async function launch(
     cwd: root,
     env: {
       ...process.env,
-      ...extraEnv,
       AGZOS_USER_DATA: profile,
       AGZOS_DOWNLOADS_DIR: path.join(profile, "Downloads"),
       // Listas locais: o teste não depende da internet nem das listas reais.
@@ -185,6 +192,7 @@ async function launch(
         privacy: [`${origin}/filtros/privacidade.txt`],
         resources: `${origin}/filtros/recursos.json`,
       }),
+      ...extraEnv,
     },
   });
   const window = await app.firstWindow();
@@ -355,8 +363,9 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
       Object.keys(stored)
         .filter((key) => !key.startsWith("meta:"))
         .sort(),
-    ).toEqual(["bookmarks", "closedTabs", "links", "prefs", "session", "version"]);
-    expect(stored["session"]).toContain("/salva");
+    ).toEqual(["bookmarks", "closedTabs", "links", "prefs", "version"]);
+    // 1.7: a sessão (guias) é de cada janela e fica no registro das janelas.
+    expect(stored["meta:windows"]).toContain("/salva");
     expect(JSON.stringify(stored)).not.toContain("secreta");
   } finally {
     await second.app.close();
@@ -987,5 +996,286 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
     if (!closed) await app.close();
     feed.closeAllConnections();
     feed.close();
+  }
+});
+
+// --- 1.7: várias janelas, restauração após crash, telas de erro e hibernação. ---
+
+/** Cascas (uma por janela), sem as páginas das guias. */
+function shells(app: ElectronApplication) {
+  return app.windows().filter((page) => page.url().includes("/dist/index.html"));
+}
+
+async function waitShells(app: ElectronApplication, count: number) {
+  await expect.poll(() => shells(app).length, { timeout: 15_000 }).toBe(count);
+  const pages = shells(app);
+  for (const page of pages) await page.locator('.browser-stage[data-ready="true"]').waitFor();
+  return pages;
+}
+
+/** Id da guia (data-tab-id) cujo título contém `text`. */
+async function tabIdOf(window: Page, text: string) {
+  return Number(await tabs(window).filter({ hasText: text }).first().getAttribute("data-tab-id"));
+}
+
+test("1.7: Ctrl+N abre janela nova, tema sincroniza e as janelas voltam depois de reiniciar", async () => {
+  const profile = tempProfile();
+  const first = await launch(profile);
+  await go(first.window, `${origin}/janela-um`);
+  await expect(tabs(first.window).first()).toContainText("Página JANELA-UM");
+  await first.window.keyboard.press(`${MOD}+n`);
+  const [, second] = await waitShells(first.app, 2);
+  await go(second!, `${origin}/janela-dois`);
+  await expect(tabs(second!).first()).toContainText("Página JANELA-DOIS");
+  // Cada janela tem as suas guias.
+  await expect(tabs(first.window)).toHaveCount(1);
+  await expect(tabs(first.window).first()).toContainText("Página JANELA-UM");
+  // Preferência mudada numa janela vale na outra.
+  await first.window.getByRole("button", { name: "Usar tema escuro" }).click();
+  await expect(second!.locator(".browser-stage")).toHaveClass(/dark/);
+  await first.window.waitForTimeout(900);
+  await first.app.close();
+
+  const again = await launch(profile);
+  try {
+    const pages = await waitShells(again.app, 2);
+    const titles = await Promise.all(pages.map((page) => tabs(page).first().textContent()));
+    expect(titles.join(" ")).toContain("Página JANELA-UM");
+    expect(titles.join(" ")).toContain("Página JANELA-DOIS");
+    for (const page of pages) await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
+    // Fechar uma janela entre várias descarta as guias dela (como no Chrome).
+    await again.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()
+        .find((window) => window.getTitle().includes("JANELA-DOIS"))
+        ?.close();
+    });
+    const [remaining] = await waitShells(again.app, 1);
+    await expect(tabs(remaining!).first()).toContainText("Página JANELA-UM");
+    await remaining!.waitForTimeout(700);
+  } finally {
+    await again.app.close();
+  }
+  const last = await launch(profile);
+  try {
+    await last.window.waitForTimeout(800);
+    expect(shells(last.app)).toHaveLength(1);
+    await expect(tabs(last.window).first()).toContainText("Página JANELA-UM");
+  } finally {
+    await last.app.close();
+  }
+});
+
+test("1.7: mover guia para nova janela leva a página viva (sem recarregar)", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/fica`);
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/movida`);
+    await expect(tabs(window).last()).toContainText("Página MOVIDA");
+    await inTab(app, `${origin}/movida`, "window.marca = 42");
+    const id = await tabIdOf(window, "Página MOVIDA");
+    await app.evaluate(({ BrowserWindow }, tabId) => {
+      BrowserWindow.getAllWindows()[0]!.webContents.send("agzos:tabmenu-action", {
+        action: "tab.move-to-window",
+        tabId,
+      });
+    }, id);
+    const [, moved] = await waitShells(app, 2);
+    await expect(tabs(moved!)).toHaveCount(1);
+    await expect(tabs(moved!).first()).toContainText("Página MOVIDA");
+    await expect(tabs(window)).toHaveCount(1);
+    await expect(tabs(window).first()).toContainText("Página FICA");
+    // Mesma página (o valor da variável sobreviveu) e uma só.
+    expect(await inTab(app, `${origin}/movida`, "window.marca")).toBe(42);
+    expect(await liveViews(app, "/movida")).toHaveLength(1);
+    // Não entra em "reabrir guia fechada".
+    await expect(window.getByRole("button", { name: "Reabrir guia fechada" })).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.7: tela de erro quando a página não carrega, e 'Tentar novamente' recupera", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    unstableDown = true;
+    await go(window, `${origin}/instavel`);
+    const error = window.getByRole("alert", { name: "Erro ao carregar a página" });
+    await expect(error).toBeVisible();
+    await expect(error).toContainText("Este site não pode ser acessado");
+    await expect(error).toContainText("ERR_EMPTY_RESPONSE");
+    await expect(omnibox(window)).toHaveValue(`${origin}/instavel`);
+    unstableDown = false;
+    await error.getByRole("button", { name: "Tentar novamente" }).click();
+    await expect(tabs(window).first()).toContainText("Página INSTAVEL");
+    await expect(error).toHaveCount(0);
+    // Endereço inexistente: tela própria, com a opção de pesquisar.
+    await go(window, "http://nao-existe.invalid/");
+    await expect(error).toBeVisible();
+    await expect(error.getByRole("heading")).toHaveText(
+      /Não foi possível encontrar este site|Este site não pode ser acessado|Sem conexão/,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.7: certificado inválido mostra o aviso e 'Continuar' abre a página", async () => {
+  const dir = tempProfile();
+  const key = path.join(dir, "k.pem");
+  const cert = path.join(dir, "c.pem");
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        key,
+        "-out",
+        cert,
+        "-days",
+        "2",
+        "-subj",
+        "/CN=localhost",
+      ],
+      { stdio: "ignore" },
+    );
+  } catch {
+    test.skip(true, "openssl indisponível");
+  }
+  const https = await import("node:https");
+  const secure = https.createServer(
+    { key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
+    (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><title>Página SEGURA</title>ok");
+    },
+  );
+  await new Promise<void>((resolve) => secure.listen(0, "127.0.0.1", resolve));
+  const url = `https://127.0.0.1:${(secure.address() as AddressInfo).port}/`;
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, url);
+    const error = window.getByRole("alert", { name: "Erro ao carregar a página" });
+    await expect(error).toContainText("Sua conexão não é particular");
+    await expect(error).toContainText("ERR_CERT_AUTHORITY_INVALID");
+    await error.getByRole("button", { name: "Avançado" }).click();
+    await error.getByRole("button", { name: /Continuar para .* \(não seguro\)/ }).click();
+    await expect(tabs(window).first()).toContainText("Página SEGURA");
+    await expect(error).toHaveCount(0);
+  } finally {
+    await app.close();
+    secure.close();
+  }
+});
+
+test("1.7: página encerrada mostra a tela de travada e 'Recarregar' traz de volta", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/derrubada`);
+    await expect(tabs(window).first()).toContainText("Página DERRUBADA");
+    const id = await tabIdOf(window, "Página DERRUBADA");
+    await window.evaluate(
+      (tabId) =>
+        (
+          window as unknown as { agzosDesktop: { killTab(id: number): Promise<void> } }
+        ).agzosDesktop.killTab(tabId),
+      id,
+    );
+    const crashed = window.getByRole("alert", { name: "Guia travada" });
+    await expect(crashed).toBeVisible();
+    await crashed.getByRole("button", { name: "Recarregar" }).click();
+    await expect(crashed).toHaveCount(0);
+    await expect
+      .poll(() => inTab(app, `${origin}/derrubada`, "document.title"))
+      .toBe("Página DERRUBADA");
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.7: guia sem uso hiberna, volta com o histórico e formulário preenchido não hiberna", async () => {
+  const { app, window } = await launch(tempProfile(), {
+    AGZOS_HIBERNATE_AFTER_MS: "1200",
+    AGZOS_HIBERNATE_CHECK_MS: "400",
+    // Sem scriptlets no 127.0.0.1: site com scriptlets volta sem o histórico (ver
+    // restoreHibernated em electron/main.cjs).
+    AGZOS_FILTER_LISTS: JSON.stringify({ ads: [], privacy: [`${origin}/filtros/privacidade.txt`] }),
+  });
+  try {
+    await go(window, `${origin}/hib-um`);
+    await expect(tabs(window).first()).toContainText("Página HIB-UM");
+    await go(window, `${origin}/hib-dois`);
+    await expect(tabs(window).first()).toContainText("Página HIB-DOIS");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/formulario`);
+    await expect(tabs(window).nth(1)).toContainText("Formulário");
+    await inTab(app, `${origin}/formulario`, "document.getElementById('nome').value = 'Ana'");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+
+    await expect(tabs(window).first()).toHaveClass(/hibernated/, { timeout: 10_000 });
+    await expect.poll(() => liveViews(app, "/hib-dois")).toHaveLength(0);
+    // Formulário com texto digitado continua vivo.
+    await window.waitForTimeout(1500);
+    expect(await liveViews(app, "/formulario")).toHaveLength(1);
+    await expect(tabs(window).nth(1)).not.toHaveClass(/hibernated/);
+
+    // Voltar à guia recria a página, com o histórico de navegação.
+    await tabs(window).first().click();
+    await expect(tabs(window).first()).not.toHaveClass(/hibernated/);
+    await expect.poll(() => liveViews(app, "/hib-dois")).toHaveLength(1);
+    await expect(omnibox(window)).toHaveValue(`${origin}/hib-dois`);
+    await window.getByRole("button", { name: "Voltar" }).click();
+    await expect(omnibox(window)).toHaveValue(`${origin}/hib-um`);
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.7: depois de um crash as janelas voltam com aviso; crash logo ao abrir usa o modo seguro", async () => {
+  const profile = tempProfile();
+  // Execução "estável" (passou do tempo de início) que cai: restaura normalmente.
+  const first = await launch(profile, { AGZOS_STABLE_AFTER_MS: "200" });
+  await go(first.window, `${origin}/antes-do-crash`);
+  await expect(tabs(first.window).first()).toContainText("Página ANTES-DO-CRASH");
+  await first.window.waitForTimeout(1200);
+  first.app.process().kill("SIGKILL");
+
+  const second = await launch(profile);
+  await expect(second.window.getByRole("status", { name: "Sessão restaurada" })).toContainText(
+    "não foi fechado corretamente",
+  );
+  await expect(tabs(second.window).first()).toContainText("Página ANTES-DO-CRASH");
+  await expect.poll(() => liveViews(second.app, "/antes-do-crash")).toHaveLength(1);
+  // Cai de novo logo ao abrir: a próxima abre sem carregar as páginas.
+  await second.window.waitForTimeout(900);
+  second.app.process().kill("SIGKILL");
+
+  const third = await launch(profile);
+  try {
+    await expect(third.window.getByRole("status", { name: "Sessão restaurada" })).toContainText(
+      "fechou logo depois de abrir",
+    );
+    await expect(tabs(third.window)).toHaveCount(2);
+    await expect(tabs(third.window).first()).toContainText("Página ANTES-DO-CRASH");
+    await expect(tabs(third.window).first()).toHaveClass(/hibernated/);
+    await expect(tabs(third.window).nth(1)).toHaveAttribute("aria-selected", "true");
+    await third.window.waitForTimeout(800);
+    expect(await liveViews(third.app, "/antes-do-crash")).toHaveLength(0);
+  } finally {
+    await third.app.close();
+  }
+
+  // Saída normal: sem aviso na próxima.
+  const fourth = await launch(profile);
+  try {
+    await fourth.window.waitForTimeout(600);
+    await expect(fourth.window.getByRole("status", { name: "Sessão restaurada" })).toHaveCount(0);
+  } finally {
+    await fourth.app.close();
   }
 });

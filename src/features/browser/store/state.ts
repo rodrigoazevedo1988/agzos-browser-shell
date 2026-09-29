@@ -1,4 +1,10 @@
-import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
+import type {
+  AdblockStats,
+  BlockedTracker,
+  CrashReason,
+  DownloadRecord,
+  LoadFailure,
+} from "../desktop";
 import type {
   BookmarkNode,
   ClosedTab,
@@ -34,7 +40,14 @@ export type Prefs = {
   bookmarksBar: boolean;
   /** Sugestões do motor de busca na omnibox (o texto digitado vai para o buscador). */
   searchSuggestions: boolean;
+  /** Hibernar guias sem uso (o main fecha a página e a recria ao voltar). */
+  hibernate: boolean;
+  /** Minutos sem uso antes de hibernar (ver HIBERNATE_MINUTES). */
+  hibernateMinutes: number;
 };
+
+/** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
+export const HIBERNATE_MINUTES = [30, 15, 60, 120] as const;
 
 export const defaultPrefs: Prefs = {
   dark: false,
@@ -46,6 +59,8 @@ export const defaultPrefs: Prefs = {
   pausedHosts: [],
   bookmarksBar: true,
   searchSuggestions: true,
+  hibernate: true,
+  hibernateMinutes: 30,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };
@@ -69,6 +84,14 @@ export type BrowserState = {
   viewNav: ViewNav | null;
   audioPlaying: number[];
   crashed: number[];
+  /** Por que a página caiu (falta de memória, encerrada…). */
+  crashReasons: Record<number, CrashReason>;
+  /** Página que não carregou (sem internet, endereço inexistente, certificado…). */
+  failed: Record<number, LoadFailure>;
+  /** Guias sem página carregada no momento (hibernadas ou ainda não abertas). */
+  hibernated: number[];
+  /** Página travada (loop): a casca oferece esperar ou encerrar. */
+  unresponsive: number[];
   loginRejected: Record<number, string>;
   requestedUrl: { id: number; url: string } | null;
   fullscreen: boolean;
@@ -101,6 +124,10 @@ export const initialState: BrowserState = {
   viewNav: null,
   audioPlaying: [],
   crashed: [],
+  crashReasons: {},
+  failed: {},
+  hibernated: [],
+  unresponsive: [],
   loginRejected: {},
   requestedUrl: null,
   fullscreen: false,

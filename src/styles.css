@@ -2831,3 +2831,63 @@ button.download-name:hover {
   font-size: 10.5px;
   word-break: break-all;
 }
+
+/* 1.7: telas de erro, faixas de aviso, guias hibernadas. */
+.error-page .error-code {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.error-page .fallback-actions {
+  margin-top: 6px;
+}
+.error-page p {
+  max-width: 520px;
+}
+.error-advanced {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+.error-advanced p {
+  margin: 0;
+}
+.notice-bar strong {
+  font-weight: 700;
+}
+.browser-tab.hibernated:not(.active) > img,
+.browser-tab.hibernated:not(.active) > svg:first-child {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+.browser-tab.hibernated:not(.active) > .tab-title {
+  opacity: 0.7;
+}
+.settings-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.settings-select select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}

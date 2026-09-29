@@ -6,6 +6,7 @@ const {
   session,
   clipboard,
   ipcMain,
+  screen,
   shell,
   safeStorage,
   net,
@@ -30,6 +31,20 @@ const {
 } = require("./permissions.cjs");
 const { fetchSuggestions } = require("./suggest.cjs");
 const { createUpdater, DEFAULT_FEED } = require("./updater.cjs");
+const {
+  createWindowStore,
+  fitBounds,
+  cascadeBounds,
+  safeSession,
+  STABLE_AFTER_MS,
+} = require("./windows.cjs");
+const {
+  CHECK_INTERVAL_MS,
+  hibernateConfigOf,
+  canHibernate,
+  restorableHistory,
+  EDITED_FORM_SOURCE,
+} = require("./hibernate.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -53,23 +68,36 @@ const developmentUrl = process.argv
   .find((argument) => argument.startsWith("--dev-url="))
   ?.slice("--dev-url=".length);
 
-const views = new Map();
+/**
+ * Estado de cada janela (1.7): a casca (renderer) e as guias dela. As guias têm id por
+ * janela (o renderer de cada janela numera as suas); o main acha a janela pelo
+ * event.sender de cada IPC e nunca guarda uma "janela principal".
+ *
+ * ctx = { window, key, session, views: Map<id, { view, hiddenSince }>, activeTabId,
+ *         lastRect, panelOpen, fullscreenActive, crashed: Set, rejected: Set,
+ *         failed: Map<id, falha>, hibernated: Map<id, histórico>, unresponsive: Set }
+ */
+const contexts = new Map();
+// webContents.id de cada guia → { ctx, id }. Mover a guia de janela só troca esta entrada.
+const tabOfContents = new Map();
+// Popups (OAuth) → janela de onde saíram (atalhos, permissões).
+const popupOwner = new WeakMap();
 const pendingPermissions = new Map();
-const crashedViews = new Set();
-const rejectedLoginViews = new Set();
-let mainWindow = null;
-let activeTabId = null;
-let lastRect = null;
-let panelOpen = false;
-let fullscreenActive = false;
+let lastFocused = null;
 let permissionSeq = 0;
 let database = null;
 let adblock = null;
 let downloads = null;
 let permissions = null;
 let updater = null;
-// webContents.id → id da aba, para saber quem fez cada requisição.
-const tabIdByContents = new Map();
+let windowStore = null;
+let quitting = false;
+// Como a execução anterior terminou (aviso de restauração e modo seguro).
+let startup = { unclean: false, early: false, restoredWindows: 0 };
+let startupNoticeShown = false;
+// Testes encurtam o tempo da hibernação e o intervalo de verificação.
+const HIBERNATE_OVERRIDE = { afterMs: Number(process.env.AGZOS_HIBERNATE_AFTER_MS) || undefined };
+let hibernateConfig = hibernateConfigOf(null, HIBERNATE_OVERRIDE);
 // Zoom das abas anônimas: vale na sessão, nunca vai para o disco.
 const privateZoom = new Map();
 
@@ -204,7 +232,7 @@ function requestDecision(details) {
   if (!adblock) return null;
   try {
     const contents = details.webContents;
-    if (contents && mainWindow && contents === mainWindow.webContents) return null;
+    if (contents && contexts.has(contents.id)) return null;
     const alive = contents && !contents.isDestroyed();
     let sourceUrl = details.referrer || "";
     try {
@@ -217,7 +245,8 @@ function requestDecision(details) {
       resourceType: details.resourceType,
       pageUrl: alive ? contents.getURL() : sourceUrl,
       sourceUrl,
-      tabId: alive ? tabIdByContents.get(contents.id) : undefined,
+      // O adblock conta por webContents (único entre janelas).
+      tabId: alive && tabOfContents.has(contents.id) ? contents.id : undefined,
     });
   } catch {
     return null;
@@ -227,13 +256,11 @@ function requestDecision(details) {
 // Navegar até um arquivo não troca a página (como no Chrome): avisa a casca para tirar a
 // URL do download do histórico da aba; senão ela baixaria de novo ao restaurar a sessão.
 function notifyDownloadNavigation(item, contents) {
-  if (!contents || contents.isDestroyed()) return;
-  const id = tabIdByContents.get(contents.id);
-  if (id == null) return;
+  if (!contents || contents.isDestroyed() || !tabOfContents.has(contents.id)) return;
   const urls = item.getURLChain();
   // Ctrl+S na própria página: a página continua sendo essa URL.
   if (urls.includes(contents.getURL())) return;
-  sendToChrome("agzos:tab-event", { type: "download-navigation", id, urls });
+  emitTab(contents, { type: "download-navigation", urls });
 }
 
 // Pipeline de rede único por session. O Electron aceita UM listener por evento de
@@ -385,8 +412,35 @@ function rejectedContinueUrl(url) {
   return "https://accounts.google.com/";
 }
 
-function sendToChrome(channel, payload) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+function send(ctx, channel, payload) {
+  const window = ctx?.window;
+  if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
+}
+
+/** Para todas as janelas (downloads, estatística do escudo, atualização). */
+function broadcast(channel, payload, except = null) {
+  for (const ctx of contexts.values()) if (ctx !== except) send(ctx, channel, payload);
+}
+
+function ctxOfEvent(event) {
+  return contexts.get(event.sender.id) ?? null;
+}
+
+/** Janela dona de um webContents: a casca, uma guia ou um popup aberto por uma guia. */
+function ownerCtx(contents) {
+  if (!contents || contents.isDestroyed()) return lastFocused;
+  return (
+    contexts.get(contents.id) ??
+    tabOfContents.get(contents.id)?.ctx ??
+    popupOwner.get(contents) ??
+    lastFocused
+  );
+}
+
+/** Evento de uma guia para a casca da janela dela, com o id que a casca conhece. */
+function emitTab(contents, payload) {
+  const where = tabOfContents.get(contents.id);
+  if (where) send(where.ctx, "agzos:tab-event", { ...payload, id: where.id });
 }
 
 function isWebUrl(url) {
@@ -394,42 +448,55 @@ function isWebUrl(url) {
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
 }
 
-function fullRect() {
-  const [width, height] = mainWindow.getContentSize();
+function fullRect(ctx) {
+  const [width, height] = ctx.window.getContentSize();
   return { x: 0, y: 0, width, height };
 }
 
-function applyLayout() {
-  if (fullscreenActive) return;
-  for (const [id, entry] of views) {
-    const active =
-      id === activeTabId && !panelOpen && !crashedViews.has(id) && !rejectedLoginViews.has(id);
-    const rect = active && lastRect ? lastRect : HIDDEN_RECT;
-    entry.view.setBounds(rect);
+/** A guia aparece por cima da casca (sem painel, tela de erro, crash ou login recusado). */
+function isShown(ctx, id) {
+  return (
+    id === ctx.activeTabId &&
+    !ctx.panelOpen &&
+    !ctx.crashed.has(id) &&
+    !ctx.rejected.has(id) &&
+    !ctx.failed.has(id)
+  );
+}
+
+function applyLayout(ctx) {
+  if (ctx.fullscreenActive || ctx.window.isDestroyed()) return;
+  const now = Date.now();
+  for (const [id, entry] of ctx.views) {
+    const shown = isShown(ctx, id);
+    entry.view.setBounds(shown && ctx.lastRect ? ctx.lastRect : HIDDEN_RECT);
+    // Hibernação conta o tempo desde que a guia deixou de ser a ativa.
+    if (id === ctx.activeTabId) entry.hiddenSince = null;
+    else entry.hiddenSince ??= now;
   }
 }
 
-function notifyTabState(id) {
-  const entry = views.get(id);
-  if (!entry || entry.view.webContents.isDestroyed()) return;
-  const contents = entry.view.webContents;
+function notifyTabState(contents) {
+  const where = tabOfContents.get(contents.id);
+  if (!where || contents.isDestroyed()) return;
+  const { ctx, id } = where;
   // Preparação com about:blank (loadWithScriptlets): a casca continua mostrando o site.
   if (primingContents.has(contents)) return;
-  crashedViews.delete(id);
+  ctx.crashed.delete(id);
   const url = contents.getURL();
   const rejected = isGoogleRejectedUrl(url);
-  if (rejected !== rejectedLoginViews.has(id)) {
-    if (rejected) rejectedLoginViews.add(id);
-    else rejectedLoginViews.delete(id);
-    applyLayout();
-    sendToChrome("agzos:tab-event", {
+  if (rejected !== ctx.rejected.has(id)) {
+    if (rejected) ctx.rejected.add(id);
+    else ctx.rejected.delete(id);
+    applyLayout(ctx);
+    send(ctx, "agzos:tab-event", {
       type: "login-rejected",
       id,
       rejected,
       continueUrl: rejected ? rejectedContinueUrl(url) : null,
     });
   }
-  sendToChrome("agzos:tab-event", {
+  send(ctx, "agzos:tab-event", {
     type: "tab-updated",
     id,
     url,
@@ -439,8 +506,9 @@ function notifyTabState(id) {
   });
 }
 
-function openInNewTab(url) {
-  sendToChrome("agzos:open-request", { url });
+/** Link aberto em nova guia na janela de onde ele saiu. */
+function openInNewTab(contents, url) {
+  send(ownerCtx(contents), "agzos:open-request", { url });
 }
 
 /** Download que abre o diálogo nativo "Salvar como" (Ctrl+S e menus "Salvar … como"). */
@@ -464,7 +532,7 @@ function buildPageContextMenu(contents, params) {
       label: "Perguntar ao DuckDuckGo",
       click: () => {
         if (params.selectionText) clipboard.writeText(params.selectionText);
-        openInNewTab(DUCK_AI_URL);
+        openInNewTab(contents, DUCK_AI_URL);
       },
     },
     { type: "separator" },
@@ -493,7 +561,19 @@ function buildPageContextMenu(contents, params) {
   if (params.linkURL) {
     template.push(
       { type: "separator" },
-      { label: "Abrir link em nova guia", click: () => openInNewTab(params.linkURL) },
+      { label: "Abrir link em nova guia", click: () => openInNewTab(contents, params.linkURL) },
+      {
+        label: "Abrir link em nova janela",
+        enabled: isWebUrl(params.linkURL),
+        click: () =>
+          createWindow({
+            near: ownerCtx(contents),
+            session: tabSession({
+              history: [{ title: params.linkURL, url: params.linkURL, kind: "page" }],
+              index: 0,
+            }),
+          }),
+      },
       { label: "Salvar link como…", click: () => saveAs(contents, params.linkURL) },
       { label: "Copiar endereço do link", click: () => clipboard.writeText(params.linkURL) },
     );
@@ -502,7 +582,7 @@ function buildPageContextMenu(contents, params) {
   if (params.mediaType === "image" && isWebUrl(params.srcURL)) {
     template.push(
       { type: "separator" },
-      { label: "Abrir imagem em nova guia", click: () => openInNewTab(params.srcURL) },
+      { label: "Abrir imagem em nova guia", click: () => openInNewTab(contents, params.srcURL) },
       { label: "Salvar imagem como…", click: () => saveAs(contents, params.srcURL) },
       { label: "Copiar imagem", click: () => contents.copyImageAt(params.x, params.y) },
     );
@@ -513,7 +593,7 @@ function buildPageContextMenu(contents, params) {
     {
       label: "Exibir código-fonte da página",
       accelerator: "CmdOrCtrl+U",
-      click: () => openInNewTab(`view-source:${contents.getURL()}`),
+      click: () => openInNewTab(contents, `view-source:${contents.getURL()}`),
     },
   );
 
@@ -524,17 +604,20 @@ function buildPageContextMenu(contents, params) {
   return Menu.buildFromTemplate(template);
 }
 
-function buildTabContextMenu(context) {
-  const { kind, tabId, pinned, muted, audio, hasClosed, orientation, url } = context;
+function buildTabContextMenu(ctx, context) {
+  const { kind, tabId, pinned, muted, audio, hasClosed, orientation, url, tabCount, active } =
+    context;
   const action = (id, label, options = {}) => ({
     label,
     ...options,
-    click: () => sendToChrome("agzos:tabmenu-action", { action: id, tabId }),
+    click: () => send(ctx, "agzos:tabmenu-action", { action: id, tabId }),
   });
+  const loaded = ctx.views.has(tabId);
 
   if (kind === "strip") {
     return Menu.buildFromTemplate([
       action("tab.new", "Nova guia", { accelerator: "CmdOrCtrl+T" }),
+      action("window.new", "Nova janela", { accelerator: "CmdOrCtrl+N" }),
       action("tab.reopen-closed", "Reabrir guia fechada", {
         accelerator: "CmdOrCtrl+Shift+T",
         enabled: Boolean(hasClosed),
@@ -547,14 +630,17 @@ function buildTabContextMenu(context) {
   }
 
   const items = [
+    action("window.new", "Nova janela", { accelerator: "CmdOrCtrl+N" }),
     action("tab.new-right", "Nova guia à direita"),
     action("tab.reopen-closed", "Reabrir guia fechada", {
       accelerator: "CmdOrCtrl+Shift+T",
       enabled: Boolean(hasClosed),
     }),
     action("tab.duplicate", "Duplicar"),
+    action("tab.move-to-window", "Mover para nova janela", { enabled: (tabCount ?? 1) > 1 }),
     { type: "separator" },
     action("tab.toggle-pin", pinned ? "Desfixar" : "Fixar"),
+    action("tab.hibernate", "Hibernar guia", { enabled: Boolean(loaded && !active) }),
   ];
   if (audio || muted) {
     items.push(action("tab.toggle-mute", muted ? "Ativar som do site" : "Desativar som do site"));
@@ -587,6 +673,14 @@ function buildTabContextMenu(context) {
 }
 
 const wiredPermissionSessions = new WeakSet();
+// Guias que receberam câmera/microfone: não hibernam (a chamada cairia).
+const capturingContents = new WeakSet();
+
+function noteMediaGrant(contents, types, allowed) {
+  if (allowed && contents && types.some((type) => type === "camera" || type === "microphone")) {
+    capturingContents.add(contents);
+  }
+}
 
 // Permissões por site (electron/permissions.cjs): decisão salva responde sozinha; sem
 // decisão, a casca pergunta (barra de permissão) e "Lembrar" grava no SQLite.
@@ -594,7 +688,7 @@ function wirePermissions(ses) {
   if (wiredPermissionSessions.has(ses)) return;
   wiredPermissionSessions.add(ses);
   const isPrivate = () => ses === privateSession();
-  ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
     const types = permissionTypesOf(permission, details);
     if (!types) {
       callback(AUTO_ALLOWED.includes(permission));
@@ -603,12 +697,14 @@ function wirePermissions(ses) {
     const origin = requestOrigin(details);
     const decision = permissions ? permissions.decide(origin, types, isPrivate()) : null;
     if (decision !== null || !origin) {
+      noteMediaGrant(contents, types, Boolean(decision));
       callback(Boolean(decision));
       return;
     }
     const id = `perm-${++permissionSeq}`;
-    pendingPermissions.set(id, { callback, origin, types, isPrivate: isPrivate() });
-    sendToChrome("agzos:permission-request", {
+    pendingPermissions.set(id, { callback, origin, types, isPrivate: isPrivate(), contents });
+    // A pergunta aparece na janela da guia (ou do popup) que pediu.
+    send(ownerCtx(contents), "agzos:permission-request", {
       id,
       origin,
       types,
@@ -666,15 +762,15 @@ function menuTemplateOf(items, depth = 0) {
   });
 }
 
-function activeViewEntry() {
-  return activeTabId != null ? (views.get(activeTabId) ?? null) : null;
+function activeViewEntry(ctx) {
+  return ctx?.activeTabId != null ? (ctx.views.get(ctx.activeTabId) ?? null) : null;
 }
 
-function handlePageShortcut(input, event) {
+function handlePageShortcut(ctx, input, event) {
   const meta = input.control || input.meta;
   if (!meta || input.shift || input.alt) return false;
   const key = input.key.toLowerCase();
-  const entry = activeViewEntry();
+  const entry = activeViewEntry(ctx);
   if (!entry) return false;
   const contents = entry.view.webContents;
   if (key === "s") {
@@ -690,7 +786,7 @@ function handlePageShortcut(input, event) {
   if (key === "u") {
     event.preventDefault();
     const url = contents.getURL();
-    if (isWebUrl(url)) openInNewTab(`view-source:${url}`);
+    if (isWebUrl(url)) openInNewTab(contents, `view-source:${url}`);
     return true;
   }
   return false;
@@ -700,6 +796,7 @@ function handlePageShortcut(input, event) {
 // Espelha src/features/browser/commands.ts; commands.test.ts confere que não falta nenhum.
 const FORWARDED_SHORTCUTS = new Set([
   "mod+t",
+  "mod+n",
   "mod+w",
   "mod+r",
   "mod+l",
@@ -761,12 +858,12 @@ function shortcutCombo(input) {
   return parts.join("+");
 }
 
-function forwardAppShortcut(input, event) {
-  if (input.type !== "keyDown") return false;
+function forwardAppShortcut(ctx, input, event) {
+  if (input.type !== "keyDown" || !ctx) return false;
   if (!FORWARDED_SHORTCUTS.has(shortcutCombo(input))) return false;
   event.preventDefault();
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
-  sendToChrome("agzos:hotkey", {
+  if (!ctx.window.isDestroyed()) ctx.window.webContents.focus();
+  send(ctx, "agzos:hotkey", {
     key: shortcutKey(input),
     shift: Boolean(input.shift),
     alt: Boolean(input.alt),
@@ -778,16 +875,18 @@ function forwardAppShortcut(input, event) {
 
 function wireShortcuts(contents, { page = false } = {}) {
   contents.on("before-input-event", (event, input) => {
+    // A janela é resolvida a cada tecla: a guia pode ter mudado de janela.
+    const ctx = ownerCtx(contents);
     // Soltar o Ctrl/⌘ confirma o seletor do Ctrl+Tab, onde quer que esteja o foco.
     if (input.type === "keyUp" && (input.key === "Control" || input.key === "Meta")) {
-      sendToChrome("agzos:modifier-up", { key: input.key });
+      send(ctx, "agzos:modifier-up", { key: input.key });
       return;
     }
     if (input.type !== "keyDown") return;
     // Esc com foco na página para o carregamento (e segue para a página, como no Chrome).
     if (page && input.key === "Escape" && contents.isLoading()) contents.stop();
-    if (handlePageShortcut(input, event)) return;
-    forwardAppShortcut(input, event);
+    if (handlePageShortcut(ctx, input, event)) return;
+    forwardAppShortcut(ctx, input, event);
   });
 }
 
@@ -803,11 +902,13 @@ function wirePopups(contents) {
         overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: "#FFFFFF" },
       };
     }
-    if (isWebUrl(url)) openInNewTab(url);
+    if (isWebUrl(url)) openInNewTab(contents, url);
     return { action: "deny" };
   });
   contents.on("did-create-window", (child) => {
     const popup = child.webContents;
+    const owner = ownerCtx(contents);
+    if (owner) popupOwner.set(popup, owner);
     wirePopups(popup);
     wireShortcuts(popup);
   });
@@ -839,40 +940,36 @@ async function applyCosmetics(contents, base) {
 const THUMBNAIL_WIDTH = 360;
 const thumbnailTimers = new Map();
 
-function isVisible(id) {
-  return (
-    id === activeTabId &&
-    !panelOpen &&
-    !fullscreenActive &&
-    !crashedViews.has(id) &&
-    !rejectedLoginViews.has(id) &&
-    lastRect !== null
-  );
+function isVisible(contents) {
+  const where = tabOfContents.get(contents.id);
+  if (!where || contents.isDestroyed()) return false;
+  const { ctx, id } = where;
+  return isShown(ctx, id) && !ctx.fullscreenActive && ctx.lastRect !== null;
 }
 
 /** `leaving`: a aba está saindo de cena; o pedido sai antes de ela ser escondida. */
-async function captureThumbnail(id, { leaving = false } = {}) {
-  const contents = views.get(id)?.view.webContents;
-  if (!contents || contents.isDestroyed() || !isVisible(id)) return;
+async function captureThumbnail(contents, { leaving = false } = {}) {
+  if (!contents || contents.isDestroyed() || !isVisible(contents)) return;
   if (!/^https?:\/\//.test(contents.getURL())) return;
   try {
     const image = await contents.capturePage();
-    if (image.isEmpty() || (!leaving && !isVisible(id))) return;
+    if (image.isEmpty() || (!leaving && !isVisible(contents))) return;
     const small = image.resize({ width: THUMBNAIL_WIDTH, quality: "good" });
     const dataUrl = `data:image/jpeg;base64,${small.toJPEG(72).toString("base64")}`;
-    sendToChrome("agzos:tab-event", { type: "thumbnail", id, dataUrl });
+    emitTab(contents, { type: "thumbnail", dataUrl });
   } catch {
     // Aba fechada ou processo reiniciado no meio: fica a miniatura anterior.
   }
 }
 
-function scheduleThumbnail(id, delay) {
-  clearTimeout(thumbnailTimers.get(id));
+function scheduleThumbnail(contents, delay) {
+  const key = contents.id;
+  clearTimeout(thumbnailTimers.get(key));
   thumbnailTimers.set(
-    id,
+    key,
     setTimeout(() => {
-      thumbnailTimers.delete(id);
-      void captureThumbnail(id);
+      thumbnailTimers.delete(key);
+      if (!contents.isDestroyed()) void captureThumbnail(contents);
     }, delay),
   );
 }
@@ -1019,17 +1116,22 @@ async function loadWithScriptlets(contents, url) {
       } catch {
         // Sem a API: o about:blank fica no histórico, sem outro efeito.
       }
-      const id = tabIdByContents.get(contents.id);
-      if (id != null) notifyTabState(id);
+      notifyTabState(contents);
     });
   }
   await loading;
 }
 
+/** webContents de todas as guias abertas, em todas as janelas. */
+function* allTabContents() {
+  for (const ctx of contexts.values()) {
+    for (const { view } of ctx.views.values()) yield view.webContents;
+  }
+}
+
 /** Escudo, sites pausados ou listas mudaram: os scriptlets registrados saem. */
 function resetScriptlets() {
-  for (const { view } of views.values()) {
-    const contents = view.webContents;
+  for (const contents of allTabContents()) {
     const registry = scriptletRegistry.get(contents);
     if (!registry || contents.isDestroyed()) continue;
     scriptletRegistry.delete(contents);
@@ -1051,21 +1153,16 @@ function storedZoom(contents, host) {
   return typeof value === "number" && value > 0 ? value : 1;
 }
 
-function sendZoom(id, factor) {
-  sendToChrome("agzos:tab-event", { type: "zoom", id, factor });
-}
-
 /** Aplica o zoom lembrado do host (depois de cada navegação). */
-function applyStoredZoom(id, contents) {
+function applyStoredZoom(contents) {
   const host = zoomHostOf(contents.getURL());
   const factor = host ? storedZoom(contents, host) : 1;
   if (Math.abs(contents.getZoomFactor() - factor) > 0.001) contents.setZoomFactor(factor);
-  sendZoom(id, factor);
+  emitTab(contents, { type: "zoom", factor });
 }
 
 /** direction: 1 aumenta, -1 diminui, 0 volta a 100 %. Vale para todas as abas do host. */
-function changeZoom(id, direction) {
-  const contents = views.get(id)?.view.webContents;
+function changeZoom(contents, direction) {
   if (!contents || contents.isDestroyed()) return;
   const factor = nextZoom(contents.getZoomFactor(), direction);
   const host = zoomHostOf(contents.getURL());
@@ -1074,22 +1171,45 @@ function changeZoom(id, direction) {
     if (isPrivate) privateZoom.set(host, factor);
     else database?.setSiteSetting(host, "zoom", factor === 1 ? null : factor);
   }
-  for (const [otherId, entry] of views) {
-    const other = entry.view.webContents;
+  for (const other of allTabContents()) {
     if (other.isDestroyed()) continue;
-    const sameHost = otherId === id || (host && zoomHostOf(other.getURL()) === host);
+    const sameHost = other === contents || (host && zoomHostOf(other.getURL()) === host);
     if (!sameHost || isPrivateContents(other) !== isPrivate) continue;
     other.setZoomFactor(factor);
-    sendZoom(otherId, factor);
+    emitTab(other, { type: "zoom", factor });
   }
 }
 
-function wireView(id, view) {
+// ERR_ABORTED: navegação interrompida (Esc, outro link, download) não é erro de página.
+const IGNORED_LOAD_ERRORS = new Set([-3]);
+
+/** A página não carregou: a casca mostra a tela de erro no lugar dela. */
+function markLoadFailed(contents, code, description, url) {
+  const where = tabOfContents.get(contents.id);
+  if (!where || IGNORED_LOAD_ERRORS.has(code)) return;
+  const { ctx, id } = where;
+  const failure = { code, description: String(description ?? ""), url: String(url ?? "") };
+  ctx.failed.set(id, failure);
+  applyLayout(ctx);
+  send(ctx, "agzos:tab-event", { type: "load-failed", id, failure });
+  notifyTabState(contents);
+}
+
+function clearLoadFailed(contents) {
+  const where = tabOfContents.get(contents.id);
+  if (!where || !where.ctx.failed.has(where.id)) return;
+  where.ctx.failed.delete(where.id);
+  applyLayout(where.ctx);
+  send(where.ctx, "agzos:tab-event", { type: "load-failed", id: where.id, failure: null });
+}
+
+function wireView(view) {
   const contents = view.webContents;
+  const ctxNow = () => tabOfContents.get(contents.id)?.ctx ?? null;
 
   contents.on("did-start-navigation", (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
-    adblock?.resetPage(id);
+    adblock?.resetPage(contents.id);
     ensureScriptlets(contents, details.url, "early");
   });
   contents.on("did-redirect-navigation", (details) => {
@@ -1099,16 +1219,23 @@ function wireView(id, view) {
   contents.on("dom-ready", () => void applyCosmetics(contents, true));
   contents.on("did-finish-load", () => void applyCosmetics(contents, false));
   contents.on("found-in-page", (_event, result) => {
-    sendToChrome("agzos:tab-event", {
+    emitTab(contents, {
       type: "find",
-      id,
       active: result.activeMatchOrdinal ?? 0,
       total: result.matches ?? 0,
     });
   });
-  contents.on("zoom-changed", (_event, direction) => changeZoom(id, direction === "in" ? 1 : -1));
-  contents.on("did-navigate", () => applyStoredZoom(id, contents));
-  contents.on("did-stop-loading", () => scheduleThumbnail(id, 600));
+  contents.on("zoom-changed", (_event, direction) =>
+    changeZoom(contents, direction === "in" ? 1 : -1),
+  );
+  // Falha na carga: o Chromium não dispara did-navigate (a página de erro dele fica em
+  // branco); a tela de erro da casca fica até uma navegação dar certo.
+  contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame) markLoadFailed(contents, code, description, url);
+  });
+  contents.on("did-navigate", () => clearLoadFailed(contents));
+  contents.on("did-navigate", () => applyStoredZoom(contents));
+  contents.on("did-stop-loading", () => scheduleThumbnail(contents, 600));
   contents.on("did-navigate", (_event, url) => recordVisit(contents, url));
   contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
     if (isMainFrame) recordVisit(contents, url, { sameDocument: true });
@@ -1118,54 +1245,115 @@ function wireView(id, view) {
       historyCall((db) => db.updateHistoryTitle(contents.getURL(), title));
     }
   });
-  contents.on("did-navigate", () => notifyTabState(id));
-  contents.on("did-navigate-in-page", () => notifyTabState(id));
-  contents.on("page-title-updated", () => notifyTabState(id));
+  contents.on("did-navigate", () => notifyTabState(contents));
+  contents.on("did-navigate-in-page", () => notifyTabState(contents));
+  contents.on("page-title-updated", () => notifyTabState(contents));
   contents.on("page-favicon-updated", (_event, icons) => {
     const icon = icons.at(-1) ?? null;
     if (icon && /^https?:/.test(icon) && !isPrivateContents(contents)) {
       historyCall((db) => db.updateHistoryIcon(contents.getURL(), icon));
     }
-    sendToChrome("agzos:tab-event", { type: "favicon", id, icon });
+    emitTab(contents, { type: "favicon", icon });
   });
-  contents.on("media-started-playing", () =>
-    sendToChrome("agzos:tab-event", { type: "audio", id, playing: true }),
-  );
-  contents.on("media-paused", () =>
-    sendToChrome("agzos:tab-event", { type: "audio", id, playing: false }),
-  );
+  contents.on("media-started-playing", () => emitTab(contents, { type: "audio", playing: true }));
+  contents.on("media-paused", () => emitTab(contents, { type: "audio", playing: false }));
   contents.on("audio-state-changed", (_event, muted) => {
-    sendToChrome("agzos:tab-event", { type: "muted", id, muted });
+    emitTab(contents, { type: "muted", muted });
   });
   contents.on("enter-html-full-screen", () => {
-    fullscreenActive = true;
-    view.setBounds(fullRect());
-    sendToChrome("agzos:fullscreen", { active: true });
+    const ctx = ctxNow();
+    if (!ctx) return;
+    ctx.fullscreenActive = true;
+    view.setBounds(fullRect(ctx));
+    send(ctx, "agzos:fullscreen", { active: true });
   });
   contents.on("leave-html-full-screen", () => {
-    fullscreenActive = false;
-    setTimeout(applyLayout, 50);
-    sendToChrome("agzos:fullscreen", { active: false });
+    const ctx = ctxNow();
+    if (!ctx) return;
+    ctx.fullscreenActive = false;
+    setTimeout(() => applyLayout(ctx), 50);
+    send(ctx, "agzos:fullscreen", { active: false });
   });
   contents.on("context-menu", (event, params) => {
     event.preventDefault();
-    buildPageContextMenu(contents, params).popup({ window: mainWindow });
+    const ctx = ctxNow();
+    buildPageContextMenu(contents, params).popup(ctx ? { window: ctx.window } : {});
   });
   wirePopups(contents);
-  contents.on("render-process-gone", () => {
-    crashedViews.add(id);
-    if (!fullscreenActive) view.setBounds(HIDDEN_RECT);
-    sendToChrome("agzos:tab-event", { type: "crashed", id });
+  // Página sem resposta (loop infinito): a casca oferece esperar ou encerrar.
+  contents.on("unresponsive", () => {
+    const where = tabOfContents.get(contents.id);
+    where?.ctx.unresponsive.add(where.id);
+    emitTab(contents, { type: "unresponsive", value: true });
+  });
+  contents.on("responsive", () => {
+    const where = tabOfContents.get(contents.id);
+    where?.ctx.unresponsive.delete(where.id);
+    emitTab(contents, { type: "unresponsive", value: false });
+  });
+  contents.on("render-process-gone", (_event, details) => {
+    const where = tabOfContents.get(contents.id);
+    if (!where) return;
+    const { ctx, id } = where;
+    ctx.crashed.add(id);
+    ctx.unresponsive.delete(id);
+    if (!ctx.fullscreenActive) view.setBounds(HIDDEN_RECT);
+    send(ctx, "agzos:tab-event", { type: "crashed", id, reason: details?.reason ?? "crashed" });
   });
 
   wireShortcuts(contents, { page: true });
 }
 
-function createWindow() {
+let localWindowSeq = 0;
+
+function workAreas() {
+  try {
+    return screen.getAllDisplays().map((display) => display.workArea);
+  } catch {
+    return [];
+  }
+}
+
+/** Posição e maximizado da janela vão para o registro (gravado com debounce). */
+function rememberBounds(ctx) {
+  const { window } = ctx;
+  if (window.isDestroyed() || window.isMinimized() || window.isFullScreen()) return;
+  windowStore?.update(ctx.key, {
+    bounds: window.getNormalBounds(),
+    maximized: window.isMaximized(),
+  });
+}
+
+/** Guia que já existe (movida de outra janela) entra nesta janela com o id `id`. */
+function adoptView(ctx, id, moved) {
+  if (moved.history) ctx.hibernated.set(id, moved.history);
+  if (!moved.view) return;
+  ctx.views.set(id, { view: moved.view, hiddenSince: null });
+  ctx.window.contentView.addChildView(moved.view);
+  moved.view.setBounds(HIDDEN_RECT);
+  tabOfContents.set(moved.view.webContents.id, { ctx, id });
+}
+
+/**
+ * Abre uma janela. `record`: janela restaurada (chave, posição, sessão); `near`: janela
+ * de onde ela saiu (abre em cascata); `session`: guias iniciais; `adopt`: guia movida.
+ */
+function createWindow({ record = null, near = null, session: initial = null, adopt = null } = {}) {
+  let bounds = fitBounds(record?.bounds, workAreas());
+  if (!bounds && near && !near.window.isDestroyed()) {
+    let area = null;
+    try {
+      area = screen.getDisplayMatching(near.window.getBounds()).workArea;
+    } catch {
+      area = null;
+    }
+    bounds = cascadeBounds(near.window.getNormalBounds(), area);
+  }
   const window = new BrowserWindow({
     title: "Agzos Browser",
     width: 1440,
     height: 960,
+    ...(bounds ?? {}),
     minWidth: 980,
     minHeight: 680,
     backgroundColor: "#0E0E0E",
@@ -1186,16 +1374,75 @@ function createWindow() {
     },
   });
 
-  mainWindow = window;
-  window.once("ready-to-show", () => window.show());
+  const session = record ? record.session : initial;
+  const key = record?.key ?? windowStore?.add({ session, bounds }) ?? `local-${++localWindowSeq}`;
+  const ctx = {
+    window,
+    key,
+    session,
+    views: new Map(),
+    activeTabId: null,
+    lastRect: null,
+    panelOpen: false,
+    fullscreenActive: false,
+    crashed: new Set(),
+    rejected: new Set(),
+    failed: new Map(),
+    hibernated: new Map(),
+    unresponsive: new Set(),
+  };
+  const shellId = window.webContents.id;
+  contexts.set(shellId, ctx);
+  lastFocused = ctx;
+  if (adopt) adoptView(ctx, adopt.id, adopt);
+
+  window.once("ready-to-show", () => {
+    if (record?.maximized) window.maximize();
+    window.show();
+  });
+  window.on("focus", () => {
+    lastFocused = ctx;
+  });
+  let boundsTimer = null;
+  const saveBoundsSoon = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => rememberBounds(ctx), 300);
+  };
   window.on("resize", () => {
-    if (fullscreenActive && activeTabId != null && views.has(activeTabId)) {
-      views.get(activeTabId).view.setBounds(fullRect());
+    saveBoundsSoon();
+    const active = ctx.activeTabId != null ? ctx.views.get(ctx.activeTabId) : null;
+    if (ctx.fullscreenActive && active?.view) {
+      active.view.setBounds(fullRect(ctx));
       return;
     }
-    applyLayout();
+    applyLayout(ctx);
   });
-  window.on("leave-full-screen", () => setTimeout(applyLayout, 50));
+  window.on("move", saveBoundsSoon);
+  window.on("maximize", saveBoundsSoon);
+  window.on("unmaximize", saveBoundsSoon);
+  window.on("leave-full-screen", () => setTimeout(() => applyLayout(ctx), 50));
+  // Windows desligando: as janelas fecham uma a uma, mas todas voltam no próximo início.
+  window.on("session-end", () => {
+    quitting = true;
+  });
+  window.on("close", () => {
+    clearTimeout(boundsTimer);
+    rememberBounds(ctx);
+    // Fechar uma janela entre várias descarta as guias dela (como no Chrome). A última
+    // janela, ou todas ao sair do app, ficam salvas para o próximo início.
+    if (!quitting && contexts.size > 1) windowStore?.remove(ctx.key);
+  });
+  window.on("closed", () => {
+    for (const [id, entry] of ctx.views) dropView(ctx, id, entry);
+    contexts.delete(shellId);
+    if (lastFocused === ctx) lastFocused = contexts.values().next().value ?? null;
+    for (const [id, pending] of pendingPermissions) {
+      if (ownerCtx(pending.contents) === ctx || pending.contents?.isDestroyed()) {
+        pendingPermissions.delete(id);
+        pending.callback(false);
+      }
+    }
+  });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://") || url.startsWith("http://")) {
@@ -1211,6 +1458,18 @@ function createWindow() {
     if (!allowed) event.preventDefault();
   });
 
+  // A casca caiu (renderer da janela): recarrega. As guias continuam vivas no main e a
+  // casca volta com a sessão salva (state:load devolve a desta janela).
+  let shellCrashes = 0;
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit" || window.isDestroyed()) return;
+    console.error(`Agzos: a casca da janela caiu (${details.reason}); recarregando.`);
+    if (++shellCrashes > 3) return;
+    setTimeout(() => {
+      if (!window.isDestroyed()) window.webContents.reload();
+    }, 250);
+  });
+
   wireShortcuts(window.webContents);
 
   if (isDevelopment && developmentUrl) {
@@ -1218,15 +1477,155 @@ function createWindow() {
   } else {
     void window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+  return ctx;
+}
+
+/** Fecha o WebContentsView da guia e esquece tudo dela no main. */
+function dropView(ctx, id, entry = ctx.views.get(id)) {
+  ctx.crashed.delete(id);
+  ctx.rejected.delete(id);
+  ctx.failed.delete(id);
+  ctx.unresponsive.delete(id);
+  ctx.views.delete(id);
+  if (!entry?.view) return;
+  const contents = entry.view.webContents;
+  if (!ctx.window.isDestroyed()) ctx.window.contentView.removeChildView(entry.view);
+  tabOfContents.delete(contents.id);
+  clearTimeout(thumbnailTimers.get(contents.id));
+  thumbnailTimers.delete(contents.id);
+  adblock?.forgetTab(contents.id);
+  if (!contents.isDestroyed()) contents.close();
 }
 
 function keyStorePath() {
   return path.join(app.getPath("userData"), "agzos-key.bin");
 }
 
+function tabContents(ctx, id) {
+  const contents = ctx?.views.get(id)?.view.webContents;
+  return contents && !contents.isDestroyed() ? contents : null;
+}
+
+function hasPendingPermission(contents) {
+  for (const pending of pendingPermissions.values()) {
+    if (pending.contents === contents) return true;
+  }
+  return false;
+}
+
+const FORM_WORLD_ID = 1718;
+
+/** Formulário preenchido na página (a hibernação perderia o texto). */
+async function hasEditedForm(contents) {
+  try {
+    return Boolean(
+      await Promise.race([
+        contents.executeJavaScriptInIsolatedWorld(FORM_WORLD_ID, [{ code: EDITED_FORM_SOURCE }]),
+        new Promise((resolve) => setTimeout(() => resolve(true), 1500)),
+      ]),
+    );
+  } catch {
+    // Sem resposta da página: melhor não hibernar.
+    return true;
+  }
+}
+
+/**
+ * Hiberna a guia: guarda o histórico de navegação e fecha o WebContentsView. `force` (menu
+ * "Hibernar guia") pula as regras, menos a da guia visível.
+ */
+async function hibernateTab(ctx, id, { force = false } = {}) {
+  const entry = ctx.views.get(id);
+  if (!entry || id === ctx.activeTabId) return false;
+  const contents = entry.view.webContents;
+  if (contents.isDestroyed()) return false;
+  if (!force && (await hasEditedForm(contents))) return false;
+  // A guia pode ter sido ativada, fechada ou movida enquanto a página respondia.
+  if (ctx.views.get(id) !== entry || id === ctx.activeTabId || contents.isDestroyed()) {
+    return false;
+  }
+  let history = null;
+  try {
+    const navigation = contents.navigationHistory;
+    history = restorableHistory(navigation.getAllEntries(), navigation.getActiveIndex());
+  } catch {
+    history = null;
+  }
+  dropView(ctx, id, entry);
+  if (history) ctx.hibernated.set(id, history);
+  send(ctx, "agzos:tab-event", { type: "hibernated", id });
+  return true;
+}
+
+let hibernationRunning = false;
+
+async function checkHibernation() {
+  if (!hibernateConfig.enabled || hibernationRunning) return;
+  hibernationRunning = true;
+  try {
+    const now = Date.now();
+    for (const ctx of [...contexts.values()]) {
+      for (const [id, entry] of [...ctx.views]) {
+        const contents = entry.view.webContents;
+        if (contents.isDestroyed()) continue;
+        const candidate = {
+          visible: id === ctx.activeTabId,
+          hiddenSince: entry.hiddenSince,
+          audible: contents.isCurrentlyAudible(),
+          loading: contents.isLoading(),
+          capturing: capturingContents.has(contents),
+          pendingPermission: hasPendingPermission(contents),
+          fullscreen: ctx.fullscreenActive && id === ctx.activeTabId,
+          devtools: contents.isDevToolsOpened(),
+        };
+        if (canHibernate(candidate, { now, afterMs: hibernateConfig.afterMs })) {
+          await hibernateTab(ctx, id);
+        }
+      }
+    }
+  } finally {
+    hibernationRunning = false;
+  }
+}
+
+/** Guia hibernada volta com o histórico (voltar/avançar e rolagem da página). */
+function restoreHibernated(contents, history, url) {
+  const current = history.entries[history.index];
+  const { main, isolated } = adblock ? adblock.scriptletsFor(url) : { main: [], isolated: [] };
+  // Site com scriptlets precisa da preparação com about:blank, que impede o restore:
+  // volta só a página atual (mesmo caminho de uma guia nova).
+  if (current?.url !== url || main.length || isolated.length) {
+    void loadWithScriptlets(contents, url);
+    return;
+  }
+  contents.navigationHistory.restore(history).catch(() => {
+    if (!contents.isDestroyed()) void loadWithScriptlets(contents, url);
+  });
+}
+
+function tabSession(tab) {
+  return { tabs: [{ ...tab, id: 1 }], activeId: 1 };
+}
+
+// Certificados inválidos aceitos pelo usuário ("Continuar mesmo assim"): só nesta
+// execução, por host e impressão digital (como no Chrome).
+const allowedCertificates = new Set();
+const lastCertificateError = new Map();
+
+function certificateKey(url, fingerprint) {
+  try {
+    return `${new URL(url).host}|${fingerprint}`;
+  } catch {
+    return null;
+  }
+}
+
+const MAX_SESSION_BYTES = 2 * 1024 * 1024;
+
 function registerIpc() {
-  ipcMain.handle("tab:attach", (_event, { id, url, options }) => {
-    if (views.has(id)) return;
+  ipcMain.handle("tab:attach", (event, { id, url, options }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || ctx.views.has(id)) return;
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true,
@@ -1235,35 +1634,48 @@ function registerIpc() {
       },
     });
     view.setBackgroundColor(options?.dark ? "#0E0E0E" : "#FFFDFD");
-    views.set(id, { view });
-    tabIdByContents.set(view.webContents.id, id);
-    mainWindow.contentView.addChildView(view);
+    view.setBounds(HIDDEN_RECT);
+    ctx.views.set(id, { view, hiddenSince: null });
+    tabOfContents.set(view.webContents.id, { ctx, id });
+    ctx.window.contentView.addChildView(view);
     wirePermissions(view.webContents.session);
-    wireView(id, view);
-    if (isWebUrl(url)) {
-      // O comando CDP sai antes do loadURL (sem esperar: numa aba nova ele só responde
-      // depois da primeira navegação, e já vale para ela).
-      void loadWithScriptlets(view.webContents, url);
+    wireView(view);
+    const history = ctx.hibernated.get(id);
+    ctx.hibernated.delete(id);
+    if (!isWebUrl(url)) return;
+    if (history) {
+      restoreHibernated(view.webContents, history, url);
+      return;
     }
+    // O comando CDP sai antes do loadURL (sem esperar: numa aba nova ele só responde
+    // depois da primeira navegação, e já vale para ela).
+    void loadWithScriptlets(view.webContents, url);
   });
 
-  ipcMain.handle("tab:activate", (_event, { id }) => {
+  ipcMain.handle("tab:activate", (event, { id }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
     // Foto da aba que sai, ainda visível (o seletor do Ctrl+Tab mostra o estado mais recente).
-    if (activeTabId !== id && activeTabId !== null) {
-      void captureThumbnail(activeTabId, { leaving: true });
+    if (ctx.activeTabId !== id && ctx.activeTabId !== null) {
+      const leaving = tabContents(ctx, ctx.activeTabId);
+      if (leaving) void captureThumbnail(leaving, { leaving: true });
     }
-    activeTabId = id;
-    applyLayout();
-    scheduleThumbnail(id, 800);
+    ctx.activeTabId = id;
+    applyLayout(ctx);
+    const contents = tabContents(ctx, id);
+    if (contents) scheduleThumbnail(contents, 800);
   });
 
-  ipcMain.handle("tab:capture", (_event, { id }) => captureThumbnail(id));
+  ipcMain.handle("tab:capture", (event, { id }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    return contents ? captureThumbnail(contents) : undefined;
+  });
 
   // Foto da página visível, em tamanho real: a casca mostra no lugar dela enquanto um
   // painel está aberto (o WebContentsView precisa sair da frente do painel).
-  ipcMain.handle("tab:snapshot", async (_event, { id }) => {
-    const contents = views.get(id)?.view.webContents;
-    if (!contents || contents.isDestroyed() || !isVisible(id)) return null;
+  ipcMain.handle("tab:snapshot", async (event, { id }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || !isVisible(contents)) return null;
     try {
       const image = await contents.capturePage();
       if (image.isEmpty()) return null;
@@ -1273,46 +1685,51 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("tab:bounds", (_event, rect) => {
-    if (fullscreenActive) return;
-    if (rect && rect.width > 0 && rect.height > 0) lastRect = rect;
-    applyLayout();
+  ipcMain.handle("tab:bounds", (event, rect) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || ctx.fullscreenActive) return;
+    if (rect && rect.width > 0 && rect.height > 0) ctx.lastRect = rect;
+    applyLayout(ctx);
   });
 
-  ipcMain.handle("tab:navigate", (_event, { id, url }) => {
-    const entry = views.get(id);
-    if (!entry || !isWebUrl(url)) return;
-    const contents = entry.view.webContents;
+  ipcMain.handle("tab:navigate", (event, { id, url }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || !isWebUrl(url)) return;
     if (contents.getURL() === url) return;
     void loadWithScriptlets(contents, url);
   });
 
-  ipcMain.handle("tab:back", (_event, { id }) => {
-    const entry = views.get(id);
-    if (entry?.view.webContents.navigationHistory.canGoBack())
-      entry.view.webContents.navigationHistory.goBack();
+  ipcMain.handle("tab:back", (event, { id }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (contents?.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
   });
 
-  ipcMain.handle("tab:forward", (_event, { id }) => {
-    const entry = views.get(id);
-    if (entry?.view.webContents.navigationHistory.canGoForward())
-      entry.view.webContents.navigationHistory.goForward();
+  ipcMain.handle("tab:forward", (event, { id }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (contents?.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
   });
 
-  ipcMain.handle("tab:reload", (_event, { id, ignoreCache }) => {
-    const contents = views.get(id)?.view.webContents;
+  ipcMain.handle("tab:reload", (event, { id, ignoreCache }) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, id);
     if (!contents) return;
+    // Página com erro: "Tentar novamente" carrega de novo a URL que falhou.
+    const failure = ctx.failed.get(id);
+    if (failure?.url && isWebUrl(failure.url) && contents.getURL() !== failure.url) {
+      void loadWithScriptlets(contents, failure.url);
+      return;
+    }
     if (ignoreCache) contents.reloadIgnoringCache();
     else contents.reload();
   });
 
-  ipcMain.handle("tab:zoom", (_event, { id, direction }) => {
+  ipcMain.handle("tab:zoom", (event, { id, direction }) => {
     if (![-1, 0, 1].includes(direction)) return;
-    changeZoom(id, direction);
+    changeZoom(tabContents(ctxOfEvent(event), id), direction);
   });
 
-  ipcMain.handle("find:start", (_event, { id, text, forward, newSession }) => {
-    const contents = views.get(id)?.view.webContents;
+  ipcMain.handle("find:start", (event, { id, text, forward, newSession }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || typeof text !== "string" || !text) return;
     // findNext=true abre uma busca nova; false vai para o próximo/anterior resultado.
     contents.findInPage(text.slice(0, 500), {
@@ -1321,15 +1738,80 @@ function registerIpc() {
     });
   });
 
-  ipcMain.handle("find:stop", (_event, { id }) => {
-    const contents = views.get(id)?.view.webContents;
-    if (contents && !contents.isDestroyed()) contents.stopFindInPage("clearSelection");
+  ipcMain.handle("find:stop", (event, { id }) => {
+    tabContents(ctxOfEvent(event), id)?.stopFindInPage("clearSelection");
   });
 
-  ipcMain.handle("window:toggle-fullscreen", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  ipcMain.handle("window:toggle-fullscreen", (event) => {
+    const window = ctxOfEvent(event)?.window;
+    if (window && !window.isDestroyed()) window.setFullScreen(!window.isFullScreen());
+  });
+
+  ipcMain.handle("window:new", (event, options) => {
+    const near = ctxOfEvent(event);
+    const url = typeof options?.url === "string" && isWebUrl(options.url) ? options.url : null;
+    createWindow({
+      near,
+      session: url ? tabSession({ history: [{ title: url, url, kind: "page" }], index: 0 }) : null,
+    });
+  });
+
+  // "Mover para nova janela": o WebContentsView muda de janela sem recarregar a página.
+  ipcMain.handle("tab:move-to-window", (event, { id, tab }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || typeof tab !== "object" || tab === null || !Array.isArray(tab.history)) {
+      return { ok: false };
     }
+    if (JSON.stringify(tab).length > MAX_SESSION_BYTES) return { ok: false };
+    const entry = ctx.views.get(id);
+    const moved = { id: 1, view: entry?.view ?? null, history: ctx.hibernated.get(id) ?? null };
+    if (entry) {
+      ctx.window.contentView.removeChildView(entry.view);
+      ctx.views.delete(id);
+      ctx.crashed.delete(id);
+      ctx.rejected.delete(id);
+      ctx.failed.delete(id);
+      ctx.unresponsive.delete(id);
+    }
+    ctx.hibernated.delete(id);
+    if (ctx.activeTabId === id) ctx.activeTabId = null;
+    applyLayout(ctx);
+    createWindow({ near: ctx, session: tabSession(tab), adopt: moved });
+    return { ok: true };
+  });
+
+  // A casca avisa quais guias existem (depois de recarregar): as outras fecham.
+  ipcMain.handle("tabs:known", (event, { ids }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || !Array.isArray(ids)) return;
+    const known = new Set(ids.filter(Number.isSafeInteger));
+    for (const [id, entry] of [...ctx.views]) if (!known.has(id)) dropView(ctx, id, entry);
+    for (const id of [...ctx.hibernated.keys()]) if (!known.has(id)) ctx.hibernated.delete(id);
+  });
+
+  ipcMain.handle("tab:hibernate", async (event, { id }) => {
+    const ctx = ctxOfEvent(event);
+    return { ok: ctx ? await hibernateTab(ctx, id, { force: true }) : false };
+  });
+
+  // "Encerrar página" (página sem resposta): derruba o processo; a tela de travada assume.
+  ipcMain.handle("tab:kill", (event, { id }) => {
+    tabContents(ctxOfEvent(event), id)?.forcefullyCrashRenderer();
+  });
+
+  ipcMain.handle("certificate:allow", (event, { id }) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    const key = contents ? lastCertificateError.get(contents.id) : null;
+    if (!contents || !key) return { ok: false };
+    allowedCertificates.add(key);
+    contents.reload();
+    return { ok: true };
+  });
+
+  ipcMain.handle("window:startup", () => {
+    if (startupNoticeShown || !startup.unclean) return null;
+    startupNoticeShown = true;
+    return { safe: startup.early, windows: startup.restoredWindows };
   });
 
   // Mudança no escudo vale na hora (o state:save tem debounce).
@@ -1383,32 +1865,28 @@ function registerIpc() {
     return downloads?.list() ?? [];
   });
 
-  ipcMain.handle("tab:close", (_event, { id }) => {
-    const entry = views.get(id);
-    if (!entry) return;
-    crashedViews.delete(id);
-    rejectedLoginViews.delete(id);
-    mainWindow.contentView.removeChildView(entry.view);
-    tabIdByContents.delete(entry.view.webContents.id);
-    clearTimeout(thumbnailTimers.get(id));
-    thumbnailTimers.delete(id);
-    adblock?.forgetTab(id);
-    entry.view.webContents.close();
-    views.delete(id);
-    if (activeTabId === id) activeTabId = null;
+  ipcMain.handle("tab:close", (event, { id }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    ctx.hibernated.delete(id);
+    if (ctx.views.has(id)) dropView(ctx, id);
+    if (ctx.activeTabId === id) ctx.activeTabId = null;
   });
 
-  ipcMain.handle("tab:mute", (_event, { id, muted }) => {
-    views.get(id)?.view.webContents.setAudioMuted(muted);
+  ipcMain.handle("tab:mute", (event, { id, muted }) => {
+    tabContents(ctxOfEvent(event), id)?.setAudioMuted(muted);
   });
 
-  ipcMain.handle("chrome:panel", (_event, { open }) => {
-    panelOpen = Boolean(open);
-    applyLayout();
+  ipcMain.handle("chrome:panel", (event, { open }) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    ctx.panelOpen = Boolean(open);
+    applyLayout(ctx);
   });
 
-  ipcMain.handle("tabmenu:show", (_event, context) => {
-    buildTabContextMenu(context ?? {}).popup({ window: mainWindow });
+  ipcMain.handle("tabmenu:show", (event, context) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) buildTabContextMenu(ctx, context ?? {}).popup({ window: ctx.window });
   });
 
   ipcMain.handle("permission:respond", (_event, { id, allow, remember }) => {
@@ -1418,6 +1896,7 @@ function registerIpc() {
     if (remember) {
       permissions?.remember(pending.origin, pending.types, Boolean(allow), pending.isPrivate);
     }
+    noteMediaGrant(pending.contents, pending.types, Boolean(allow));
     pending.callback(Boolean(allow));
   });
 
@@ -1469,9 +1948,10 @@ function registerIpc() {
     fetchSuggestions((url, init) => net.fetch(url, init), engine, text),
   );
 
-  ipcMain.handle("menu:show", (_event, items) => {
+  ipcMain.handle("menu:show", (event, items) => {
     const template = menuTemplateOf(items);
-    if (!template.length || !mainWindow) return null;
+    const window = ctxOfEvent(event)?.window;
+    if (!template.length || !window) return null;
     return new Promise((resolve) => {
       let chosen = null;
       const attachClicks = (entries) =>
@@ -1483,7 +1963,7 @@ function registerIpc() {
               : entry,
         );
       Menu.buildFromTemplate(attachClicks(template)).popup({
-        window: mainWindow,
+        window,
         // O click chega antes do fechamento; o setTimeout garante a ordem.
         callback: () => setTimeout(() => resolve(chosen), 0),
       });
@@ -1494,23 +1974,41 @@ function registerIpc() {
   ipcMain.handle("update:check", () => updater?.check() ?? null);
   ipcMain.handle("update:install", () => ({ ok: Boolean(updater?.install({ reopen: true })) }));
 
-  ipcMain.handle("state:load", () => {
+  // Seções compartilhadas (preferências, favoritos, atalhos, guias fechadas) vêm do
+  // SQLite; a sessão (guias) é a desta janela.
+  ipcMain.handle("state:load", (event) => {
     if (!database) return { available: false, sections: {} };
     try {
-      return { available: true, sections: database.loadState() };
+      const sections = database.loadState();
+      const windowSession = ctxOfEvent(event)?.session ?? null;
+      if (windowSession) sections.session = windowSession;
+      else delete sections.session;
+      return { available: true, sections };
     } catch {
       return { available: false, sections: {} };
     }
   });
 
-  ipcMain.handle("state:save", (_event, sections) => {
-    // O escudo segue as preferências salvas (liga/desliga e sites pausados).
-    if (sections && typeof sections === "object" && sections.prefs) {
-      applyShieldConfig(sections.prefs);
-    }
+  ipcMain.handle("state:save", (event, sections) => {
+    if (!sections || typeof sections !== "object" || Array.isArray(sections)) return { ok: false };
+    // Escudo e hibernação seguem as preferências salvas.
+    if (sections.prefs) applyPrefs(sections.prefs);
     if (!database) return { ok: false };
+    const ctx = ctxOfEvent(event);
+    const { session: windowSession, ...shared } = sections;
     try {
-      return { ok: database.saveState(sections) };
+      if ("session" in sections) {
+        if (JSON.stringify(windowSession ?? null).length > MAX_SESSION_BYTES) return { ok: false };
+        if (ctx) {
+          ctx.session = windowSession ?? null;
+          windowStore?.update(ctx.key, { session: ctx.session });
+        }
+      }
+      if (!Object.keys(shared).length) return { ok: true };
+      const ok = database.saveState(shared);
+      // As outras janelas passam a ver a mudança (tema, favoritos…).
+      if (ok) broadcast("agzos:state-sync", shared, ctx);
+      return { ok };
     } catch {
       return { ok: false };
     }
@@ -1581,7 +2079,7 @@ function startServices() {
   downloads = createDownloadManager({
     database,
     downloadsDir,
-    emit: (record) => sendToChrome("agzos:download", record),
+    emit: (record) => broadcast("agzos:download", record),
     isPrivateSession: (ses) => ses === privateSession(),
   });
   adblock = createAdblock({
@@ -1589,13 +2087,17 @@ function startServices() {
     database,
     fetchText,
     lists: listsFromEnv(process.env.AGZOS_FILTER_LISTS),
-    emitPage: (id, info) => sendToChrome("agzos:tab-event", { type: "blocked", id, ...info }),
-    emitStats: (stats) => sendToChrome("agzos:adblock-stats", stats),
+    // O adblock conta por webContents.id; a casca conhece o id da guia.
+    emitPage: (contentsId, info) => {
+      const where = tabOfContents.get(contentsId);
+      if (where) send(where.ctx, "agzos:tab-event", { type: "blocked", id: where.id, ...info });
+    },
+    emitStats: (stats) => broadcast("agzos:adblock-stats", stats),
     onEnginesChanged: resetScriptlets,
   });
   try {
-    // O escudo já nasce com a configuração salva, antes da primeira aba carregar.
-    applyShieldConfig(database?.loadState().prefs);
+    // Escudo e hibernação já nascem com a configuração salva, antes da primeira aba.
+    applyPrefs(database?.loadState().prefs);
   } catch {
     // Sem estado salvo: escudo ligado, nenhum site pausado.
   }
@@ -1614,12 +2116,17 @@ function startServices() {
       runner: process.env.AGZOS_UPDATE_INSTALL_DIR ? process.execPath : null,
       workDir: path.join(app.getPath("userData"), "atualizacoes"),
       fetchImpl: (url, init) => net.fetch(url, init),
-      emit: (state) => sendToChrome("agzos:update", state),
+      emit: (state) => broadcast("agzos:update", state),
       quit: () => app.quit(),
       log: (message) => console.log(`Agzos: ${message}`),
     });
     updater.start({ auto: app.isPackaged });
   }
+}
+
+function applyPrefs(prefs) {
+  applyShieldConfig(prefs);
+  hibernateConfig = hibernateConfigOf(prefs, HIBERNATE_OVERRIDE);
 }
 
 function openStateDatabase() {
@@ -1632,19 +2139,62 @@ function openStateDatabase() {
   }
 }
 
+/** Abre as janelas salvas que ainda não estão abertas (início do app, Dock do Mac). */
+function openSavedWindows({ safe = false } = {}) {
+  const open = new Set([...contexts.values()].map((ctx) => ctx.key));
+  const records = (windowStore?.list() ?? []).filter((record) => !open.has(record.key));
+  for (const record of records) {
+    createWindow({ record: safe ? { ...record, session: safeSession(record.session) } : record });
+  }
+  return records.length;
+}
+
 app.whenReady().then(() => {
   if (!isDevelopment) Menu.setApplicationMenu(null);
 
   openStateDatabase();
+  if (database) {
+    windowStore = createWindowStore({ database });
+    const previous = windowStore.beginRun();
+    windowStore.load();
+    startup = { ...previous, restoredWindows: 0 };
+    // Passado um minuto aberto, um crash não é mais "logo ao abrir".
+    setTimeout(
+      () => windowStore?.markStable(),
+      Number(process.env.AGZOS_STABLE_AFTER_MS) || STABLE_AFTER_MS,
+    ).unref();
+  }
   startServices();
   registerIpc();
-  createWindow();
+  // Modo seguro vale só para a restauração do início (não para o Dock do Mac depois).
+  startup.restoredWindows = openSavedWindows({ safe: startup.early });
+  if (!contexts.size) createWindow();
+  startup = { ...startup, early: startup.early && startup.restoredWindows > 0 };
+  setInterval(
+    () => void checkHibernation(),
+    Number(process.env.AGZOS_HIBERNATE_CHECK_MS) || CHECK_INTERVAL_MS,
+  ).unref();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0 && !openSavedWindows()) createWindow();
   });
 });
 
+// Certificado inválido: a página falha com a tela de erro da casca, que oferece continuar.
+app.on("certificate-error", (event, contents, url, error, certificate, callback, isMainFrame) => {
+  const key = certificateKey(url, certificate?.fingerprint);
+  if (key && allowedCertificates.has(key)) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  if (isMainFrame && key && contents && tabOfContents.has(contents.id)) {
+    lastCertificateError.set(contents.id, key);
+  }
+  callback(false);
+});
+
 app.on("before-quit", () => {
+  quitting = true;
   downloads?.cancelAll();
   updater?.stop();
   // Atualização já baixada entra ao fechar (como no Chrome); abre na versão nova.
@@ -1656,6 +2206,12 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
+  // Saída normal: janelas gravadas e o marcador de execução sai.
+  try {
+    windowStore?.endRun();
+  } catch (error) {
+    console.error("Agzos: não foi possível gravar as janelas.", error);
+  }
   adblock?.close();
   database?.close();
   database = null;

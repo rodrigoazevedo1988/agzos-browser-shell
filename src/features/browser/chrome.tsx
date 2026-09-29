@@ -31,9 +31,11 @@ import {
   type DesktopPermissionRequest,
   type NativeMenuItem,
   type SitePermission,
+  type StartupInfo,
   type UpdateState,
 } from "./desktop";
 import { useDesktopSync } from "./desktop-sync";
+import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
 import { defaultHistoryStore } from "./persistence/history-store";
@@ -59,7 +61,8 @@ import { TabSwitcher } from "./ui/tab-switcher";
 import { TabRail, TabStrip } from "./ui/tab-list";
 import type { TabHandlers } from "./ui/tab-item";
 import { Toolbar } from "./ui/toolbar";
-import { Viewport } from "./ui/viewport";
+import { StartupNotice, UnresponsiveBar } from "./ui/notice-bars";
+import { Viewport, type ErrorActions } from "./ui/viewport";
 
 type Panel = "key" | "privacy" | "settings" | "downloads" | "bookmark" | "site";
 
@@ -105,6 +108,9 @@ export function AgzosBrowser() {
   const [editing, setEditing] = useState<{ id: string; added: boolean } | null>(null);
   const [sitePermissions, setSitePermissions] = useState<SitePermission[]>([]);
   const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [startupInfo, setStartupInfo] = useState<StartupInfo | null>(null);
+  // "Esperar" na página sem resposta: a faixa some até ela travar de novo.
+  const [waitingId, setWaitingId] = useState<number | null>(null);
 
   usePersistence(state, dispatch);
 
@@ -405,6 +411,22 @@ export function AgzosBrowser() {
     if (panel === "site" || panel === "settings") void refreshPermissions();
   }, [panel, refreshPermissions]);
 
+  // Fechamento inesperado na execução anterior: aviso na primeira janela restaurada.
+  useEffect(() => {
+    if (!desktop) return;
+    void desktop
+      .windowStartup()
+      .then(setStartupInfo)
+      .catch(() => {});
+  }, [desktop]);
+
+  // Título da janela (barra de tarefas, Alt+Tab) segue a guia ativa, como no Chrome.
+  const windowTitle = current.kind === "home" ? "Nova aba" : current.title;
+  useEffect(() => {
+    if (!desktop) return;
+    document.title = windowTitle ? `${windowTitle} - Agzos Browser` : "Agzos Browser";
+  }, [desktop, windowTitle]);
+
   useEffect(() => {
     if (!desktop) return;
     void desktop
@@ -587,6 +609,8 @@ export function AgzosBrowser() {
         hasClosed: state.closedTabs.length > 0,
         orientation: prefs.orientation,
         url: entryOf(tab).url,
+        tabCount: state.tabs.length,
+        active: tab.id === state.activeId,
       });
       return;
     }
@@ -606,6 +630,36 @@ export function AgzosBrowser() {
     tabMenu.open(event.clientX, event.clientY, buildMenu(STRIP_MENU, ctx, activeTab.id, isMac));
   };
 
+  // Travou de novo depois de "Esperar": a faixa volta.
+  const unresponsiveKey = state.unresponsive.join(",");
+  useEffect(() => {
+    setWaitingId((id) => (id !== null && state.unresponsive.includes(id) ? id : null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unresponsiveKey]);
+
+  const errorActions: ErrorActions = {
+    canBack: nav.canBack,
+    onRetry: (id) => reload(id),
+    onBack: (id) => {
+      flash();
+      void desktop?.goBack(id);
+    },
+    onAllowCertificate: (id) => {
+      flash();
+      void desktop?.allowCertificate(id);
+    },
+    onAllowSite: (id) => {
+      const failure = state.failed[id];
+      const host = failure ? hostOf(failure.url) : null;
+      if (!host || !desktop) return;
+      const pausedHosts = [...prefs.pausedHosts.filter((item) => item !== host), host];
+      dispatch({ type: "prefs/pause-host", host, pause: true });
+      // O escudo muda antes de recarregar (o prefs/set grava com atraso).
+      void desktop.adblockConfig({ shield: prefs.shield, pausedHosts }).then(() => reload(id));
+    },
+    onSearch: (text) => openUrl(engineOf(prefs.engine).search(text), false),
+  };
+
   const tabHandlers: TabHandlers = {
     onActivate: (tab) => dispatch({ type: "tab/activate", id: tab.id }),
     onContextMenu: openTabMenu,
@@ -617,6 +671,7 @@ export function AgzosBrowser() {
     tabs: orderedTabs,
     activeId: state.activeId,
     audioPlaying: state.audioPlaying,
+    hibernated: state.hibernated,
     confirmingClose,
     handlers: tabHandlers,
     onNewTab: () => dispatch({ type: "tab/new" }),
@@ -744,6 +799,20 @@ export function AgzosBrowser() {
           />
         )}
 
+        {state.unresponsive.includes(activeTab.id) &&
+          !state.crashed.includes(activeTab.id) &&
+          waitingId !== activeTab.id && (
+            <UnresponsiveBar
+              onWait={() => setWaitingId(activeTab.id)}
+              onKill={() => {
+                setWaitingId(null);
+                void desktop?.killTab(activeTab.id);
+              }}
+            />
+          )}
+
+        {startupInfo && <StartupNotice info={startupInfo} onClose={() => setStartupInfo(null)} />}
+
         {state.find && state.find.id === activeTab.id && (
           <FindBar
             result={state.find}
@@ -790,6 +859,7 @@ export function AgzosBrowser() {
                   />
                 ) : null
               }
+              errors={errorActions}
               onRecover={(id) => {
                 dispatch({ type: "view/recovered", id });
                 void desktop?.reload(id);
@@ -868,6 +938,15 @@ export function AgzosBrowser() {
             searchSuggestions={prefs.searchSuggestions}
             setSearchSuggestions={(searchSuggestions) => setPrefs({ searchSuggestions })}
             permissions={desktop ? sitePermissions : null}
+            hibernation={
+              desktop
+                ? {
+                    enabled: prefs.hibernate,
+                    minutes: prefs.hibernateMinutes,
+                    onChange: (patch) => setPrefs(patch),
+                  }
+                : null
+            }
             onPermissionChange={(origin, type, value) => {
               if (!desktop) return;
               void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
