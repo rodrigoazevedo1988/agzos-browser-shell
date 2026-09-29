@@ -2823,3 +2823,11 @@ button.download-name:hover {
   flex: 1;
   min-width: 0;
 }
+.settings-update .update-error {
+  color: var(--primary);
+  font-weight: 600;
+}
+.settings-update code {
+  font-size: 10.5px;
+  word-break: break-all;
+}

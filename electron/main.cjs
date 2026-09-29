@@ -1610,6 +1610,8 @@ function startServices() {
       feedUrl: feed || DEFAULT_FEED,
       currentVersion: app.getVersion(),
       installDir: process.env.AGZOS_UPDATE_INSTALL_DIR || null,
+      // Testes: o pacote falso não tem Electron; o instalador roda no Electron atual.
+      runner: process.env.AGZOS_UPDATE_INSTALL_DIR ? process.execPath : null,
       workDir: path.join(app.getPath("userData"), "atualizacoes"),
       fetchImpl: (url, init) => net.fetch(url, init),
       emit: (state) => sendToChrome("agzos:update", state),

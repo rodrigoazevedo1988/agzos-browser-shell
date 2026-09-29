@@ -1,7 +1,8 @@
 // Atualização automática. O release-browser.sh publica um latest.json ao lado dos
 // pacotes; o app baixa o pacote da própria plataforma, confere o SHA-256, extrai numa
-// pasta de trabalho e, ao fechar (ou em "Reiniciar e atualizar"), um script separado
-// espera o app sair, copia a versão nova por cima da instalação e, se pedido, reabre.
+// pasta de trabalho e, ao fechar (ou em "Reiniciar e atualizar"), o instalador
+// (install-update.cjs, rodando no executável da versão nova) espera o app sair, copia a
+// versão nova por cima da instalação e, se pedido, reabre. Log em instalar.log.
 //
 // Sem electron-updater/Squirrel: os pacotes são portáteis (zip, tar.gz, .app) e não
 // assinados; o Squirrel do Mac exige Developer ID.
@@ -92,81 +93,34 @@ function installTarget(execPath, platform, { exists = fs.existsSync } = {}) {
   return { kind: "folder", dir, relaunch: execPath };
 }
 
-const shQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 const psQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
+const INSTALLER = "install-update.cjs";
 
-/** Script que roda depois que o app fecha. `result` recebe "ok <versão>" ou "failed …". */
-function helperScript(platform, { pid, staged, target, relaunch, result, version, reopen }) {
-  if (platform === "win32") {
-    return {
-      name: "instalar-atualizacao.ps1",
-      content: [
-        "$ErrorActionPreference = 'Continue'",
-        `$staged = ${psQuote(staged)}`,
-        `$target = ${psQuote(target)}`,
-        `$result = ${psQuote(result)}`,
-        `try { Wait-Process -Id ${Number(pid)} -Timeout 120 -ErrorAction SilentlyContinue } catch {}`,
-        "Start-Sleep -Milliseconds 700",
-        // Copia por cima (sem /MIR: nada que já estava na pasta é apagado).
-        "robocopy $staged $target /E /R:15 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null",
-        "$code = $LASTEXITCODE",
-        `if ($code -lt 8) { Set-Content -Path $result -Value ${psQuote(`ok ${version}`)}; Remove-Item -Recurse -Force $staged -ErrorAction SilentlyContinue } else { Set-Content -Path $result -Value "failed robocopy $code" }`,
-        reopen ? `Start-Process -FilePath ${psQuote(relaunch)}` : "",
-        "",
-      ].join("\r\n"),
-    };
-  }
-  const wait = [
-    "i=0",
-    `while kill -0 ${Number(pid)} 2>/dev/null; do`,
-    "  i=$((i + 1))",
-    '  if [ "$i" -gt 1200 ]; then echo "failed timeout" > "$RESULT"; exit 1; fi',
-    "  sleep 0.1",
-    "done",
-    "sleep 0.3",
-  ];
-  const head = [
-    "#!/bin/sh",
-    `STAGED=${shQuote(staged)}`,
-    `TARGET=${shQuote(target)}`,
-    `RESULT=${shQuote(result)}`,
-    ...wait,
-  ];
+/**
+ * Executável que roda o instalador: o da versão NOVA já extraída (o da instalação atual
+ * vai ser sobrescrito; no Windows e no Linux um executável em uso não pode ser trocado).
+ * Mac: o executável declarado no Info.plist do .app novo.
+ */
+function installerRunner(
+  platform,
+  staged,
+  execPath,
+  { exists = fs.existsSync, read = fs.readFileSync } = {},
+) {
+  let candidate;
   if (platform === "darwin") {
-    return {
-      name: "instalar-atualizacao.sh",
-      content: [
-        ...head,
-        'BACKUP="$TARGET.agzos-antigo"',
-        'rm -rf "$BACKUP"',
-        'if mv "$TARGET" "$BACKUP" && mv "$STAGED" "$TARGET"; then',
-        '  rm -rf "$BACKUP"',
-        '  xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null',
-        `  echo ${shQuote(`ok ${version}`)} > "$RESULT"`,
-        "else",
-        '  if [ ! -e "$TARGET" ] && [ -d "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi',
-        '  echo "failed mv" > "$RESULT"',
-        "fi",
-        reopen ? 'open "$TARGET"' : "",
-        "",
-      ].join("\n"),
-    };
+    try {
+      const plist = read(path.join(staged, "Contents", "Info.plist"), "utf8");
+      const name = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+      if (name) candidate = path.join(staged, "Contents", "MacOS", name);
+    } catch {
+      candidate = undefined;
+    }
+  } else {
+    const paths = platform === "win32" ? path.win32 : path.posix;
+    candidate = paths.join(staged, paths.basename(execPath));
   }
-  return {
-    name: "instalar-atualizacao.sh",
-    content: [
-      ...head,
-      // Copia por cima (nada que já estava na pasta é apagado).
-      'if cp -a "$STAGED/." "$TARGET/"; then',
-      `  echo ${shQuote(`ok ${version}`)} > "$RESULT"`,
-      '  rm -rf "$STAGED"',
-      "else",
-      '  echo "failed cp" > "$RESULT"',
-      "fi",
-      reopen ? `nohup ${shQuote(relaunch)} >/dev/null 2>&1 &` : "",
-      "",
-    ].join("\n"),
-  };
+  return candidate && exists(candidate) ? candidate : execPath;
 }
 
 function run(command, args) {
@@ -208,13 +162,26 @@ function createUpdater({
   quit = () => {},
   log = () => {},
   pid = process.pid,
+  /** Testes: executável que roda o instalador (padrão: o da versão nova). */
+  runner = null,
+  installerSource = path.join(__dirname, INSTALLER),
 }) {
   const key = platformKey(platform, arch);
   const target = installDir
     ? { kind: "folder", dir: installDir, relaunch: path.join(installDir, path.basename(execPath)) }
     : installTarget(execPath, platform);
   const resultFile = path.join(workDir, "resultado.txt");
-  let state = { status: "idle", currentVersion, version: null, progress: null, error: null };
+  const logFile = path.join(workDir, "instalar.log");
+  let state = {
+    status: "idle",
+    currentVersion,
+    version: null,
+    progress: null,
+    error: null,
+    /** Falha da última instalação: fica visível mesmo depois de baixar de novo. */
+    installError: null,
+    logFile,
+  };
   let staged = null;
   let pending = null;
   let installing = false;
@@ -230,7 +197,8 @@ function createUpdater({
     const previous = fs.readFileSync(resultFile, "utf8").trim();
     fs.rmSync(resultFile, { force: true });
     if (previous.startsWith("failed")) {
-      state.error = "A última atualização não pôde ser instalada. Baixe a versão nova no site.";
+      const reason = previous.slice("failed".length).trim() || "erro desconhecido";
+      state.installError = `A última atualização não foi instalada (${reason}).`;
       log(`update: instalação anterior falhou (${previous})`);
     }
   } catch {
@@ -335,32 +303,53 @@ function createUpdater({
     return state;
   }
 
-  /** Dispara o script de instalação. Com `reopen`, fecha o app e reabre na versão nova. */
+  /**
+   * Dispara o instalador (electron/install-update.cjs) num processo separado, que espera
+   * o app fechar e copia a versão nova. Com `reopen`, fecha o app e reabre na versão nova.
+   */
   function install({ reopen }) {
     if (!staged || !pending || !target || installing) return false;
     installing = true;
-    const script = helperScript(platform, {
-      pid,
-      staged,
-      target: target.dir,
-      relaunch: target.relaunch,
-      result: resultFile,
-      version: pending.version,
-      reopen,
+    fs.mkdirSync(workDir, { recursive: true });
+    // O instalador sai da pasta do app (que vai ser sobrescrita) para a pasta de trabalho.
+    const script = path.join(workDir, INSTALLER);
+    fs.copyFileSync(installerSource, script);
+    const config = path.join(workDir, "instalar.json");
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        pid,
+        staged,
+        target: target.dir,
+        kind: target.kind,
+        relaunch: target.relaunch,
+        reopen,
+        version: pending.version,
+        result: resultFile,
+        log: logFile,
+      }),
+    );
+    try {
+      if (fs.statSync(logFile).size > 256 * 1024) fs.rmSync(logFile, { force: true });
+    } catch {
+      // Sem log anterior.
+    }
+    const command = runner ?? installerRunner(platform, staged, execPath);
+    const child = spawn(command, [script, config], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     });
-    const file = path.join(workDir, script.name);
-    fs.writeFileSync(file, script.content, { mode: 0o755 });
-    const [command, args] =
-      platform === "win32"
-        ? [
-            "powershell.exe",
-            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", file],
-          ]
-        : ["/bin/sh", [file]];
-    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
     child.unref();
-    log(`update: instalando ${pending.version} em ${target.dir}`);
-    if (reopen) quit();
+    log(`update: instalando ${pending.version} em ${target.dir} (${command})`);
+    child.once("error", (error) => {
+      installing = false;
+      log(`update: o instalador não abriu: ${error.message}`);
+      set({ installError: `O instalador não abriu (${error.message}).` });
+    });
+    // Só fecha o app depois que o instalador já está de pé.
+    if (reopen) child.once("spawn", () => quit());
     return true;
   }
 
@@ -390,6 +379,6 @@ module.exports = {
   platformKey,
   parseManifest,
   installTarget,
-  helperScript,
+  installerRunner,
   DEFAULT_FEED,
 };

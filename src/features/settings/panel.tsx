@@ -185,6 +185,11 @@ export function SettingsPanel({
           <div className="key-domain">
             <span>Atualizações · versão {update.currentVersion}</span>
           </div>
+          {update.installError && (
+            <p className="update-error" role="alert">
+              {update.installError} Detalhes em <code>{update.logFile}</code>
+            </p>
+          )}
           <p role="status">{updateText(update)}</p>
           {update.status === "downloading" && (
             <div className="download-progress" role="progressbar" aria-label="Baixando atualização">
