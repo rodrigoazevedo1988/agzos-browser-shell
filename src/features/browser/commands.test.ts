@@ -67,9 +67,9 @@ describe("atalhos", () => {
   });
 
   it.each([
-    ["Tab", {}, "tab.next"],
+    ["Tab", {}, "tab.switch-recent"],
+    ["Tab", { shift: true }, "tab.switch-recent-back"],
     ["PageDown", {}, "tab.next"],
-    ["Tab", { shift: true }, "tab.previous"],
     ["PageUp", {}, "tab.previous"],
     ["1", {}, "tab.select-1"],
     ["8", {}, "tab.select-8"],
@@ -119,7 +119,7 @@ describe("atalhos", () => {
   });
 
   it("rótulos de teclas especiais", () => {
-    const next = commands.find((command) => command.id === "tab.next")!;
+    const next = commands.find((command) => command.id === "tab.switch-recent")!;
     const back = commands.find((command) => command.id === "nav.back")!;
     expect(shortcutLabel(next, false)).toBe("Ctrl+Tab");
     expect(shortcutLabel(back, false)).toBe("Alt+←");
@@ -178,6 +178,7 @@ describe("comandos da 1.5", () => {
     runCommand(ctx, "tab.select-3");
     runCommand(ctx, "tab.select-last");
     runCommand(ctx, "tab.next");
+    runCommand(ctx, "tab.switch-recent");
     runCommand(ctx, "nav.back");
     runCommand(ctx, "page.find");
     runCommand(ctx, "downloads.toggle");
@@ -185,6 +186,7 @@ describe("comandos da 1.5", () => {
       { type: "tab/activate-index", index: 2 },
       { type: "tab/activate-index", index: -1 },
       { type: "tab/activate-relative", delta: 1 },
+      { type: "switcher/step", delta: 1 },
     ]);
     expect(ui.step).toHaveBeenCalledWith(-1);
     expect(ui.openFind).not.toHaveBeenCalled();

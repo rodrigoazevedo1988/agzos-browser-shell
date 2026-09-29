@@ -28,6 +28,8 @@ export type CommandId =
   | "tabs.horizontal"
   | "tab.next"
   | "tab.previous"
+  | "tab.switch-recent"
+  | "tab.switch-recent-back"
   | `tab.select-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`
   | "tab.select-last"
   | "nav.back"
@@ -201,15 +203,29 @@ export const commands: Command[] = [
     run: ({ dispatch }) => dispatch({ type: "prefs/set", patch: { orientation: "horizontal" } }),
   },
   {
+    // Como no Opera/Vivaldi: ordem de uso. Toque rápido volta para a última aba; segurando
+    // o Ctrl abre o seletor com miniaturas, e soltar confirma (switcher/commit).
+    id: "tab.switch-recent",
+    label: "Alternar para a última guia usada",
+    shortcuts: [{ key: "tab" }],
+    run: ({ dispatch }) => dispatch({ type: "switcher/step", delta: 1 }),
+  },
+  {
+    id: "tab.switch-recent-back",
+    label: "Voltar no seletor de guias",
+    shortcuts: [{ key: "tab", shift: true }],
+    run: ({ dispatch }) => dispatch({ type: "switcher/step", delta: -1 }),
+  },
+  {
     id: "tab.next",
     label: "Próxima guia",
-    shortcuts: [{ key: "tab" }, { key: "pagedown" }],
+    shortcuts: [{ key: "pagedown" }],
     run: ({ dispatch }) => dispatch({ type: "tab/activate-relative", delta: 1 }),
   },
   {
     id: "tab.previous",
     label: "Guia anterior",
-    shortcuts: [{ key: "tab", shift: true }, { key: "pageup" }],
+    shortcuts: [{ key: "pageup" }],
     run: ({ dispatch }) => dispatch({ type: "tab/activate-relative", delta: -1 }),
   },
   ...selectCommands,

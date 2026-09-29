@@ -213,23 +213,54 @@ test("migra as chaves da 1.3 no primeiro load", async ({ page }) => {
   expect(keys).toEqual(["agzos-credentials", "agzos-state"]);
 });
 
-test("1.5: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1 e Ctrl+9 trocam de guia", async ({ page }) => {
+test("1.5: Ctrl+Tab alterna pela ordem de uso; Ctrl+PgDn/1/9 pela barra", async ({ page }) => {
   await go(page, "github.com");
   await page.keyboard.press("Control+t");
   await go(page, "linear.app");
   await page.keyboard.press("Control+t");
   const active = page.locator(".tabs .browser-tab.active");
   await expect(active).toContainText("Nova aba");
+  // Toque rápido: volta para a última usada (linear), e de novo para a nova aba.
   await page.keyboard.press("Control+Tab");
-  await expect(active).toContainText("github.com");
-  await page.keyboard.press("Control+Shift+Tab");
+  await expect(active).toContainText("linear.app");
+  await page.keyboard.press("Control+Tab");
   await expect(active).toContainText("Nova aba");
+  await page.keyboard.press("Control+PageDown");
+  await expect(active).toContainText("github.com");
   await page.keyboard.press("Control+2");
   await expect(active).toContainText("linear.app");
   await page.keyboard.press("Control+9");
   await expect(active).toContainText("Nova aba");
   await page.keyboard.press("Control+1");
   await expect(active).toContainText("github.com");
+});
+
+test("1.5: segurando o Ctrl, o seletor mostra as abas e soltar confirma", async ({ page }) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  await page.keyboard.press("Control+t");
+  await go(page, "figma.com");
+  await page.keyboard.down("Control");
+  await page.keyboard.press("Tab");
+  const switcher = page.getByRole("listbox", { name: "Alternar guias" });
+  await expect(switcher).toBeVisible();
+  await expect(switcher.getByRole("option")).toHaveCount(3);
+  await expect(switcher.getByRole("option", { selected: true })).toContainText("linear.app");
+  await page.keyboard.press("Tab");
+  await expect(switcher.getByRole("option", { selected: true })).toContainText("github.com");
+  await page.keyboard.up("Control");
+  await expect(switcher).toHaveCount(0);
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("github.com");
+
+  // Esc cancela e fica na aba atual.
+  await page.keyboard.down("Control");
+  await page.keyboard.press("Tab");
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.up("Control");
+  await expect(switcher).toHaveCount(0);
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("github.com");
 });
 
 test("1.5: Ctrl+D favorita, Alt+← volta", async ({ page }) => {

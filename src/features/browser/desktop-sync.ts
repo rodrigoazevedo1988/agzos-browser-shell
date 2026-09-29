@@ -76,6 +76,9 @@ export function useDesktopSync({
           case "find":
             dispatch({ type: "view/find", id: event.id, active: event.active, total: event.total });
             return;
+          case "thumbnail":
+            dispatch({ type: "view/thumbnail", id: event.id, dataUrl: event.dataUrl });
+            return;
           case "download-navigation":
             dispatch({ type: "view/download-navigation", id: event.id, urls: event.urls });
             return;
@@ -99,6 +102,7 @@ export function useDesktopSync({
       desktop.onTabMenuAction(({ action, tabId }) => runCommandRef.current(action, tabId)),
       desktop.onRequestPermission((request) => permissionRef.current(request)),
       desktop.onDownload((record) => dispatch({ type: "downloads/upsert", record })),
+      desktop.onModifierUp(() => dispatch({ type: "switcher/commit" })),
       desktop.onAdblockStats((stats) => dispatch({ type: "adblock/stats", stats })),
     ];
     // Estado inicial do que vive no main (downloads salvos, estatística do dia).
@@ -106,6 +110,14 @@ export function useDesktopSync({
     void desktop.adblockStats().then((stats) => dispatch({ type: "adblock/stats", stats }));
     return () => offs.forEach((off) => off());
   }, [desktop, dispatch, runCommandRef, runHotkeyRef]);
+
+  // Seletor do Ctrl+Tab abriu: miniatura fresca da aba atual antes de a esconder.
+  const switcherOpen = state.switcher !== null;
+  const activeRef = useRef(state.activeId);
+  activeRef.current = state.activeId;
+  useEffect(() => {
+    if (desktop && switcherOpen) void desktop.captureTab(activeRef.current);
+  }, [desktop, switcherOpen]);
 
   const { shield, pausedHosts } = state.prefs;
   useEffect(() => {

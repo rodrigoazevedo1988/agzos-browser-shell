@@ -17,6 +17,7 @@ export type DesktopTabEvent =
   | { type: "find"; id: number; active: number; total: number }
   | { type: "zoom"; id: number; factor: number }
   | { type: "download-navigation"; id: number; urls: string[] }
+  | { type: "thumbnail"; id: number; dataUrl: string }
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null };
 
 export type BlockedTracker = { host: string; category: string };
@@ -82,6 +83,8 @@ export type DesktopBridge = {
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;
   reload(id: number, ignoreCache?: boolean): Promise<void>;
+  /** Tira a miniatura da aba visível (seletor do Ctrl+Tab). */
+  captureTab(id: number): Promise<void>;
   /** 1 aumenta, -1 diminui, 0 volta a 100 %. */
   zoom(id: number, direction: -1 | 0 | 1): Promise<void>;
   findStart(
@@ -125,6 +128,8 @@ export type DesktopBridge = {
   ): () => void;
   onRequestPermission(callback: (payload: DesktopPermissionRequest) => void): () => void;
   onDownload(callback: (record: DownloadRecord) => void): () => void;
+  /** Ctrl/⌘ solto (inclusive com o foco na página). */
+  onModifierUp(callback: (payload: { key: string }) => void): () => void;
   onAdblockStats(callback: (stats: AdblockStats) => void): () => void;
 };
 

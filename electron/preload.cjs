@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   goBack: (id) => ipcRenderer.invoke("tab:back", { id }),
   goForward: (id) => ipcRenderer.invoke("tab:forward", { id }),
   reload: (id, ignoreCache = false) => ipcRenderer.invoke("tab:reload", { id, ignoreCache }),
+  captureTab: (id) => ipcRenderer.invoke("tab:capture", { id }),
   zoom: (id, direction) => ipcRenderer.invoke("tab:zoom", { id, direction }),
   findStart: (id, text, options) =>
     ipcRenderer.invoke("find:start", {
@@ -50,5 +51,6 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onTabMenuAction: subscribe("agzos:tabmenu-action"),
   onRequestPermission: subscribe("agzos:permission-request"),
   onDownload: subscribe("agzos:download"),
+  onModifierUp: subscribe("agzos:modifier-up"),
   onAdblockStats: subscribe("agzos:adblock-stats"),
 });

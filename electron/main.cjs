@@ -678,6 +678,11 @@ function forwardAppShortcut(input, event) {
 
 function wireShortcuts(contents, { page = false } = {}) {
   contents.on("before-input-event", (event, input) => {
+    // Soltar o Ctrl/⌘ confirma o seletor do Ctrl+Tab, onde quer que esteja o foco.
+    if (input.type === "keyUp" && (input.key === "Control" || input.key === "Meta")) {
+      sendToChrome("agzos:modifier-up", { key: input.key });
+      return;
+    }
     if (input.type !== "keyDown") return;
     // Esc com foco na página para o carregamento (e segue para a página, como no Chrome).
     if (page && input.key === "Escape" && contents.isLoading()) contents.stop();
@@ -726,6 +731,49 @@ async function applyCosmetics(contents, base) {
   if (contents.isDestroyed() || contents.getURL() !== url) return;
   const css = adblock.cosmeticCss(url, dom, { base });
   if (css) void contents.insertCSS(css, { cssOrigin: "user" }).catch(() => {});
+}
+
+// Miniaturas para o seletor do Ctrl+Tab: tiradas da aba visível (depois de carregar, logo
+// depois de ativar e quando o seletor abre), nunca no meio da troca de aba.
+const THUMBNAIL_WIDTH = 360;
+const thumbnailTimers = new Map();
+
+function isVisible(id) {
+  return (
+    id === activeTabId &&
+    !panelOpen &&
+    !fullscreenActive &&
+    !crashedViews.has(id) &&
+    !rejectedLoginViews.has(id) &&
+    lastRect !== null
+  );
+}
+
+/** `leaving`: a aba está saindo de cena; o pedido sai antes de ela ser escondida. */
+async function captureThumbnail(id, { leaving = false } = {}) {
+  const contents = views.get(id)?.view.webContents;
+  if (!contents || contents.isDestroyed() || !isVisible(id)) return;
+  if (!/^https?:\/\//.test(contents.getURL())) return;
+  try {
+    const image = await contents.capturePage();
+    if (image.isEmpty() || (!leaving && !isVisible(id))) return;
+    const small = image.resize({ width: THUMBNAIL_WIDTH, quality: "good" });
+    const dataUrl = `data:image/jpeg;base64,${small.toJPEG(72).toString("base64")}`;
+    sendToChrome("agzos:tab-event", { type: "thumbnail", id, dataUrl });
+  } catch {
+    // Aba fechada ou processo reiniciado no meio: fica a miniatura anterior.
+  }
+}
+
+function scheduleThumbnail(id, delay) {
+  clearTimeout(thumbnailTimers.get(id));
+  thumbnailTimers.set(
+    id,
+    setTimeout(() => {
+      thumbnailTimers.delete(id);
+      void captureThumbnail(id);
+    }, delay),
+  );
 }
 
 function privateSession() {
@@ -793,6 +841,7 @@ function wireView(id, view) {
   });
   contents.on("zoom-changed", (_event, direction) => changeZoom(id, direction === "in" ? 1 : -1));
   contents.on("did-navigate", () => applyStoredZoom(id, contents));
+  contents.on("did-stop-loading", () => scheduleThumbnail(id, 600));
   contents.on("did-navigate", () => notifyTabState(id));
   contents.on("did-navigate-in-page", () => notifyTabState(id));
   contents.on("page-title-updated", () => notifyTabState(id));
@@ -908,9 +957,16 @@ function registerIpc() {
   });
 
   ipcMain.handle("tab:activate", (_event, { id }) => {
+    // Foto da aba que sai, ainda visível (o seletor do Ctrl+Tab mostra o estado mais recente).
+    if (activeTabId !== id && activeTabId !== null) {
+      void captureThumbnail(activeTabId, { leaving: true });
+    }
     activeTabId = id;
     applyLayout();
+    scheduleThumbnail(id, 800);
   });
+
+  ipcMain.handle("tab:capture", (_event, { id }) => captureThumbnail(id));
 
   ipcMain.handle("tab:bounds", (_event, rect) => {
     if (fullscreenActive) return;
@@ -1029,6 +1085,8 @@ function registerIpc() {
     rejectedLoginViews.delete(id);
     mainWindow.contentView.removeChildView(entry.view);
     tabIdByContents.delete(entry.view.webContents.id);
+    clearTimeout(thumbnailTimers.get(id));
+    thumbnailTimers.delete(id);
     adblock?.forgetTab(id);
     entry.view.webContents.close();
     views.delete(id);

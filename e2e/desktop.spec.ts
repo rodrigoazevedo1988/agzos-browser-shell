@@ -491,7 +491,9 @@ test("atalhos com o foco na página: Ctrl+Tab, Ctrl+1/9, Alt+←, Ctrl+T", async
     await go(window, `${origin}/tres`);
     await expect(tabs(window).last()).toContainText("Página TRES");
 
+    // Ctrl+Tab: ordem de uso (volta para a UM), confirmado ao soltar o Ctrl.
     await keyInTab(app, `${origin}/tres`, "Tab", ["control"]);
+    await keyInTab(app, `${origin}/tres`, "Control");
     await expect(window.locator(".browser-tab.active")).toContainText("Página UM");
     await keyInTab(app, `${origin}/um`, "9", ["control"]);
     await expect(window.locator(".browser-tab.active")).toContainText("Página TRES");
@@ -520,5 +522,34 @@ test("fechar o app com download em andamento não trava e o registra como cancel
     await expect(panel.locator('[data-state="cancelled"]')).toContainText("Cancelado");
   } finally {
     await second.app.close();
+  }
+});
+
+test("seletor do Ctrl+Tab com miniaturas das páginas, confirmado ao soltar o Ctrl", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/um`);
+    await expect(tabs(window).first()).toContainText("Página UM");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/dois`);
+    await expect(tabs(window).last()).toContainText("Página DOIS");
+    // Ctrl pressionado + Tab, sem soltar: o seletor aparece por cima da página.
+    await app.evaluate(({ webContents }, target) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      contents.focus();
+      contents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["control"] });
+    }, `${origin}/dois`);
+    const switcher = window.getByRole("listbox", { name: "Alternar guias" });
+    await expect(switcher).toBeVisible();
+    const options = switcher.getByRole("option");
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+    // As duas abas já estiveram visíveis: as duas têm miniatura de verdade.
+    await expect(switcher.locator(".switcher-preview > img")).toHaveCount(2, { timeout: 10_000 });
+    await window.keyboard.up("Control");
+    await expect(switcher).toHaveCount(0);
+    await expect(window.locator(".browser-tab.active")).toContainText("Página UM");
+  } finally {
+    await app.close();
   }
 });

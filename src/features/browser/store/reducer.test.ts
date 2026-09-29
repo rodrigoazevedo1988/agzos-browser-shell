@@ -396,3 +396,66 @@ describe("navegação que vira download", () => {
     ).toBe(state);
   });
 });
+
+describe("Ctrl+Tab em ordem de uso (seletor)", () => {
+  // Abas a, b, c, d; uso: d (atual) → b → c → a.
+  function used() {
+    let state = withPages("a", "b", "c", "d");
+    for (const id of [1, 3, 2, 4]) state = browserReducer(state, { type: "tab/activate", id });
+    return state;
+  }
+
+  it("guarda a ordem de uso, a mais recente primeiro", () => {
+    expect(used().recent).toEqual([4, 2, 3, 1]);
+  });
+
+  it("toque rápido (step + commit) volta para a última aba usada", () => {
+    let state = used();
+    state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    expect(state.switcher).toEqual({ ids: [4, 2, 3, 1], index: 1 });
+    state = browserReducer(state, { type: "switcher/commit" });
+    expect(activeTitle(state)).toBe("b");
+    expect(state.switcher).toBeNull();
+    // De novo: volta para a "d" (alterna entre as duas últimas, como no Opera).
+    state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    state = browserReducer(state, { type: "switcher/commit" });
+    expect(activeTitle(state)).toBe("d");
+  });
+
+  it("segurando o Ctrl, Tab anda (dando a volta) e Shift+Tab volta", () => {
+    let state = used();
+    for (let i = 0; i < 3; i++) state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    expect(state.switcher?.index).toBe(3);
+    state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    expect(state.switcher?.index).toBe(0);
+    state = browserReducer(state, { type: "switcher/step", delta: -1 });
+    state = browserReducer(state, { type: "switcher/commit" });
+    expect(activeTitle(state)).toBe("a");
+  });
+
+  it("Ctrl+Shift+Tab abre já na aba usada há mais tempo; Esc cancela", () => {
+    let state = used();
+    state = browserReducer(state, { type: "switcher/step", delta: -1 });
+    expect(state.switcher?.index).toBe(3);
+    state = browserReducer(state, { type: "switcher/cancel" });
+    expect(state.switcher).toBeNull();
+    expect(activeTitle(state)).toBe("d");
+  });
+
+  it("clique escolhe direto; aba fechada sai do histórico de uso e fecha o seletor", () => {
+    let state = used();
+    state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    expect(activeTitle(browserReducer(state, { type: "switcher/commit", index: 2 }))).toBe("c");
+    state = browserReducer(state, { type: "tab/close", id: 2 });
+    expect(state.switcher).toBeNull();
+    expect(state.recent).toEqual([4, 3, 1]);
+  });
+
+  it("abas nunca ativadas entram no fim; com uma aba só não abre", () => {
+    let state = withPages("a", "b");
+    state = browserReducer(state, { type: "hydrate", payload: null });
+    expect(browserReducer(run(), { type: "switcher/step", delta: 1 }).switcher).toBeNull();
+    state = browserReducer(state, { type: "switcher/step", delta: 1 });
+    expect(state.switcher?.ids).toEqual([2, 1]);
+  });
+});

@@ -70,7 +70,14 @@ export type BrowserAction =
   | { type: "find/clear" }
   | { type: "downloads/set"; list: DownloadRecord[] }
   | { type: "downloads/upsert"; record: DownloadRecord }
-  | { type: "adblock/stats"; stats: AdblockStats };
+  | { type: "adblock/stats"; stats: AdblockStats }
+  /** Ctrl+Tab / Ctrl+Shift+Tab: abre o seletor (ordem de uso) ou anda nele. */
+  | { type: "switcher/step"; delta: 1 | -1 }
+  | { type: "switcher/select"; index: number }
+  /** Soltou o Ctrl (ou clicou): ativa a aba selecionada. */
+  | { type: "switcher/commit"; index?: number }
+  | { type: "switcher/cancel" }
+  | { type: "view/thumbnail"; id: number; dataUrl: string };
 
 function homeTab(id: number, isPrivate?: boolean): Tab {
   return isPrivate
@@ -102,7 +109,26 @@ function rememberClosed(closed: ClosedTab[], tabs: Tab[]): ClosedTab[] {
 }
 
 function activate(state: BrowserState, tab: Tab): BrowserState {
-  return { ...state, activeId: tab.id, address: entryOf(tab).url, viewNav: null, find: null };
+  const recent =
+    state.recent[0] === tab.id ? state.recent : [tab.id, ...withoutId(state.recent, tab.id)];
+  return {
+    ...state,
+    activeId: tab.id,
+    address: entryOf(tab).url,
+    viewNav: null,
+    find: null,
+    recent,
+  };
+}
+
+/** Abas na ordem do Ctrl+Tab: usadas mais recentemente primeiro, depois as nunca vistas. */
+export function recentOrder(state: BrowserState): number[] {
+  const alive = new Set(state.tabs.map((tab) => tab.id));
+  const seen = state.recent.filter((id) => alive.has(id));
+  const rest = orderTabs(state.tabs)
+    .map((tab) => tab.id)
+    .filter((id) => !seen.includes(id));
+  return [...seen, ...rest];
 }
 
 function insertAfter(tabs: Tab[], id: number, tab: Tab): Tab[] {
@@ -133,6 +159,9 @@ function removeTabs(state: BrowserState, doomed: Tab[], fallbackId?: number): Br
     crashed: state.crashed.filter((id) => !ids.has(id)),
     blocked: withoutKeys(state.blocked, ids),
     zoom: withoutKeys(state.zoom, ids),
+    thumbnails: withoutKeys(state.thumbnails, ids),
+    recent: state.recent.filter((id) => !ids.has(id)),
+    switcher: null,
   };
 
   if (!remaining.length) {
@@ -178,6 +207,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         nextId,
         activeId: active.id,
         address: entryOf(active).url,
+        recent: [active.id],
       };
     }
 
@@ -290,6 +320,9 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         audioPlaying: [],
         loginRejected: {},
         requestedUrl: null,
+        recent: [tab.id],
+        switcher: null,
+        thumbnails: {},
       };
     }
 
@@ -487,6 +520,37 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
 
     case "adblock/stats":
       return { ...state, adblock: action.stats };
+
+    case "switcher/step": {
+      if (!state.switcher) {
+        const ids = recentOrder(state);
+        if (ids.length < 2) return state;
+        // A 1ª posição é a aba atual: Ctrl+Tab começa na anterior usada.
+        return { ...state, switcher: { ids, index: action.delta > 0 ? 1 : ids.length - 1 } };
+      }
+      const { ids, index } = state.switcher;
+      const next = (index + action.delta + ids.length) % ids.length;
+      return { ...state, switcher: { ids, index: next } };
+    }
+
+    case "switcher/select":
+      if (!state.switcher || !state.switcher.ids[action.index]) return state;
+      return { ...state, switcher: { ...state.switcher, index: action.index } };
+
+    case "switcher/commit": {
+      if (!state.switcher) return state;
+      const id = state.switcher.ids[action.index ?? state.switcher.index];
+      const closed = { ...state, switcher: null };
+      const tab = state.tabs.find((item) => item.id === id);
+      return tab && tab.id !== state.activeId ? activate(closed, tab) : closed;
+    }
+
+    case "switcher/cancel":
+      return state.switcher ? { ...state, switcher: null } : state;
+
+    case "view/thumbnail":
+      if (!state.tabs.some((tab) => tab.id === action.id)) return state;
+      return { ...state, thumbnails: { ...state.thumbnails, [action.id]: action.dataUrl } };
   }
 }
 

@@ -60,6 +60,12 @@ export type BrowserState = {
   find: FindResult | null;
   downloads: DownloadRecord[];
   adblock: AdblockStats | null;
+  /** Abas em ordem de uso, a mais recente primeiro (Ctrl+Tab). */
+  recent: number[];
+  /** Seletor do Ctrl+Tab aberto: abas em ordem de uso e a selecionada. */
+  switcher: { ids: number[]; index: number } | null;
+  /** Miniatura (data URL) da última vez que cada aba esteve visível (desktop). */
+  thumbnails: Record<number, string>;
 };
 
 export const initialState: BrowserState = {
@@ -82,4 +88,7 @@ export const initialState: BrowserState = {
   find: null,
   downloads: [],
   adblock: null,
+  recent: [1],
+  switcher: null,
+  thumbnails: {},
 };

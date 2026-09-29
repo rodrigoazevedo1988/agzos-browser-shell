@@ -33,6 +33,7 @@ import { ContextMenu, useContextMenu } from "./tab-menu";
 import type { Tab } from "./types";
 import { FindBar } from "./ui/find-bar";
 import { PermissionBar } from "./ui/permission-bar";
+import { TabSwitcher } from "./ui/tab-switcher";
 import { TabRail, TabStrip } from "./ui/tab-list";
 import type { TabHandlers } from "./ui/tab-item";
 import { Toolbar } from "./ui/toolbar";
@@ -71,6 +72,8 @@ export function AgzosBrowser() {
   const [confirmingClose, setConfirmingClose] = useState<number | null>(null);
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
   const [findFocus, setFindFocus] = useState(0);
+  // O seletor só aparece se o Ctrl continuar pressionado: toque rápido troca sem piscar.
+  const [switcherVisible, setSwitcherVisible] = useState(false);
   const [credentials, setCredentials] = useCredentials(desktop);
   const omniboxRef = useRef<HTMLInputElement | null>(null);
   const tabMenu = useContextMenu();
@@ -187,11 +190,44 @@ export function AgzosBrowser() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const switcherOpen = state.switcher !== null;
+  useEffect(() => {
+    if (!switcherOpen) {
+      setSwitcherVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSwitcherVisible(true), 140);
+    const commit = () => dispatch({ type: "switcher/commit" });
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Control" || event.key === "Meta") commit();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dispatch({ type: "switcher/cancel" });
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        commit();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keydown", onKeyDown);
+    // Perdeu o foco com o Ctrl ainda apertado (ex.: Alt+Tab do sistema): confirma.
+    window.addEventListener("blur", commit);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", commit);
+    };
+  }, [switcherOpen]);
+
   useDesktopSync({
     desktop,
     state,
     dispatch,
-    panelOpen: panel !== null,
+    // O WebContentsView fica por cima da casca: sai da frente com painel ou seletor aberto.
+    panelOpen: panel !== null || switcherVisible,
     runCommandRef,
     runHotkeyRef,
     onPermission: setPermission,
@@ -479,6 +515,16 @@ export function AgzosBrowser() {
             void desktop?.respondPermission(permission.id, allow, remember);
             setPermission(null);
           }}
+        />
+      )}
+      {state.switcher && switcherVisible && (
+        <TabSwitcher
+          tabs={state.switcher.ids.flatMap((id) => state.tabs.filter((tab) => tab.id === id))}
+          index={state.switcher.index}
+          thumbnails={state.thumbnails}
+          onSelect={(index) => dispatch({ type: "switcher/select", index })}
+          onCommit={(index) => dispatch({ type: "switcher/commit", index })}
+          onCancel={() => dispatch({ type: "switcher/cancel" })}
         />
       )}
       {tabMenu.menu && (
