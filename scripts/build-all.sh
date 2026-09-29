@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="1.4.1"
+VERSION="1.4.2"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
 ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs)
@@ -123,4 +123,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Ícone e nome Agzos no sistema, permissões em faixa e atalhos no Windows."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Atualização automática corrigida no Windows."
