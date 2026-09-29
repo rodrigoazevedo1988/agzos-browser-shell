@@ -5,6 +5,8 @@ VERSION="1.4.0"
 # Arquivos do processo principal que vão para resources/app/electron.
 ELECTRON_FILES=(main.cjs preload.cjs db.cjs)
 
+command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
+
 cd /var/www/agzos-browser
 sed -i -E "s/\"version\": \"[0-9.]+\"/\"version\": \"$VERSION\"/" package.json
 bun run desktop:build
@@ -81,7 +83,13 @@ PY
   printf '%s\n' "$APPJSON" > "$APP/Contents/Resources/app/package.json"
   rm -f "$APP/Contents/Resources/default_app.asar"
   (cd "$APP/Contents/Resources" && ls -d *.lproj | grep -v -E '^(en|pt-BR)\.lproj$' | xargs rm -rf)
-  
+
+  # O Electron vem só "linker-signed", sem selo do bundle; depois de mexer no
+  # Info.plist e em Resources, o Gatekeeper do Apple Silicon acusa "danificado".
+  # Assinatura ad-hoc (rcodesign) sela o bundle inteiro, helpers incluídos.
+  rcodesign sign "$APP" >/dev/null 2>&1
+  [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || { echo "Falha ao assinar $APP" >&2; exit 1; }
+
   (cd mac-$arch && zip -qry9 "$ARTIFACTS/Agnos-Browser-mac-$arch.app.zip" "Agzos Browser.app")
   
   rm -rf dmgstage-$arch && mkdir dmgstage-$arch

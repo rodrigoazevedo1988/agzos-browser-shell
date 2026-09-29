@@ -125,7 +125,7 @@ if [[ -n "$NEWEST" ]]; then render_version "$NEWEST" "Versão atual (${NEWEST#v}
 if [[ -n "$PREVIOUS" ]]; then render_version "$PREVIOUS" "Versão anterior (${PREVIOUS#v})"; fi
 cat <<'FOOT'
   <p class="note">
-    Builds não assinados (sem notarização). <strong>Windows</strong>: o SmartScreen pode avisar — "Mais informações" → "Executar assim mesmo". <strong>macOS</strong>: na primeira abertura, clique com o botão direito no app → "Abrir", ou execute <code>xattr -cr "/Applications/Agzos Browser.app"</code>. <strong>Linux</strong>: garanta permissão de execução com <code>chmod +x agzos-browser</code> se necessário.<br><br>
+    Builds não assinados (sem notarização). <strong>Windows</strong>: o SmartScreen pode avisar — "Mais informações" → "Executar assim mesmo". <strong>macOS</strong>: se aparecer "não pode ser aberto", vá em Ajustes do Sistema → Privacidade e Segurança → "Abrir Mesmo Assim", ou execute <code>xattr -cr "/Applications/Agzos Browser.app"</code>. <strong>Linux</strong>: garanta permissão de execução com <code>chmod +x agzos-browser</code> se necessário.<br><br>
     Verificação de integridade: use o <code>SHA256SUMS.txt</code> de cada versão, linkado ao lado do título. Suas abas e preferências ficam apenas no seu dispositivo (localStorage); credenciais do Agzos Key ficam criptografadas (safeStorage).
   </p>
 </main>
