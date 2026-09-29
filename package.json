@@ -1,6 +1,6 @@
 {
   "name": "tanstack_start_ts",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
