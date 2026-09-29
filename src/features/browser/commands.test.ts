@@ -36,6 +36,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     toggleDownloads: vi.fn(),
     bookmarkPage: vi.fn(),
     bookmarkAllTabs: vi.fn(),
+    pictureInPicture: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

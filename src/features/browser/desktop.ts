@@ -49,6 +49,7 @@ export type DesktopTabEvent =
   /** O main fechou o WebContentsView da guia (hibernação). */
   | { type: "hibernated"; id: number }
   | { type: "unresponsive"; id: number; value: boolean }
+  | { type: "pip"; id: number; active: boolean }
   | { type: "blocked"; id: number; count: number; trackers: BlockedTracker[] }
   | { type: "find"; id: number; active: number; total: number }
   | { type: "zoom"; id: number; factor: number }
@@ -194,12 +195,17 @@ export type DesktopBridge = {
   /** Guias que a casca conhece: o main fecha as outras (casca recarregada). */
   syncTabs(ids: number[]): Promise<void>;
   hibernateTab(id: number): Promise<{ ok: boolean }>;
+  /** Liga/desliga o picture-in-picture do vídeo da guia (qualquer player). */
+  pictureInPicture(id: number): Promise<{ ok: boolean; active: boolean; reason?: string }>;
   /** Encerra a página que não responde. */
   killTab(id: number): Promise<void>;
   /** "Continuar mesmo assim" num certificado inválido (só nesta execução). */
   allowCertificate(id: number): Promise<{ ok: boolean }>;
   /** Aviso de restauração depois de um fechamento inesperado (só a 1ª janela recebe). */
   windowStartup(): Promise<StartupInfo | null>;
+  /** Primeiro início depois de uma atualização (só a primeira janela recebe). */
+  whatsNew(): Promise<{ from: string | null; to: string } | null>;
+  appVersion(): Promise<string>;
   /** Outra janela gravou seções compartilhadas (preferências, favoritos…). */
   onStateSync(callback: (sections: Record<string, unknown>) => void): () => void;
   updateState(): Promise<UpdateState | null>;

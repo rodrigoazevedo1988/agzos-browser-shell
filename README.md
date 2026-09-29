@@ -45,6 +45,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
   "Agzos Browser" no Windows/Mac, barra de permissão e atalhos no Windows.
 - [PRD v1.7 — Janelas e sessão](docs/prd/v1.7-janelas-e-sessao.md): várias janelas,
   sessão restaurada após crash (com modo seguro), telas de erro e hibernação de guias.
+- [PRD v1.7.1 — Novidades, PiP e guias](docs/prd/v1.7.1-novidades-pip-guias.md): aviso de
+  atualização com as novidades, picture-in-picture em qualquer player e guias arrastáveis.
 - Build e publicação de todas as plataformas: `bash scripts/build-all.sh`.
 
 ## Testes

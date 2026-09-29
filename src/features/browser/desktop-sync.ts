@@ -68,6 +68,9 @@ export function useDesktopSync({
           case "hibernated":
             dispatch({ type: "view/hibernated", id: event.id });
             return;
+          case "pip":
+            dispatch({ type: "view/pip", id: event.id, active: event.active });
+            return;
           case "unresponsive":
             dispatch({ type: "view/unresponsive", id: event.id, value: event.value });
             return;

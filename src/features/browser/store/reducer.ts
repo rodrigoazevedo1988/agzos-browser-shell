@@ -52,6 +52,13 @@ export type BrowserAction =
   | { type: "tab/close-side"; id: number; direction: 1 | -1 }
   | { type: "tab/duplicate"; id: number }
   | { type: "tab/toggle-pin"; id: number }
+  /**
+   * Arrasta a guia para `index` da ordem exibida (contada sem ela). Fixadas ficam entre as
+   * fixadas e as outras depois delas, como no Chrome.
+   */
+  | { type: "tab/move"; id: number; index: number }
+  /** Uma posição para trás (-1) ou para frente (1) na ordem exibida (Ctrl+Shift+PgUp/PgDn). */
+  | { type: "tab/move-relative"; id: number; delta: 1 | -1 }
   | { type: "tab/toggle-mute"; id: number }
   | { type: "tab/reopen-closed" }
   | { type: "tabs/reset" }
@@ -88,6 +95,7 @@ export type BrowserAction =
   | { type: "view/load-failed"; id: number; failure: LoadFailure | null }
   | { type: "view/hibernated"; id: number }
   | { type: "view/unresponsive"; id: number; value: boolean }
+  | { type: "view/pip"; id: number; active: boolean }
   | { type: "view/recovered"; id: number }
   | { type: "view/login-rejected"; id: number; continueUrl: string | null }
   | { type: "fullscreen/set"; active: boolean }
@@ -175,6 +183,22 @@ function insertAfter(tabs: Tab[], id: number, tab: Tab): Tab[] {
   return [...tabs.slice(0, at + 1), tab, ...tabs.slice(at + 1)];
 }
 
+/** Nova ordem das guias com `id` na posição `index` (dentro do grupo dela). */
+export function moveTab(tabs: Tab[], id: number, index: number): Tab[] {
+  const display = orderTabs(tabs);
+  const tab = display.find((item) => item.id === id);
+  if (!tab) return tabs;
+  const others = display.filter((item) => item.id !== id);
+  const pinned = others.filter((item) => item.pinned).length;
+  const [min, max] = tab.pinned ? [0, pinned] : [pinned, others.length];
+  const target = Math.min(Math.max(Math.round(index), min), max);
+  const next = [...others.slice(0, target), tab, ...others.slice(target)];
+  return next.every((item, position) => item === display[position]) &&
+    tabs.every((item, position) => item === display[position])
+    ? tabs
+    : next;
+}
+
 function mapTab(state: BrowserState, id: number, update: (tab: Tab) => Tab): BrowserState {
   let changed = false;
   const tabs = state.tabs.map((tab) => {
@@ -204,6 +228,7 @@ function removeTabs(
     failed: withoutKeys(state.failed, ids),
     hibernated: state.hibernated.filter((id) => !ids.has(id)),
     unresponsive: state.unresponsive.filter((id) => !ids.has(id)),
+    pip: state.pip.filter((id) => !ids.has(id)),
     blocked: withoutKeys(state.blocked, ids),
     zoom: withoutKeys(state.zoom, ids),
     thumbnails: withoutKeys(state.thumbnails, ids),
@@ -351,6 +376,19 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       );
     }
 
+    case "tab/move": {
+      const tabs = moveTab(state.tabs, action.id, action.index);
+      return tabs === state.tabs ? state : { ...state, tabs };
+    }
+
+    case "tab/move-relative": {
+      const display = orderTabs(state.tabs);
+      const index = display.findIndex((tab) => tab.id === action.id);
+      if (index < 0) return state;
+      const tabs = moveTab(state.tabs, action.id, index + action.delta);
+      return tabs === state.tabs ? state : { ...state, tabs };
+    }
+
     case "tab/toggle-pin":
       return mapTab(state, action.id, (tab) => ({ ...tab, pinned: !tab.pinned }));
 
@@ -390,6 +428,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         failed: {},
         hibernated: [],
         unresponsive: [],
+        pip: [],
         audioPlaying: [],
         loginRejected: {},
         requestedUrl: null,
@@ -576,6 +615,12 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         failed: withoutKey(state.failed, action.id),
         unresponsive: withoutId(state.unresponsive, action.id),
       };
+
+    case "view/pip": {
+      const without = withoutId(state.pip, action.id);
+      if (action.active && !state.tabs.some((tab) => tab.id === action.id)) return state;
+      return { ...state, pip: action.active ? [...without, action.id] : without };
+    }
 
     case "view/unresponsive": {
       const without = withoutId(state.unresponsive, action.id);

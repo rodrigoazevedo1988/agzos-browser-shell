@@ -88,6 +88,14 @@ const PAGES: Record<string, string> = {
     <p>agzos um</p><p>outro texto</p><p>agzos dois</p><p>mais agzos três</p>`,
   "/baixar": `<!doctype html><title>Baixar</title><a href="/arquivo/relatorio.txt">relatório</a>`,
   "/formulario": `<!doctype html><title>Formulário</title><input id="nome" value="">`,
+  // Player dentro de iframe (como um vídeo embutido do YouTube), com PiP desligado pelo site.
+  "/player": `<!doctype html><title>Player</title><canvas id="c" width="320" height="180"></canvas>
+    <video id="v" muted playsinline disablepictureinpicture width="320" height="180"></video>
+    <script>const c = document.getElementById("c"), x = c.getContext("2d"); let t = 0;
+    setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 50);
+    const v = document.getElementById("v"); v.srcObject = c.captureStream(20); v.play();</script>`,
+  "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
+    <iframe src="/player" width="400" height="240"></iframe>`,
 };
 
 // /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
@@ -1277,5 +1285,86 @@ test("1.7: depois de um crash as janelas voltam com aviso; crash logo ao abrir u
     await expect(fourth.window.getByRole("status", { name: "Sessão restaurada" })).toHaveCount(0);
   } finally {
     await fourth.app.close();
+  }
+});
+
+test("1.5.1: depois de atualizar, aviso com a versão, as novidades e confetes (uma vez só)", async () => {
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const profile = tempProfile();
+  const first = await launch(profile);
+  await first.window.waitForTimeout(600);
+  // Nenhum aviso num perfil novo.
+  await expect(first.window.getByRole("dialog")).toHaveCount(0);
+  // Simula o perfil de quem estava na 1.4.2.
+  await first.app.evaluate(
+    (_electron, file) => {
+      const { DatabaseSync } = process.getBuiltinModule(
+        "node:sqlite",
+      ) as typeof import("node:sqlite");
+      const db = new DatabaseSync(file);
+      db.prepare("UPDATE kv SET value = ? WHERE key = 'meta:appVersion'").run('"1.4.2"');
+      db.close();
+    },
+    path.join(profile, "agzos.db"),
+  );
+  await first.app.close();
+
+  const second = await launch(profile);
+  try {
+    const dialog = second.window.getByRole("dialog", { name: "Atualizado com sucesso!" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(`Versão 1.4.2 → ${version}`);
+    await expect(dialog.locator("li").first()).toBeVisible();
+    await expect(second.window.locator("canvas.confetti")).toHaveCount(1);
+    await dialog.getByRole("button", { name: "Continuar navegando" }).click();
+    await expect(dialog).toHaveCount(0);
+    // Pelas Configurações, as novidades da versão atual (sem confetes).
+    await second.window.getByRole("button", { name: "Configurações" }).click();
+    await second.window.getByRole("button", { name: "Novidades desta versão" }).click();
+    const again = second.window.getByRole("dialog", { name: "Novidades desta versão" });
+    await expect(again).toContainText(`Agzos Browser ${version}`);
+    await expect(second.window.locator("canvas.confetti")).toHaveCount(0);
+    await second.window.keyboard.press("Escape");
+    await expect(again).toHaveCount(0);
+  } finally {
+    await second.app.close();
+  }
+
+  const third = await launch(profile);
+  try {
+    await third.window.waitForTimeout(800);
+    await expect(third.window.getByRole("dialog")).toHaveCount(0);
+  } finally {
+    await third.app.close();
+  }
+});
+
+test("1.5.1: picture-in-picture pega o vídeo de qualquer player (até em iframe)", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/com-video`);
+    await expect(tabs(window).first()).toContainText("Com vídeo");
+    const pipOn = () =>
+      app.evaluate(async ({ webContents }, url) => {
+        const contents = webContents.getAllWebContents().find((item) => item.getURL() === url);
+        for (const frame of contents?.mainFrame.framesInSubtree ?? []) {
+          if (await frame.executeJavaScript("Boolean(document.pictureInPictureElement)")) {
+            return true;
+          }
+        }
+        return false;
+      }, `${origin}/com-video`);
+    // Vídeo tocando: o botão aparece na barra.
+    const button = window.getByRole("button", { name: "Picture-in-picture" });
+    await expect(button).toBeVisible({ timeout: 10_000 });
+    await button.click();
+    await expect.poll(pipOn).toBe(true);
+    await expect(window.getByRole("button", { name: "Sair do picture-in-picture" })).toBeVisible();
+    // Atalho com o foco na página desliga.
+    await keyInTab(app, `${origin}/com-video`, "P", ["control", "shift"]);
+    await expect.poll(pipOn).toBe(false);
+    await expect(window.getByRole("button", { name: "Picture-in-picture" })).toBeVisible();
+  } finally {
+    await app.close();
   }
 });

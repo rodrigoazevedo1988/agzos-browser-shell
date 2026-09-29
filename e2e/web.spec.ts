@@ -470,3 +470,61 @@ test("guias verticais: sem a faixa de cima; o ⋯ vai para a toolbar", async ({ 
   await page.locator(".toolbar").getByRole("button", { name: "Configurações" }).click();
   await expect(page.locator(".key-panel")).toHaveCount(1);
 });
+
+test("1.5.1: arrastar reordena as guias (horizontal e vertical) e Ctrl+Shift+PgUp/PgDn move", async ({
+  page,
+}) => {
+  await go(page, "github.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "figma.com");
+  await page.keyboard.press("Control+t");
+  await go(page, "linear.app");
+  const titles = async (selector = ".tabs .browser-tab") =>
+    (await page.locator(selector).allTextContents()).map((text) => text.trim());
+  await expect.poll(() => titles()).toEqual(["github.com", "figma.com", "linear.app"]);
+
+  // Arrasta a última para o começo.
+  const last = tabs(page).last();
+  const first = await tabs(page).first().boundingBox();
+  const box = await last.boundingBox();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x - 20, box!.y + box!.height / 2, { steps: 6 });
+  await page.mouse.move(first!.x + 4, first!.y + first!.height / 2, { steps: 6 });
+  // Linha de onde a guia vai cair.
+  await expect(tabs(page).first()).toHaveClass(/drop-before/);
+  await page.mouse.up();
+  await expect.poll(() => titles()).toEqual(["linear.app", "github.com", "figma.com"]);
+  // O arraste não troca a guia ativa (a ativa já era a arrastada).
+  await expect(page.locator(".tabs .browser-tab.active")).toContainText("linear.app");
+
+  // Esc cancela o arraste.
+  const second = await tabs(page).nth(1).boundingBox();
+  await page.mouse.move(second!.x + second!.width / 2, second!.y + second!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(second!.x + second!.width * 3, second!.y + second!.height / 2, {
+    steps: 6,
+  });
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect.poll(() => titles()).toEqual(["linear.app", "github.com", "figma.com"]);
+
+  // Teclado: a guia ativa anda uma posição.
+  await page.keyboard.press("Control+Shift+PageDown");
+  await expect.poll(() => titles()).toEqual(["github.com", "linear.app", "figma.com"]);
+  await page.keyboard.press("Control+Shift+PageUp");
+  await expect.poll(() => titles()).toEqual(["linear.app", "github.com", "figma.com"]);
+
+  // Guias verticais: arrastar para baixo.
+  await tabs(page).first().click({ button: "right" });
+  await page.getByText("Mostrar guias verticalmente").click();
+  const rail = ".rail-tabs .browser-tab";
+  await expect.poll(() => titles(rail)).toEqual(["linear.app", "github.com", "figma.com"]);
+  const top = await page.locator(rail).first().boundingBox();
+  const bottom = await page.locator(rail).last().boundingBox();
+  await page.mouse.move(top!.x + top!.width / 2, top!.y + top!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(top!.x + top!.width / 2, bottom!.y + bottom!.height - 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => titles(rail)).toEqual(["github.com", "figma.com", "linear.app"]);
+});

@@ -30,7 +30,7 @@ const {
   AUTO_ALLOWED,
 } = require("./permissions.cjs");
 const { fetchSuggestions } = require("./suggest.cjs");
-const { createUpdater, DEFAULT_FEED } = require("./updater.cjs");
+const { createUpdater, compareVersions, DEFAULT_FEED } = require("./updater.cjs");
 const {
   createWindowStore,
   fitBounds,
@@ -95,6 +95,8 @@ let quitting = false;
 // Como a execução anterior terminou (aviso de restauração e modo seguro).
 let startup = { unclean: false, early: false, restoredWindows: 0 };
 let startupNoticeShown = false;
+// Primeiro início depois de uma atualização: { from, to } (aviso "Atualizado com sucesso").
+let updatedFrom = null;
 // Testes encurtam o tempo da hibernação e o intervalo de verificação.
 const HIBERNATE_OVERRIDE = { afterMs: Number(process.env.AGZOS_HIBERNATE_AFTER_MS) || undefined };
 let hibernateConfig = hibernateConfigOf(null, HIBERNATE_OVERRIDE);
@@ -579,6 +581,17 @@ function buildPageContextMenu(contents, params) {
     );
   }
 
+  if (params.mediaType === "video") {
+    template.push(
+      { type: "separator" },
+      {
+        label: "Picture-in-picture",
+        accelerator: "CmdOrCtrl+Shift+P",
+        click: () => void togglePictureInPicture(contents),
+      },
+    );
+  }
+
   if (params.mediaType === "image" && isWebUrl(params.srcURL)) {
     template.push(
       { type: "separator" },
@@ -809,6 +822,9 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+shift+o",
   "mod+shift+b",
   "mod+shift+t",
+  "mod+shift+p",
+  "mod+shift+pageup",
+  "mod+shift+pagedown",
   "mod+shift+d",
   "mod+shift+n",
   "mod+shift+r",
@@ -1573,7 +1589,9 @@ async function checkHibernation() {
           hiddenSince: entry.hiddenSince,
           audible: contents.isCurrentlyAudible(),
           loading: contents.isLoading(),
-          capturing: capturingContents.has(contents),
+          capturing:
+            capturingContents.has(contents) ||
+            (pipContents.has(contents) && (await pictureInPictureActive(contents))),
           pendingPermission: hasPendingPermission(contents),
           fullscreen: ctx.fullscreenActive && id === ctx.activeTabId,
           devtools: contents.isDevToolsOpened(),
@@ -1601,6 +1619,101 @@ function restoreHibernated(contents, history, url) {
   contents.navigationHistory.restore(history).catch(() => {
     if (!contents.isDestroyed()) void loadWithScriptlets(contents, url);
   });
+}
+
+// --- Picture-in-picture (qualquer player: YouTube, Vimeo, players embutidos em iframe). ---
+
+// Vídeos do quadro, inclusive dentro de shadow DOM (players em web components).
+const PIP_FIND_VIDEOS = `const agzosVideos = () => {
+  const found = [];
+  const visit = (root, depth) => {
+    for (const video of root.querySelectorAll("video")) found.push(video);
+    if (depth > 3) return;
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) visit(element.shadowRoot, depth + 1);
+    }
+  };
+  visit(document, 0);
+  return found.filter((video) => video.readyState > 0 && video.videoWidth > 0);
+};
+const agzosScore = (video) => {
+  const rect = video.getBoundingClientRect();
+  const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+  return (video.paused ? 0 : 1e9) + area;
+};`;
+
+// Nota do melhor vídeo do quadro (-1 sem vídeo; 2e9 quando este quadro já está em PiP).
+const PIP_SCAN_SOURCE = `(() => {
+  ${PIP_FIND_VIDEOS}
+  if (document.pictureInPictureElement) return 2e9;
+  return agzosVideos().reduce((best, video) => Math.max(best, agzosScore(video)), -1);
+})()`;
+
+const PIP_TOGGLE_SOURCE = `(async () => {
+  ${PIP_FIND_VIDEOS}
+  if (document.pictureInPictureElement) {
+    await document.exitPictureInPicture();
+    return "off";
+  }
+  const video = agzosVideos().sort((a, b) => agzosScore(b) - agzosScore(a))[0];
+  if (!video) return "none";
+  // Alguns players desligam o PiP do navegador; o usuário pediu, então vale.
+  video.disablePictureInPicture = false;
+  video.removeAttribute("disablepictureinpicture");
+  await video.requestPictureInPicture();
+  return "on";
+})()`;
+
+// Guias com vídeo em PiP: não hibernam (a janela flutuante fecharia).
+const pipContents = new WeakSet();
+
+function liveFrames(contents) {
+  try {
+    return contents.mainFrame.framesInSubtree.filter((frame) => !frame.detached);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Liga ou desliga o PiP da guia: escolhe o vídeo tocando (e maior) em todos os quadros. O
+ * gesto do usuário (atalho, botão, menu) vai junto (`userGesture`), que o Chromium exige.
+ */
+async function togglePictureInPicture(contents) {
+  if (!contents || contents.isDestroyed()) return { ok: false, active: false };
+  let best = null;
+  let bestScore = -1;
+  for (const frame of liveFrames(contents)) {
+    const score = await frame.executeJavaScript(PIP_SCAN_SOURCE).catch(() => -1);
+    if (typeof score === "number" && score > bestScore) {
+      best = frame;
+      bestScore = score;
+    }
+  }
+  if (!best) return { ok: false, active: false, reason: "sem-video" };
+  try {
+    const result = await best.executeJavaScript(PIP_TOGGLE_SOURCE, true);
+    const active = result === "on";
+    if (active) pipContents.add(contents);
+    else pipContents.delete(contents);
+    emitTab(contents, { type: "pip", active });
+    return { ok: result !== "none", active };
+  } catch (error) {
+    console.error("Agzos: picture-in-picture falhou.", error);
+    return { ok: false, active: false, reason: "erro" };
+  }
+}
+
+/** O PiP ainda está aberto? (o usuário pode ter fechado a janela flutuante.) */
+async function pictureInPictureActive(contents) {
+  for (const frame of liveFrames(contents)) {
+    const active = await frame
+      .executeJavaScript("Boolean(document.pictureInPictureElement)")
+      .catch(() => false);
+    if (active) return true;
+  }
+  pipContents.delete(contents);
+  return false;
 }
 
 function tabSession(tab) {
@@ -1789,6 +1902,10 @@ function registerIpc() {
     for (const id of [...ctx.hibernated.keys()]) if (!known.has(id)) ctx.hibernated.delete(id);
   });
 
+  ipcMain.handle("tab:pip", (event, { id }) =>
+    togglePictureInPicture(tabContents(ctxOfEvent(event), id)),
+  );
+
   ipcMain.handle("tab:hibernate", async (event, { id }) => {
     const ctx = ctxOfEvent(event);
     return { ok: ctx ? await hibernateTab(ctx, id, { force: true }) : false };
@@ -1806,6 +1923,14 @@ function registerIpc() {
     allowedCertificates.add(key);
     contents.reload();
     return { ok: true };
+  });
+
+  // Só a primeira janela que perguntar mostra o aviso (uma vez por atualização).
+  ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("app:whats-new", () => {
+    const info = updatedFrom;
+    updatedFrom = null;
+    return info;
   });
 
   ipcMain.handle("window:startup", () => {
@@ -2124,6 +2249,30 @@ function startServices() {
   }
 }
 
+/**
+ * A versão em execução fica em meta:appVersion. Se ela subiu desde o último início, o app
+ * foi atualizado (automática ou manualmente). Até a 1.5.0 a versão não era gravada: um
+ * perfil que já tinha estado conta como atualização vinda de uma versão desconhecida.
+ */
+function detectUpdate() {
+  if (!database) return null;
+  const current = app.getVersion();
+  let previous = null;
+  let hadState = false;
+  try {
+    previous = database.getMeta("appVersion");
+    hadState = "version" in database.loadState();
+    if (previous !== current) database.setMeta("appVersion", current);
+  } catch (error) {
+    console.error("Agzos: não foi possível conferir a versão anterior.", error);
+    return null;
+  }
+  if (typeof previous === "string") {
+    return compareVersions(current, previous) > 0 ? { from: previous, to: current } : null;
+  }
+  return hadState ? { from: null, to: current } : null;
+}
+
 function applyPrefs(prefs) {
   applyShieldConfig(prefs);
   hibernateConfig = hibernateConfigOf(prefs, HIBERNATE_OVERRIDE);
@@ -2153,6 +2302,7 @@ app.whenReady().then(() => {
   if (!isDevelopment) Menu.setApplicationMenu(null);
 
   openStateDatabase();
+  updatedFrom = detectUpdate();
   if (database) {
     windowStore = createWindowStore({ database });
     const previous = windowStore.beginRun();

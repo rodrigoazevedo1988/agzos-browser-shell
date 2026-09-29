@@ -14,6 +14,9 @@ export type CommandId =
   | "window.new"
   | "tab.move-to-window"
   | "tab.hibernate"
+  | "tab.move-left"
+  | "tab.move-right"
+  | "page.pip"
   | "tab.new-private"
   | "tab.new-right"
   | "tab.reopen-closed"
@@ -75,6 +78,8 @@ export type CommandContext = {
     bookmarkPage: () => void;
     /** Salva as guias abertas numa pasta nova da barra de favoritos. */
     bookmarkAllTabs: () => void;
+    /** Liga/desliga o picture-in-picture do vídeo da guia. */
+    pictureInPicture: (tabId: number) => void;
   };
 };
 
@@ -269,6 +274,26 @@ export const commands: Command[] = [
     label: "Próxima guia",
     shortcuts: [{ key: "pagedown" }],
     run: ({ dispatch }) => dispatch({ type: "tab/activate-relative", delta: 1 }),
+  },
+  {
+    id: "tab.move-left",
+    label: "Mover guia para trás",
+    shortcuts: [{ key: "pageup", shift: true }],
+    run: ({ dispatch }, tabId) => dispatch({ type: "tab/move-relative", id: tabId, delta: -1 }),
+  },
+  {
+    id: "tab.move-right",
+    label: "Mover guia para frente",
+    shortcuts: [{ key: "pagedown", shift: true }],
+    run: ({ dispatch }, tabId) => dispatch({ type: "tab/move-relative", id: tabId, delta: 1 }),
+  },
+  {
+    id: "page.pip",
+    label: "Picture-in-picture",
+    shortcuts: [{ key: "p", shift: true }],
+    // Vídeo de qualquer player (YouTube ou outro) numa janela flutuante; só no app.
+    enabled: onDesktopPage,
+    run: ({ ui }, tabId) => ui.pictureInPicture(tabId),
   },
   {
     id: "tab.previous",

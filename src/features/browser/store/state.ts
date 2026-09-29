@@ -92,6 +92,8 @@ export type BrowserState = {
   hibernated: number[];
   /** Página travada (loop): a casca oferece esperar ou encerrar. */
   unresponsive: number[];
+  /** Guias com vídeo em picture-in-picture. */
+  pip: number[];
   loginRejected: Record<number, string>;
   requestedUrl: { id: number; url: string } | null;
   fullscreen: boolean;
@@ -128,6 +130,7 @@ export const initialState: BrowserState = {
   failed: {},
   hibernated: [],
   unresponsive: [],
+  pip: [],
   loginRejected: {},
   requestedUrl: null,
   fullscreen: false,
