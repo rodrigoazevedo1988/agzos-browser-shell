@@ -19,7 +19,8 @@ import { profileFor, replyFor } from "@/features/ai/templates";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
-import { SettingsPanel } from "@/features/settings/panel";
+import { AppMenu, type AppMenuAction } from "@/features/settings/menu";
+import { SettingsPage } from "@/features/settings/page";
 import { SitePanel } from "@/features/site/panel";
 import { originOf } from "@/features/site/permissions";
 import { cn } from "@/lib/utils";
@@ -50,7 +51,7 @@ import {
   navState,
   orderTabs,
 } from "./store/selectors";
-import { BOOKMARKS_URL, HISTORY_URL, initialState, type Prefs } from "./store/state";
+import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, initialState, type Prefs } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
 import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab } from "./types";
 import { BookmarksBar } from "./ui/bookmarks-bar";
@@ -64,8 +65,10 @@ import { Toolbar } from "./ui/toolbar";
 import { StartupNotice, UnresponsiveBar } from "./ui/notice-bars";
 import { Viewport, type ErrorActions } from "./ui/viewport";
 import { WhatsNew } from "./ui/whats-new";
+import { tabCardOf, useTabPreview } from "./tab-preview";
+import { TabPreviewCard } from "./ui/tab-preview-card";
 
-type Panel = "key" | "privacy" | "settings" | "downloads" | "bookmark" | "site";
+type Panel = "key" | "privacy" | "menu" | "downloads" | "bookmark" | "site";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -421,15 +424,29 @@ export function AgzosBrowser() {
     });
   }, [desktop, historyStore, requested]);
 
+  // Página de configurações aberta: permissões e pasta de downloads atualizadas.
+  const onSettingsPage = current.url === SETTINGS_URL;
+  useEffect(() => {
+    if (!desktop || !onSettingsPage) return;
+    void refreshPermissionsRef.current();
+    void desktop
+      .downloadsDir()
+      .then(setDownloadsDir)
+      .catch(() => {});
+  }, [desktop, onSettingsPage]);
+
   const refreshPermissions = useCallback(async () => {
     if (desktop) setSitePermissions(await desktop.permissionsList().catch(() => []));
   }, [desktop]);
+  const refreshPermissionsRef = useRef(refreshPermissions);
+  refreshPermissionsRef.current = refreshPermissions;
   useEffect(() => {
-    if (panel === "site" || panel === "settings") void refreshPermissions();
+    if (panel === "site") void refreshPermissions();
   }, [panel, refreshPermissions]);
 
   // Primeiro início depois de uma atualização: aviso com as novidades e confetes.
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [downloadsDir, setDownloadsDir] = useState<string | null>(null);
   useEffect(() => {
     if (!desktop) return;
     void desktop
@@ -482,6 +499,9 @@ export function AgzosBrowser() {
       bookmarkPage,
       bookmarkAllTabs,
       pictureInPicture,
+      showWhatsNew: () => {
+        if (appVersion) setWhatsNew({ from: null, to: appVersion, celebrate: false });
+      },
     },
   };
   const ctxRef = useRef(ctx);
@@ -524,29 +544,38 @@ export function AgzosBrowser() {
     }
     const timer = window.setTimeout(() => setSwitcherVisible(true), 140);
     const commit = () => dispatch({ type: "switcher/commit" });
+    // Mesmas teclas com o foco na casca ou na página (o main repassa: agzos:switcher-key).
+    const handleKey = (key: string) => {
+      if (key === "Escape") dispatch({ type: "switcher/cancel" });
+      else if (key === "Enter") commit();
+      else if (key === "ArrowRight" || key === "ArrowDown") {
+        dispatch({ type: "switcher/step", delta: 1 });
+      } else if (key === "ArrowLeft" || key === "ArrowUp") {
+        dispatch({ type: "switcher/step", delta: -1 });
+      } else return false;
+      return true;
+    };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === "Control" || event.key === "Meta") commit();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dispatch({ type: "switcher/cancel" });
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        commit();
-      }
+      if (handleKey(event.key)) event.preventDefault();
     };
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("keydown", onKeyDown);
     // Perdeu o foco com o Ctrl ainda apertado (ex.: Alt+Tab do sistema): confirma.
     window.addEventListener("blur", commit);
+    void desktop?.setSwitcherOpen(true);
+    const offKey = desktop?.onSwitcherKey(({ key }) => void handleKey(key));
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", commit);
+      offKey?.();
+      void desktop?.setSwitcherOpen(false);
     };
-  }, [switcherOpen]);
+  }, [switcherOpen, desktop]);
 
   // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
   // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
@@ -692,9 +721,24 @@ export function AgzosBrowser() {
     onSearch: (text) => openUrl(engineOf(prefs.engine).search(text), false),
   };
 
+  const preview = useTabPreview({
+    desktop,
+    cardOf: (tabId) => {
+      const tab = stateRef.current.tabs.find((item) => item.id === tabId);
+      return tab ? tabCardOf(stateRef.current, tab, { desktop: desktop !== null }) : null;
+    },
+    side: prefs.orientation === "vertical" ? "right" : "below",
+    disabled: overlay || state.switcher !== null || tabMenu.menu !== null,
+  });
+
   const tabHandlers: TabHandlers = {
     onActivate: (tab) => dispatch({ type: "tab/activate", id: tab.id }),
-    onContextMenu: openTabMenu,
+    onContextMenu: (event, tab) => {
+      preview.onHoverEnd(true);
+      openTabMenu(event, tab);
+    },
+    onHoverStart: (tab, element) => preview.onHoverStart(tab.id, element),
+    onHoverEnd: preview.onHoverEnd,
     onTogglePin: (id) => dispatch({ type: "tab/toggle-pin", id }),
     onClose: requestClose,
   };
@@ -728,15 +772,41 @@ export function AgzosBrowser() {
 
   const settingsButton = (
     <Button
-      variant={panel === "settings" ? "default" : "ghost"}
+      variant={panel === "menu" ? "default" : "ghost"}
       size="icon"
-      title="Configurações"
-      aria-label="Configurações"
-      onClick={() => togglePanel("settings")}
+      title="Menu do Agzos"
+      aria-label="Menu do Agzos"
+      aria-haspopup="menu"
+      aria-expanded={panel === "menu"}
+      onClick={() => togglePanel("menu")}
     >
       <MoreHorizontal />
     </Button>
   );
+
+  const openSettings = () => openInternal(SETTINGS_URL, "Configurações");
+  const runMenuAction = (action: AppMenuAction) => {
+    switch (action) {
+      case "settings.open":
+        openSettings();
+        return;
+      case "whats-new":
+        if (appVersion) setWhatsNew({ from: null, to: appVersion, celebrate: false });
+        return;
+      case "update.install":
+        void desktop?.updateInstall();
+        return;
+      case "app.quit":
+        void desktop?.quitApp();
+        return;
+      case "downloads.toggle":
+        // O menu fecha antes; o painel de downloads abre em seguida.
+        window.setTimeout(() => setPanel("downloads"), 0);
+        return;
+      default:
+        runCommand(ctx, action, null, "menu");
+    }
+  };
 
   return (
     <main
@@ -902,6 +972,35 @@ export function AgzosBrowser() {
                     actions={bookmarkActions}
                     onOpen={openUrl}
                   />
+                ) : current.url === SETTINGS_URL ? (
+                  <SettingsPage
+                    prefs={prefs}
+                    setPrefs={setPrefs}
+                    onUnpauseHost={(host) =>
+                      dispatch({ type: "prefs/pause-host", host, pause: false })
+                    }
+                    desktop={desktop !== null}
+                    isMac={isMac}
+                    permissions={desktop ? sitePermissions : null}
+                    onPermissionChange={(origin, type, value) => {
+                      if (!desktop) return;
+                      void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+                    }}
+                    update={update}
+                    onCheckUpdate={() => void desktop?.updateCheck()}
+                    onInstallUpdate={() => void desktop?.updateInstall()}
+                    appVersion={appVersion}
+                    onShowWhatsNew={
+                      appVersion
+                        ? () => setWhatsNew({ from: null, to: appVersion, celebrate: false })
+                        : null
+                    }
+                    downloadsDir={downloadsDir}
+                    onOpenDownloadsDir={desktop ? () => void desktop.openDownloadsDir() : null}
+                    onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
+                    onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
+                    onReset={() => dispatch({ type: "tabs/reset" })}
+                  />
                 ) : null
               }
               errors={errorActions}
@@ -968,54 +1067,20 @@ export function AgzosBrowser() {
             onClose={() => setPanel(null)}
           />
         )}
-        {panel === "settings" && (
-          <SettingsPanel
+        {panel === "menu" && (
+          <AppMenu
+            desktop={desktop !== null}
+            isMac={isMac}
+            appVersion={appVersion}
+            updateReady={update?.status === "ready" ? update.version : null}
+            zoom={state.zoom[activeTab.id] ?? 1}
+            canZoom={desktop !== null && current.kind === "page"}
+            canFind={desktop !== null && current.kind === "page"}
             dark={prefs.dark}
-            setDark={(dark) => setPrefs({ dark })}
-            aiOpen={prefs.aiOpen}
-            setAiOpen={(aiOpen) => setPrefs({ aiOpen })}
-            shield={prefs.shield}
-            setShield={(shield) => setPrefs({ shield })}
-            engine={prefs.engine}
-            setEngine={(engine) => setPrefs({ engine })}
-            bookmarksBar={prefs.bookmarksBar}
-            setBookmarksBar={(bookmarksBar) => setPrefs({ bookmarksBar })}
-            searchSuggestions={prefs.searchSuggestions}
-            setSearchSuggestions={(searchSuggestions) => setPrefs({ searchSuggestions })}
-            permissions={desktop ? sitePermissions : null}
-            hibernation={
-              desktop
-                ? {
-                    enabled: prefs.hibernate,
-                    minutes: prefs.hibernateMinutes,
-                    onChange: (patch) => setPrefs(patch),
-                  }
-                : null
-            }
-            onPermissionChange={(origin, type, value) => {
-              if (!desktop) return;
-              void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
-            }}
-            update={update}
-            onCheckUpdate={() => void desktop?.updateCheck()}
-            onInstallUpdate={() => void desktop?.updateInstall()}
-            onShowWhatsNew={
-              appVersion
-                ? () => {
-                    setPanel(null);
-                    setWhatsNew({ from: null, to: appVersion, celebrate: false });
-                  }
-                : null
-            }
-            onOpenHistory={() => {
-              setPanel(null);
-              openInternal(HISTORY_URL, "Histórico");
-            }}
-            onOpenBookmarks={() => {
-              setPanel(null);
-              openInternal(BOOKMARKS_URL, "Favoritos");
-            }}
-            onReset={() => dispatch({ type: "tabs/reset" })}
+            onAction={runMenuAction}
+            onZoom={(direction) => void desktop?.zoom(activeTab.id, direction)}
+            onFullscreen={() => void desktop?.toggleFullscreen()}
+            onToggleDark={() => setPrefs({ dark: !prefs.dark })}
             onClose={() => setPanel(null)}
           />
         )}
@@ -1100,6 +1165,7 @@ export function AgzosBrowser() {
           onClose={closeWhatsNew}
         />
       )}
+      {preview.webCard && <TabPreviewCard {...preview.webCard} />}
       {tabMenu.menu && (
         <ContextMenu
           x={tabMenu.menu.x}

@@ -38,6 +38,7 @@ const {
   safeSession,
   STABLE_AFTER_MS,
 } = require("./windows.cjs");
+const { HOVER_CARD_HTML, cardBounds, metricRows } = require("./hover-card.cjs");
 const {
   CHECK_INTERVAL_MS,
   hibernateConfigOf,
@@ -823,6 +824,7 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+shift+b",
   "mod+shift+t",
   "mod+shift+p",
+  "mod+,",
   "mod+shift+pageup",
   "mod+shift+pagedown",
   "mod+shift+d",
@@ -874,11 +876,40 @@ function shortcutCombo(input) {
   return parts.join("+");
 }
 
-function forwardAppShortcut(ctx, input, event) {
+// Ctrl+Tab com o foco na página: o foco vai para a casca (a página some atrás do seletor e
+// página escondida não recebe teclas), mas o Chromium não entrega à casca o "soltar o
+// Ctrl" de uma tecla apertada em outra superfície, e o seletor só confirmava com Enter.
+// Então a casca recebe um "Ctrl apertado" sintético: o soltar de verdade chega a ela.
+const SWITCHER_COMBOS = new Set(["mod+tab", "mod+shift+tab"]);
+// Com o seletor aberto e o foco na página, estas teclas vão para o seletor, não para ela.
+const SWITCHER_KEYS = new Set([
+  "Enter",
+  "Escape",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+]);
+
+function forwardAppShortcut(ctx, input, event, { page = false } = {}) {
   if (input.type !== "keyDown" || !ctx) return false;
-  if (!FORWARDED_SHORTCUTS.has(shortcutCombo(input))) return false;
+  const combo = shortcutCombo(input);
+  if (!FORWARDED_SHORTCUTS.has(combo)) return false;
+  // No Mac o ⌘H é "Ocultar Agzos Browser" (a barra de menus trata; histórico é ⌘Y).
+  if (process.platform === "darwin" && combo === "mod+h" && input.meta) return false;
   event.preventDefault();
-  if (!ctx.window.isDestroyed()) ctx.window.webContents.focus();
+  if (!ctx.window.isDestroyed()) {
+    const shell = ctx.window.webContents;
+    shell.focus();
+    if (page && SWITCHER_COMBOS.has(combo)) {
+      const modifiers = [input.control && "control", input.meta && "meta"].filter(Boolean);
+      shell.sendInputEvent({
+        type: "keyDown",
+        keyCode: input.meta ? "Meta" : "Control",
+        modifiers,
+      });
+    }
+  }
   send(ctx, "agzos:hotkey", {
     key: shortcutKey(input),
     shift: Boolean(input.shift),
@@ -899,10 +930,15 @@ function wireShortcuts(contents, { page = false } = {}) {
       return;
     }
     if (input.type !== "keyDown") return;
+    if (page && ctx?.switcherOpen && SWITCHER_KEYS.has(input.key)) {
+      event.preventDefault();
+      send(ctx, "agzos:switcher-key", { key: input.key });
+      return;
+    }
     // Esc com foco na página para o carregamento (e segue para a página, como no Chrome).
     if (page && input.key === "Escape" && contents.isLoading()) contents.stop();
     if (handlePageShortcut(ctx, input, event)) return;
-    forwardAppShortcut(ctx, input, event);
+    forwardAppShortcut(ctx, input, event, { page });
   });
 }
 
@@ -1406,6 +1442,8 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     failed: new Map(),
     hibernated: new Map(),
     unresponsive: new Set(),
+    switcherOpen: false,
+    preview: null,
   };
   const shellId = window.webContents.id;
   contexts.set(shellId, ctx);
@@ -1448,7 +1486,9 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     // janela, ou todas ao sair do app, ficam salvas para o próximo início.
     if (!quitting && contexts.size > 1) windowStore?.remove(ctx.key);
   });
+  window.on("blur", () => hidePreview(ctx));
   window.on("closed", () => {
+    if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
     for (const [id, entry] of ctx.views) dropView(ctx, id, entry);
     contexts.delete(shellId);
     if (lastFocused === ctx) lastFocused = contexts.values().next().value ?? null;
@@ -1716,6 +1756,100 @@ async function pictureInPictureActive(contents) {
   return false;
 }
 
+// --- Prévia da guia (cartão ao pausar o mouse; ver hover-card.cjs). ---
+
+function previewLayer(ctx) {
+  if (ctx.preview && !ctx.preview.webContents.isDestroyed()) return ctx.preview;
+  const view = new WebContentsView({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  view.setBackgroundColor("#00000000");
+  view.setBounds(HIDDEN_RECT);
+  // Só a casca mexe no cartão: nada de navegar, abrir janelas ou receber foco de teclado.
+  view.webContents.on("will-navigate", (event) => event.preventDefault());
+  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  view.webContents.setIgnoreMenuShortcuts(true);
+  void view.webContents
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HOVER_CARD_HTML)}`)
+    .catch(() => {});
+  ctx.preview = view;
+  ctx.previewReady = new Promise((resolve) => {
+    view.webContents.once("did-finish-load", resolve);
+    view.webContents.once("destroyed", resolve);
+  });
+  return view;
+}
+
+/** Memória e CPU do processo da página (sites iguais podem dividir o mesmo processo). */
+function tabMetrics(contents) {
+  try {
+    const pid = contents.getOSProcessId();
+    const metric = app.getAppMetrics().find((item) => item.pid === pid);
+    let shared = 0;
+    for (const other of allTabContents()) {
+      if (!other.isDestroyed() && other.getOSProcessId() === pid) shared += 1;
+    }
+    // No Windows os bytes privados são o número do Gerenciador de Tarefas.
+    const memoryKB = metric?.memory?.privateBytes ?? metric?.memory?.workingSetSize ?? null;
+    return {
+      pid,
+      memoryKB,
+      cpu: metric?.cpu?.percentCPUUsage ?? null,
+      shared: Math.max(1, shared),
+    };
+  } catch {
+    return {};
+  }
+}
+
+let previewSeq = 0;
+
+async function showPreview(ctx, { id, rect, side, card }) {
+  const seq = ++previewSeq;
+  ctx.previewSeq = seq;
+  const view = previewLayer(ctx);
+  await ctx.previewReady;
+  const contents = tabContents(ctx, id);
+  const model = { ...card };
+  if (contents) {
+    model.stats = [...metricRows(tabMetrics(contents)), ...(card.stats ?? [])];
+    // Guia à vista: foto na hora (a miniatura guardada pode estar velha).
+    if (id === ctx.activeTabId && isVisible(contents)) {
+      try {
+        const image = await contents.capturePage();
+        if (!image.isEmpty()) {
+          const small = image.resize({ width: 560, quality: "good" });
+          model.image = `data:image/jpeg;base64,${small.toJPEG(78).toString("base64")}`;
+        }
+      } catch {
+        // Fica a miniatura guardada.
+      }
+    }
+  }
+  if (ctx.previewSeq !== seq || view.webContents.isDestroyed() || ctx.window.isDestroyed()) return;
+  let height = 0;
+  try {
+    height = Number(
+      await view.webContents.executeJavaScript(`window.render(${JSON.stringify(model)})`),
+    );
+  } catch {
+    return;
+  }
+  if (ctx.previewSeq !== seq || ctx.window.isDestroyed()) return;
+  const [width, windowHeight] = ctx.window.getContentSize();
+  // Por cima de tudo (guias abertas depois ficariam na frente).
+  ctx.window.contentView.addChildView(view);
+  view.setBounds(cardBounds(rect, { width, height: windowHeight }, height || 200, side));
+}
+
+function hidePreview(ctx) {
+  ctx.previewSeq = ++previewSeq;
+  const view = ctx.preview;
+  if (!view || view.webContents.isDestroyed()) return;
+  view.setBounds(HIDDEN_RECT);
+  void view.webContents.executeJavaScript("window.hide && window.hide()").catch(() => {});
+}
+
 function tabSession(tab) {
   return { tabs: [{ ...tab, id: 1 }], activeId: 1 };
 }
@@ -1956,6 +2090,9 @@ function registerIpc() {
   });
 
   ipcMain.handle("downloads:list", () => downloads?.list() ?? []);
+  ipcMain.handle("downloads:dir", () => downloadsDir());
+  ipcMain.handle("downloads:open-dir", () => void shell.openPath(downloadsDir()));
+  ipcMain.handle("app:quit", () => app.quit());
   ipcMain.handle("download:action", (_event, { id, action }) => {
     if (!downloads || !Number.isInteger(id)) return { ok: false };
     switch (action) {
@@ -2000,6 +2137,29 @@ function registerIpc() {
 
   ipcMain.handle("tab:mute", (event, { id, muted }) => {
     tabContents(ctxOfEvent(event), id)?.setAudioMuted(muted);
+  });
+
+  ipcMain.handle("preview:show", (event, payload) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || !payload || typeof payload.card !== "object") return;
+    const rect = payload.rect;
+    if (![rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite)) return;
+    return showPreview(ctx, {
+      id: payload.id,
+      rect,
+      side: payload.side === "right" ? "right" : "below",
+      card: payload.card,
+    });
+  });
+
+  ipcMain.handle("preview:hide", (event) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) hidePreview(ctx);
+  });
+
+  ipcMain.handle("switcher:state", (event, { open }) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) ctx.switcherOpen = Boolean(open);
   });
 
   ipcMain.handle("chrome:panel", (event, { open }) => {
@@ -2288,6 +2448,167 @@ function openStateDatabase() {
   }
 }
 
+// --- Barra de menus do Mac: o lugar de "Preferências…" (⌘,) e de Editar (⌘C/⌘V). ---
+
+/** Comando da casca (commands.ts) na janela em foco; abre uma janela se não houver. */
+function runInFocusedWindow(command) {
+  const ctx = contexts.get(BrowserWindow.getFocusedWindow()?.webContents.id ?? -1) ?? lastFocused;
+  if (!ctx) {
+    if (!openSavedWindows()) createWindow();
+    return;
+  }
+  send(ctx, "agzos:tabmenu-action", { action: command, tabId: null });
+}
+
+/** Página da guia ativa da janela em foco (Salvar como, Imprimir). */
+function focusedPageContents() {
+  const ctx = contexts.get(BrowserWindow.getFocusedWindow()?.webContents.id ?? -1) ?? lastFocused;
+  return activeViewEntry(ctx)?.view.webContents ?? null;
+}
+
+function macMenuTemplate() {
+  const command = (label, id, accelerator, extra = {}) => ({
+    label,
+    ...(accelerator ? { accelerator } : {}),
+    ...extra,
+    click: () => runInFocusedWindow(id),
+  });
+  const pageAction = (label, accelerator, work) => ({
+    label,
+    accelerator,
+    click: () => {
+      const contents = focusedPageContents();
+      if (contents && !contents.isDestroyed()) work(contents);
+    },
+  });
+  return [
+    {
+      label: "Agzos Browser",
+      submenu: [
+        { role: "about", label: "Sobre o Agzos Browser" },
+        command("Novidades desta versão", "help.whats-new"),
+        { type: "separator" },
+        command("Configurações…", "settings.open", "Cmd+,"),
+        { type: "separator" },
+        { role: "services", label: "Serviços" },
+        { type: "separator" },
+        { role: "hide", label: "Ocultar Agzos Browser" },
+        { role: "hideOthers", label: "Ocultar outros" },
+        { role: "unhide", label: "Mostrar tudo" },
+        { type: "separator" },
+        { role: "quit", label: "Sair do Agzos Browser" },
+      ],
+    },
+    {
+      label: "Arquivo",
+      submenu: [
+        command("Nova guia", "tab.new", "Cmd+T"),
+        {
+          label: "Nova janela",
+          accelerator: "Cmd+N",
+          click: () => {
+            const ctx = lastFocused;
+            if (ctx) send(ctx, "agzos:tabmenu-action", { action: "window.new", tabId: null });
+            else createWindow();
+          },
+        },
+        command("Nova guia anônima", "tab.new-private", "Shift+Cmd+N"),
+        command("Reabrir guia fechada", "tab.reopen-closed", "Shift+Cmd+T"),
+        { type: "separator" },
+        command("Abrir endereço…", "omnibox.focus", "Cmd+L"),
+        { type: "separator" },
+        command("Fechar guia", "tab.close", "Cmd+W"),
+        { role: "close", label: "Fechar janela", accelerator: "Shift+Cmd+W" },
+        { type: "separator" },
+        pageAction("Salvar página como…", "Cmd+S", (contents) =>
+          saveAs(contents, contents.getURL()),
+        ),
+        pageAction("Imprimir…", "Cmd+P", (contents) => contents.print()),
+      ],
+    },
+    {
+      label: "Editar",
+      submenu: [
+        { role: "undo", label: "Desfazer" },
+        { role: "redo", label: "Refazer" },
+        { type: "separator" },
+        { role: "cut", label: "Recortar" },
+        { role: "copy", label: "Copiar" },
+        { role: "paste", label: "Colar" },
+        { role: "pasteAndMatchStyle", label: "Colar sem formatação" },
+        { role: "delete", label: "Apagar" },
+        { role: "selectAll", label: "Selecionar tudo" },
+        { type: "separator" },
+        command("Buscar na página…", "page.find", "Cmd+F"),
+      ],
+    },
+    {
+      label: "Visualizar",
+      submenu: [
+        command("Recarregar", "tab.reload", "Cmd+R"),
+        command("Recarregar sem cache", "tab.reload-hard", "Shift+Cmd+R"),
+        { type: "separator" },
+        command("Tamanho padrão", "zoom.reset", "Cmd+0"),
+        command("Aumentar zoom", "zoom.in", "Cmd+Plus"),
+        command("Diminuir zoom", "zoom.out", "Cmd+-"),
+        { type: "separator" },
+        command("Picture-in-picture", "page.pip", "Shift+Cmd+P"),
+        command("Mostrar/ocultar barra de favoritos", "bookmarks.toggle-bar", "Shift+Cmd+B"),
+        command("Guias na vertical", "tabs.vertical"),
+        command("Guias na horizontal", "tabs.horizontal"),
+        { type: "separator" },
+        { role: "togglefullscreen", label: "Tela cheia" },
+      ],
+    },
+    {
+      label: "Histórico",
+      submenu: [
+        command("Voltar", "nav.back", "Cmd+["),
+        command("Avançar", "nav.forward", "Cmd+]"),
+        { type: "separator" },
+        command("Mostrar todo o histórico", "history.open", "Cmd+Y"),
+      ],
+    },
+    {
+      label: "Favoritos",
+      submenu: [
+        command("Adicionar aos favoritos", "page.favorite", "Cmd+D"),
+        command("Adicionar todas as guias…", "tabs.bookmark-all", "Shift+Cmd+D"),
+        { type: "separator" },
+        command("Gerenciar favoritos", "bookmarks.manager", "Shift+Cmd+O"),
+      ],
+    },
+    {
+      label: "Janela",
+      submenu: [
+        { role: "minimize", label: "Minimizar" },
+        { role: "zoom", label: "Zoom" },
+        { type: "separator" },
+        command("Próxima guia", "tab.next", "Cmd+Alt+Right"),
+        command("Guia anterior", "tab.previous", "Cmd+Alt+Left"),
+        command("Mover guia para nova janela", "tab.move-to-window"),
+        command("Hibernar outras guias", "tabs.hibernate-others"),
+        { type: "separator" },
+        command("Downloads", "downloads.toggle", "Cmd+J"),
+        { type: "separator" },
+        { role: "front", label: "Trazer tudo para a frente" },
+      ],
+    },
+    {
+      role: "help",
+      label: "Ajuda",
+      submenu: [
+        command("Novidades desta versão", "help.whats-new"),
+        command("Atalhos de teclado", "settings.open"),
+        {
+          label: "Site do Agzos",
+          click: () => void shell.openExternal("https://agzosagency.com.br/"),
+        },
+      ],
+    },
+  ];
+}
+
 /** Abre as janelas salvas que ainda não estão abertas (início do app, Dock do Mac). */
 function openSavedWindows({ safe = false } = {}) {
   const open = new Set([...contexts.values()].map((ctx) => ctx.key));
@@ -2299,7 +2620,16 @@ function openSavedWindows({ safe = false } = {}) {
 }
 
 app.whenReady().then(() => {
-  if (!isDevelopment) Menu.setApplicationMenu(null);
+  // Mac: barra de menus completa (Editar é o que faz ⌘C/⌘V funcionarem nos campos).
+  // Windows e Linux: sem barra; o "⋯" da casca faz esse papel.
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate()));
+    app.setAboutPanelOptions({
+      applicationName: "Agzos Browser",
+      applicationVersion: app.getVersion(),
+      copyright: "Agzos",
+    });
+  } else if (!isDevelopment) Menu.setApplicationMenu(null);
 
   openStateDatabase();
   updatedFrom = detectUpdate();

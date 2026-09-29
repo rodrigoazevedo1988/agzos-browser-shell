@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.2",
+    date: "2026-10-01",
+    items: [
+      "Ctrl+Tab: soltar o Ctrl já abre a guia escolhida (antes só com Enter).",
+      "Pare o mouse sobre uma guia para ver a prévia da página, a memória (RAM) e a CPU que ela usa.",
+      "Configurações completas em uma página própria (Ctrl+,), com seções e busca.",
+      "O menu ⋯ ficou mais enxuto: o essencial à mão, com zoom e tema.",
+      "No Mac, a barra de menus superior traz tudo, inclusive Configurações (⌘,) e copiar/colar.",
+    ],
+  },
+  {
     version: "1.5.1",
     date: "2026-09-30",
     items: [

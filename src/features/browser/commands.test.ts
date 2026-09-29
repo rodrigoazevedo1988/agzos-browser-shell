@@ -37,6 +37,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     bookmarkPage: vi.fn(),
     bookmarkAllTabs: vi.fn(),
     pictureInPicture: vi.fn(),
+    showWhatsNew: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
@@ -150,6 +151,18 @@ describe("atalhos", () => {
     const combos = commands.flatMap((command) => (command.shortcuts ?? []).map(shortcutCombo));
     expect(combos.filter((combo) => !forwarded.has(combo))).toEqual([]);
     expect([...forwarded].filter((combo) => !combos.includes(combo!))).toEqual([]);
+  });
+
+  it("todo comando que o main dispara (menus nativos, barra do Mac) existe no registro", async () => {
+    const fs = await import("node:fs");
+    const main = fs.readFileSync(new URL("../../../electron/main.cjs", import.meta.url), "utf8");
+    const ids = new Set(commands.map((command) => command.id as string));
+    const used = [
+      ...[...main.matchAll(/\baction\("([a-z0-9.-]+)"/g)].map((match) => match[1]!),
+      ...[...main.matchAll(/\bcommand\("[^"]+", "([a-z0-9.-]+)"/g)].map((match) => match[1]!),
+    ];
+    expect(used.length).toBeGreaterThan(30);
+    expect(used.filter((id) => !ids.has(id))).toEqual([]);
   });
 
   it("rótulos de teclas especiais", () => {

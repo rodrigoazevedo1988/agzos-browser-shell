@@ -13,6 +13,9 @@ Since 1.7 (app 1.5.0):
 - `windows.cjs`: several windows; each window's tabs and bounds are saved continuously in `meta:windows`, plus a run marker (`meta:running`) that detects an unclean exit (restore notice, safe mode when it crashed during the first minute).
 - `hibernate.cjs`: rules for hibernating hidden tabs (the page is closed and later restored with its navigation history).
 
+- `hover-card.cjs` (1.5.2): the tab preview card, drawn in its own transparent `WebContentsView` above the page, with process memory/CPU from `app.getAppMetrics()`.
+- macOS gets a full application menu (Edit roles make ⌘C/⌘V work); Windows and Linux keep no menu bar and use the shell's "⋯" menu.
+
 Test-only environment variables: `AGZOS_USER_DATA`, `AGZOS_DOWNLOADS_DIR`, `AGZOS_FILTER_LISTS` (JSON `{ "ads": [url], "privacy": [url] }`), `AGZOS_HIBERNATE_AFTER_MS`, `AGZOS_HIBERNATE_CHECK_MS`, `AGZOS_STABLE_AFTER_MS`.
 
 ## Development

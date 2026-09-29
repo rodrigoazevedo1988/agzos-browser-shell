@@ -3,7 +3,7 @@ import type { Dispatch } from "react";
 import type { DesktopBridge } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
 import { activeTabOf, entryOf } from "./store/selectors";
-import { BOOKMARKS_URL, HISTORY_URL, type BrowserState } from "./store/state";
+import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, type BrowserState } from "./store/state";
 
 /**
  * Registro único de comandos do navegador. Atalhos de teclado, o menu de contexto da
@@ -17,6 +17,9 @@ export type CommandId =
   | "tab.move-left"
   | "tab.move-right"
   | "page.pip"
+  | "settings.open"
+  | "help.whats-new"
+  | "tabs.hibernate-others"
   | "tab.new-private"
   | "tab.new-right"
   | "tab.reopen-closed"
@@ -80,6 +83,8 @@ export type CommandContext = {
     bookmarkAllTabs: () => void;
     /** Liga/desliga o picture-in-picture do vídeo da guia. */
     pictureInPicture: (tabId: number) => void;
+    /** Aviso com as novidades da versão atual (sem confetes). */
+    showWhatsNew: () => void;
   };
 };
 
@@ -358,6 +363,41 @@ export const commands: Command[] = [
         type: "nav/open-internal",
         entry: { title: "Favoritos", url: BOOKMARKS_URL, kind: "internal" },
       }),
+  },
+  {
+    id: "settings.open",
+    label: "Configurações",
+    // ⌘, é o atalho de preferências de todo app do Mac; no Windows/Linux, Ctrl+,.
+    shortcuts: [{ key: "," }],
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Configurações", url: SETTINGS_URL, kind: "internal" },
+      }),
+  },
+  {
+    id: "help.whats-new",
+    label: "Novidades desta versão",
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.showWhatsNew(),
+  },
+  {
+    id: "tabs.hibernate-others",
+    label: "Hibernar outras guias",
+    visible: ({ desktop }) => desktop !== null,
+    enabled: ({ state }) =>
+      state.tabs.some(
+        (tab) =>
+          tab.id !== state.activeId &&
+          !state.hibernated.includes(tab.id) &&
+          entryOf(tab).kind === "page",
+      ),
+    run: ({ state, desktop }) => {
+      for (const tab of state.tabs) {
+        if (tab.id === state.activeId || state.hibernated.includes(tab.id)) continue;
+        if (entryOf(tab).kind === "page") void desktop?.hibernateTab(tab.id);
+      }
+    },
   },
   {
     id: "bookmarks.toggle-bar",

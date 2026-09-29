@@ -1,3 +1,4 @@
+import type { TabCard } from "./tab-preview";
 import type { Credential, HistoryUrl, HistoryVisit, Tab } from "./types";
 
 export type PermissionType =
@@ -161,6 +162,10 @@ export type DesktopBridge = {
   downloadsList(): Promise<DownloadRecord[]>;
   downloadAction(id: number, action: DownloadAction): Promise<{ ok: boolean }>;
   downloadsClear(): Promise<DownloadRecord[]>;
+  downloadsDir(): Promise<string>;
+  openDownloadsDir(): Promise<void>;
+  /** Fecha o app (todas as janelas voltam no próximo início). */
+  quitApp(): Promise<void>;
   closeTab(id: number): Promise<void>;
   muteTab(id: number, muted: boolean): Promise<void>;
   setPanelOpen(open: boolean): Promise<void>;
@@ -232,6 +237,18 @@ export type DesktopBridge = {
   onDownload(callback: (record: DownloadRecord) => void): () => void;
   /** Ctrl/⌘ solto (inclusive com o foco na página). */
   onModifierUp(callback: (payload: { key: string }) => void): () => void;
+  /** Cartão de prévia da guia (camada acima da página); o main soma memória e CPU. */
+  showTabPreview(payload: {
+    id: number;
+    rect: { x: number; y: number; width: number; height: number };
+    side: "below" | "right";
+    card: TabCard;
+  }): Promise<void>;
+  hideTabPreview(): Promise<void>;
+  /** O seletor do Ctrl+Tab abriu/fechou (o main desvia Enter/Esc/setas da página). */
+  setSwitcherOpen(open: boolean): Promise<void>;
+  /** Tecla do seletor apertada com o foco na página. */
+  onSwitcherKey(callback: (payload: { key: string }) => void): () => void;
   onAdblockStats(callback: (stats: AdblockStats) => void): () => void;
 };
 
