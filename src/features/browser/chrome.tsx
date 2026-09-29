@@ -11,26 +11,48 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { AiSidebar, type ChatMessage, initialChat } from "@/features/ai/sidebar";
+import { BookmarkEditor } from "@/features/bookmarks/editor";
+import { BookmarksManager, type BookmarkActions } from "@/features/bookmarks/manager";
 import { batchProgress } from "@/features/downloads/format";
 import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
+import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { SettingsPanel } from "@/features/settings/panel";
+import { SitePanel } from "@/features/site/panel";
+import { originOf } from "@/features/site/permissions";
 import { cn } from "@/lib/utils";
 
+import { childrenOf, newBookmarkId } from "./bookmarks";
 import { commandForKey, isEnabled, runCommand, type CommandContext } from "./commands";
-import { desktopBridge, type DesktopPermissionRequest } from "./desktop";
+import {
+  desktopBridge,
+  type DesktopPermissionRequest,
+  type NativeMenuItem,
+  type SitePermission,
+  type UpdateState,
+} from "./desktop";
 import { useDesktopSync } from "./desktop-sync";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
+import { defaultHistoryStore } from "./persistence/history-store";
 import { useCredentials } from "./persistence/use-credentials";
 import { usePersistence } from "./persistence/use-persistence";
 import { browserReducer } from "./store/reducer";
-import { activeTabOf, entryOf, hostOf, isFavorite, navState, orderTabs } from "./store/selectors";
-import { initialState, type Prefs } from "./store/state";
+import {
+  activeTabOf,
+  currentBookmark,
+  entryOf,
+  hostOf,
+  navState,
+  orderTabs,
+} from "./store/selectors";
+import { BOOKMARKS_URL, HISTORY_URL, initialState, type Prefs } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
-import type { Tab } from "./types";
+import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab } from "./types";
+import { BookmarksBar } from "./ui/bookmarks-bar";
+import { folderMenu, webMenuGroups } from "./ui/shell-menu";
 import { FindBar } from "./ui/find-bar";
 import { PermissionBar } from "./ui/permission-bar";
 import { TabSwitcher } from "./ui/tab-switcher";
@@ -39,7 +61,7 @@ import type { TabHandlers } from "./ui/tab-item";
 import { Toolbar } from "./ui/toolbar";
 import { Viewport } from "./ui/viewport";
 
-type Panel = "key" | "privacy" | "settings" | "downloads";
+type Panel = "key" | "privacy" | "settings" | "downloads" | "bookmark" | "site";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -77,6 +99,12 @@ export function AgzosBrowser() {
   const [credentials, setCredentials] = useCredentials(desktop);
   const omniboxRef = useRef<HTMLInputElement | null>(null);
   const tabMenu = useContextMenu();
+  const historyStore = useMemo(() => defaultHistoryStore(), []);
+  const [omniboxOpen, setOmniboxOpen] = useState(false);
+  // Favorito em edição (popover da estrela, "Editar…" da barra).
+  const [editing, setEditing] = useState<{ id: string; added: boolean } | null>(null);
+  const [sitePermissions, setSitePermissions] = useState<SitePermission[]>([]);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
 
   usePersistence(state, dispatch);
 
@@ -85,6 +113,11 @@ export function AgzosBrowser() {
   const current = entryOf(activeTab);
   const nav = navState(state, desktop !== null);
   const orderedTabs = useMemo(() => orderTabs(state.tabs), [state.tabs]);
+  // "Mudar para esta guia" na omnibox: as outras abas normais.
+  const switchableTabs = useMemo(
+    () => state.tabs.filter((tab) => tab.id !== state.activeId && !tab.private),
+    [state.tabs, state.activeId],
+  );
 
   const currentHost = hostOf(current.url);
   const privacyHost = currentHost ?? "inicio";
@@ -145,6 +178,242 @@ export function AgzosBrowser() {
     setFindFocus((value) => value + 1);
   }, []);
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const editBookmark = useCallback((id: string, added = false) => {
+    setEditing({ id, added });
+    setPanel("bookmark");
+  }, []);
+
+  // Estrela / Ctrl+D: favorita na barra e abre a edição; se já é favorito, só edita.
+  const bookmarkPage = useCallback(() => {
+    const current = stateRef.current;
+    const tab = activeTabOf(current);
+    const entry = entryOf(tab);
+    if (tab.private || entry.kind !== "page") return;
+    const existing = currentBookmark(current);
+    if (existing) {
+      editBookmark(existing.id);
+      return;
+    }
+    const node: BookmarkNode = {
+      id: newBookmarkId(),
+      parentId: BOOKMARK_BAR,
+      kind: "url",
+      title: entry.title || hostOf(entry.url) || entry.url,
+      url: entry.url,
+      icon: tab.favicon,
+      createdAt: Date.now(),
+    };
+    dispatch({ type: "bookmarks/add", nodes: [node] });
+    editBookmark(node.id, true);
+  }, [editBookmark]);
+
+  const bookmarkAllTabs = useCallback(() => {
+    const now = Date.now();
+    const pages = orderTabs(stateRef.current.tabs).filter(
+      (tab) => !tab.private && entryOf(tab).kind === "page",
+    );
+    if (!pages.length) return;
+    const folder: BookmarkNode = {
+      id: newBookmarkId(),
+      parentId: BOOKMARK_BAR,
+      kind: "folder",
+      title: `Guias ${new Date(now).toLocaleDateString("pt-BR")}`,
+      createdAt: now,
+    };
+    dispatch({
+      type: "bookmarks/add",
+      nodes: [
+        folder,
+        ...pages.map((tab): BookmarkNode => {
+          const entry = entryOf(tab);
+          return {
+            id: newBookmarkId(),
+            parentId: folder.id,
+            kind: "url",
+            title: entry.title,
+            url: entry.url,
+            icon: tab.favicon,
+            createdAt: now,
+          };
+        }),
+      ],
+    });
+    editBookmark(folder.id, true);
+  }, [editBookmark]);
+
+  const openUrl = useCallback(
+    (url: string, newTab: boolean) => {
+      const entry: Entry = { title: hostOf(url) ?? url, url, kind: "page" };
+      if (newTab) {
+        dispatch({ type: "tab/open-page", entry });
+        return;
+      }
+      flash();
+      dispatch({ type: "nav/push", entry });
+    },
+    [flash],
+  );
+
+  const openInternal = useCallback((url: string, title: string) => {
+    dispatch({ type: "nav/open-internal", entry: { title, url, kind: "internal" } });
+  }, []);
+
+  // Menu nativo no app; na web, o menu da casca (pastas reabrem o menu com o conteúdo).
+  const openContextMenu = tabMenu.open;
+  const showMenu = useCallback(
+    (x: number, y: number, items: NativeMenuItem[]) =>
+      new Promise<string | null>((resolve) => {
+        if (desktop) {
+          void desktop.showMenu(items).then(resolve, () => resolve(null));
+          return;
+        }
+        const open = (list: NativeMenuItem[]) =>
+          openContextMenu(x, y, webMenuGroups(list, resolve, open));
+        open(items);
+      }),
+    [desktop, openContextMenu],
+  );
+
+  const openBookmarkChoice = useCallback(
+    (choice: string | null) => {
+      if (!choice) return;
+      const nodes = stateRef.current.bookmarks;
+      if (choice.startsWith("open:")) {
+        const node = nodes.find((item) => item.id === choice.slice("open:".length));
+        if (node?.url) openUrl(node.url, false);
+      } else if (choice.startsWith("open-all:")) {
+        for (const node of childrenOf(nodes, choice.slice("open-all:".length))) {
+          if (node.url) openUrl(node.url, true);
+        }
+      }
+    },
+    [openUrl],
+  );
+
+  const openFolderMenu = (event: MouseEvent<HTMLElement>, folderId: string) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    void showMenu(rect.left, rect.bottom + 4, folderMenu(state.bookmarks, folderId)).then(
+      openBookmarkChoice,
+    );
+  };
+
+  const openBookmarkMenu = (event: MouseEvent<HTMLElement>, node: BookmarkNode | null) => {
+    event.preventDefault();
+    const items: NativeMenuItem[] = node
+      ? node.kind === "url"
+        ? [
+            { id: "open", label: "Abrir" },
+            { id: "open-tab", label: "Abrir em nova guia" },
+            { separator: true },
+            { id: "edit", label: "Editar…" },
+            { id: "remove", label: "Excluir" },
+          ]
+        : [
+            { id: "open-all", label: "Abrir todos em novas guias" },
+            { separator: true },
+            { id: "edit", label: "Renomear…" },
+            { id: "remove", label: "Excluir pasta" },
+          ]
+      : [
+          { id: "add-page", label: "Adicionar esta página", enabled: current.kind === "page" },
+          { id: "new-folder", label: "Nova pasta" },
+          { separator: true },
+          { id: "manager", label: "Gerenciar favoritos" },
+          { id: "hide-bar", label: "Ocultar barra de favoritos" },
+        ];
+    void showMenu(event.clientX, event.clientY, items).then((choice) => {
+      switch (choice) {
+        case "open":
+          if (node?.url) openUrl(node.url, false);
+          return;
+        case "open-tab":
+          if (node?.url) openUrl(node.url, true);
+          return;
+        case "open-all":
+          if (node) openBookmarkChoice(`open-all:${node.id}`);
+          return;
+        case "edit":
+          if (node) editBookmark(node.id);
+          return;
+        case "remove":
+          if (node) dispatch({ type: "bookmarks/remove", id: node.id });
+          return;
+        case "add-page":
+          bookmarkPage();
+          return;
+        case "new-folder": {
+          const folder: BookmarkNode = {
+            id: newBookmarkId(),
+            parentId: BOOKMARK_BAR,
+            kind: "folder",
+            title: "Nova pasta",
+            createdAt: Date.now(),
+          };
+          dispatch({ type: "bookmarks/add", nodes: [folder] });
+          editBookmark(folder.id, true);
+          return;
+        }
+        case "manager":
+          openInternal(BOOKMARKS_URL, "Favoritos");
+          return;
+        case "hide-bar":
+          setPrefs({ bookmarksBar: false });
+      }
+    });
+  };
+
+  const bookmarkActions: BookmarkActions = useMemo(
+    () => ({
+      add: (nodes, index) =>
+        dispatch(
+          index === undefined
+            ? { type: "bookmarks/add", nodes }
+            : { type: "bookmarks/add", nodes, index },
+        ),
+      update: (id, changes) => dispatch({ type: "bookmarks/update", id, ...changes }),
+      move: (id, parentId, index) =>
+        dispatch(
+          index === undefined
+            ? { type: "bookmarks/move", id, parentId }
+            : { type: "bookmarks/move", id, parentId, index },
+        ),
+      remove: (id) => dispatch({ type: "bookmarks/remove", id }),
+    }),
+    [],
+  );
+
+  // Web (preview): a casca registra as visitas. No app quem registra é o main.
+  const requested = state.requestedUrl;
+  useEffect(() => {
+    if (desktop || !historyStore || !requested || !/^https?:/i.test(requested.url)) return;
+    const tab = stateRef.current.tabs.find((item) => item.id === requested.id);
+    if (!tab || tab.private) return;
+    const entry = entryOf(tab);
+    void historyStore.add({
+      url: requested.url,
+      title: entry.url === requested.url && entry.title !== requested.url ? entry.title : "",
+    });
+  }, [desktop, historyStore, requested]);
+
+  const refreshPermissions = useCallback(async () => {
+    if (desktop) setSitePermissions(await desktop.permissionsList().catch(() => []));
+  }, [desktop]);
+  useEffect(() => {
+    if (panel === "site" || panel === "settings") void refreshPermissions();
+  }, [panel, refreshPermissions]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    void desktop
+      .updateState()
+      .then(setUpdate)
+      .catch(() => {});
+    return desktop.onUpdate(setUpdate);
+  }, [desktop]);
+
   const ctx: CommandContext = {
     state,
     dispatch,
@@ -157,6 +426,8 @@ export function AgzosBrowser() {
       step: (delta) => step(delta),
       openFind,
       toggleDownloads: () => togglePanel("downloads"),
+      bookmarkPage,
+      bookmarkAllTabs,
     },
   };
   const ctxRef = useRef(ctx);
@@ -224,7 +495,7 @@ export function AgzosBrowser() {
 
   // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
   // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
-  const overlay = panel !== null || switcherVisible;
+  const overlay = panel !== null || switcherVisible || omniboxOpen;
   const [viewHidden, setViewHidden] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const activeIdRef = useRef(state.activeId);
@@ -268,6 +539,10 @@ export function AgzosBrowser() {
     (raw: string) => {
       const entry = resolveInput(raw, prefs.engine);
       if (!entry) return;
+      if (entry.kind === "internal") {
+        dispatch({ type: "nav/open-internal", entry });
+        return;
+      }
       flash();
       dispatch({ type: "nav/push", entry });
     },
@@ -400,7 +675,7 @@ export function AgzosBrowser() {
           canBack={nav.canBack}
           canForward={nav.canForward}
           loading={loading}
-          favorite={isFavorite(state)}
+          favorite={currentBookmark(state) !== undefined}
           blockedCount={blockedCount}
           zoom={state.zoom[activeTab.id] ?? 1}
           downloads={{
@@ -418,7 +693,7 @@ export function AgzosBrowser() {
           onReload={() => reload(activeTab.id)}
           onAddressChange={(value) => dispatch({ type: "address/set", value })}
           onSubmit={openAddress}
-          onToggleFavorite={() => dispatch({ type: "links/toggle-current" })}
+          onToggleFavorite={bookmarkPage}
           onTogglePrivacy={() => togglePanel("privacy")}
           onResetZoom={() => void desktop?.zoom(activeTab.id, 0)}
           onToggleDownloads={() => togglePanel("downloads")}
@@ -426,7 +701,35 @@ export function AgzosBrowser() {
           onToggleDark={() => setPrefs({ dark: !prefs.dark })}
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
           trailing={prefs.orientation === "vertical" ? settingsButton : null}
+          omnibox={{
+            currentUrl: current.url,
+            engine: prefs.engine,
+            remoteSuggestions: prefs.searchSuggestions,
+            bookmarks: state.bookmarks,
+            tabs: switchableTabs,
+            history: historyStore,
+            suggest: desktop ? (text) => desktop.suggest(prefs.engine, text) : null,
+            onSwitchTab: (id) => dispatch({ type: "tab/activate", id }),
+            onOpenChange: setOmniboxOpen,
+          }}
+          siteInfo={{
+            available: desktop !== null && originOf(current.url) !== null,
+            open: panel === "site",
+            onToggle: () => togglePanel("site"),
+          }}
+          updateReady={update?.status === "ready" ? update.version : null}
+          onInstallUpdate={() => void desktop?.updateInstall()}
         />
+
+        {prefs.bookmarksBar && (
+          <BookmarksBar
+            nodes={state.bookmarks}
+            onOpen={(node, newTab) => node.url && openUrl(node.url, newTab)}
+            onFolder={openFolderMenu}
+            onContextMenu={openBookmarkMenu}
+            onMove={bookmarkActions.move}
+          />
+        )}
 
         {state.find && state.find.id === activeTab.id && (
           <FindBar
@@ -463,6 +766,17 @@ export function AgzosBrowser() {
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
+              internal={
+                current.url === HISTORY_URL ? (
+                  <HistoryPage store={historyStore} onOpen={openUrl} />
+                ) : current.url === BOOKMARKS_URL ? (
+                  <BookmarksManager
+                    nodes={state.bookmarks}
+                    actions={bookmarkActions}
+                    onOpen={openUrl}
+                  />
+                ) : null
+              }
               onRecover={(id) => {
                 dispatch({ type: "view/recovered", id });
                 void desktop?.reload(id);
@@ -536,7 +850,77 @@ export function AgzosBrowser() {
             setShield={(shield) => setPrefs({ shield })}
             engine={prefs.engine}
             setEngine={(engine) => setPrefs({ engine })}
+            bookmarksBar={prefs.bookmarksBar}
+            setBookmarksBar={(bookmarksBar) => setPrefs({ bookmarksBar })}
+            searchSuggestions={prefs.searchSuggestions}
+            setSearchSuggestions={(searchSuggestions) => setPrefs({ searchSuggestions })}
+            permissions={desktop ? sitePermissions : null}
+            onPermissionChange={(origin, type, value) => {
+              if (!desktop) return;
+              void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+            }}
+            update={update}
+            onCheckUpdate={() => void desktop?.updateCheck()}
+            onInstallUpdate={() => void desktop?.updateInstall()}
+            onOpenHistory={() => {
+              setPanel(null);
+              openInternal(HISTORY_URL, "Histórico");
+            }}
+            onOpenBookmarks={() => {
+              setPanel(null);
+              openInternal(BOOKMARKS_URL, "Favoritos");
+            }}
             onReset={() => dispatch({ type: "tabs/reset" })}
+            onClose={() => setPanel(null)}
+          />
+        )}
+        {panel === "bookmark" &&
+          (() => {
+            const node = editing && state.bookmarks.find((item) => item.id === editing.id);
+            if (!node) return null;
+            return (
+              <BookmarkEditor
+                key={node.id}
+                node={node}
+                nodes={state.bookmarks}
+                added={editing.added}
+                onSave={({ title, url, parentId }) => {
+                  dispatch({
+                    type: "bookmarks/update",
+                    id: node.id,
+                    title,
+                    ...(url ? { url } : {}),
+                  });
+                  if (parentId !== node.parentId) {
+                    dispatch({ type: "bookmarks/move", id: node.id, parentId });
+                  }
+                  setPanel(null);
+                }}
+                onRemove={() => {
+                  dispatch({ type: "bookmarks/remove", id: node.id });
+                  setPanel(null);
+                }}
+                onClose={() => setPanel(null)}
+              />
+            );
+          })()}
+        {panel === "site" && (
+          <SitePanel
+            url={current.url}
+            privateTab={Boolean(activeTab.private)}
+            permissions={sitePermissions}
+            zoom={state.zoom[activeTab.id] ?? 1}
+            onChange={(type, value) => {
+              const origin = originOf(current.url);
+              if (!desktop || !origin) return;
+              void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+            }}
+            onReset={() => {
+              const origin = originOf(current.url);
+              if (!desktop || !origin) return;
+              void desktop.permissionsReset(origin).then(refreshPermissions);
+            }}
+            onResetZoom={() => void desktop?.zoom(activeTab.id, 0)}
             onClose={() => setPanel(null)}
           />
         )}

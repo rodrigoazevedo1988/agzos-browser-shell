@@ -1,4 +1,5 @@
 import { ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -22,7 +23,10 @@ export function Viewport({
   onAddLink,
   onRemoveLink,
   onRecover,
+  internal,
 }: {
+  /** Conteúdo da página da casca (histórico, favoritos) quando a aba mostra uma. */
+  internal: ReactNode;
   state: BrowserState;
   tab: Tab;
   loading: boolean;
@@ -67,6 +71,8 @@ export function Viewport({
         <Button onClick={() => onRecover(tab.id)}>Recarregar</Button>
       </div>
     );
+  } else if (current.kind === "internal") {
+    content = internal;
   } else if (current.kind === "home") {
     content = (
       <StartPage

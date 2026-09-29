@@ -6,6 +6,7 @@ DEST="/var/www/agzosagency/browser"
 VERSION=""
 ARTIFACTS=""
 ASSUME_YES=0
+NOTES=""
 
 EXPECTED=(
   "Agnos-Browser-win32-x64.zip"
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --artifacts) ARTIFACTS="$2"; shift 2 ;;
     --dest) DEST="$2"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
+    --notes) NOTES="$2"; shift 2 ;;
     *) echo "Argumento desconhecido: $1" >&2; exit 2 ;;
   esac
 done
@@ -47,6 +49,39 @@ TARGET="$DEST/v$VERSION"
 mkdir -p "$TARGET"
 cp -f "$ARTIFACTS"/Agnos-Browser-*.zip "$ARTIFACTS"/Agnos-Browser-*.tar.gz "$ARTIFACTS"/Agnos-Browser-*.dmg "$TARGET/"
 ( cd "$ARTIFACTS" && sha256sum "${EXPECTED[@]}" > "$TARGET/SHA256SUMS.txt" )
+
+# Feed da atualização automática (electron/updater.cjs): versão nova, pacote de cada
+# plataforma, tamanho e SHA-256. Escrito por último e trocado de uma vez (mv), para o
+# app nunca ler um manifesto apontando para arquivos que ainda não chegaram.
+python3 - "$TARGET" "$VERSION" "$NOTES" "$DEST/latest.json" <<'PY'
+import datetime, hashlib, json, os, sys
+target, version, notes, out = sys.argv[1:5]
+packages = {
+    "win32-x64": "Agnos-Browser-win32-x64.zip",
+    "linux-x64": "Agnos-Browser-linux-x64.tar.gz",
+    "darwin-arm64": "Agnos-Browser-mac-arm64.app.zip",
+    "darwin-x64": "Agnos-Browser-mac-x64.app.zip",
+}
+files = {}
+for key, name in packages.items():
+    path = os.path.join(target, name)
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    files[key] = {"url": f"v{version}/{name}", "sha256": digest.hexdigest(), "size": os.path.getsize(path)}
+manifest = {
+    "version": version,
+    "releasedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "notes": notes,
+    "files": files,
+}
+tmp = out + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(manifest, f, indent=2)
+os.replace(tmp, out)
+print(f"latest.json: {version} ({len(files)} pacotes)")
+PY
 
 VERSIONS=$(
   cd "$DEST" && ls -d v[0-9]* 2>/dev/null | sort -V

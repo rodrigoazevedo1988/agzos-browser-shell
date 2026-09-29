@@ -17,6 +17,8 @@ import { forwardRef, type CSSProperties, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { OmniboxField, type OmniboxFieldProps } from "./omnibox-field";
+
 export type ToolbarProps = {
   address: string;
   privateTab: boolean;
@@ -47,6 +49,13 @@ export type ToolbarProps = {
   onToggleAi: () => void;
   /** Botão extra no fim da barra (o "⋯" nas guias verticais). */
   trailing?: ReactNode;
+  /** Sugestões da omnibox (histórico, favoritos, abas, buscador). */
+  omnibox: Omit<OmniboxFieldProps, "value" | "onChange" | "onSubmit" | "privateTab">;
+  /** Cadeado: informações e permissões do site. */
+  siteInfo: { available: boolean; open: boolean; onToggle: () => void };
+  /** Atualização baixada e pronta: botão "Atualizar". */
+  updateReady: string | null;
+  onInstallUpdate: () => void;
 };
 
 export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
@@ -91,17 +100,29 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
             props.onSubmit(props.address);
           }}
         >
-          {props.privateTab ? (
+          {props.siteInfo.available ? (
+            <button
+              type="button"
+              className={cn("site-button", props.siteInfo.open && "on")}
+              onClick={props.siteInfo.onToggle}
+              title="Informações e permissões do site"
+              aria-label="Informações do site"
+              aria-pressed={props.siteInfo.open}
+            >
+              {props.privateTab ? <VenetianMask /> : <LockKeyhole />}
+            </button>
+          ) : props.privateTab ? (
             <VenetianMask aria-hidden="true" />
           ) : (
             <LockKeyhole aria-hidden="true" />
           )}
-          <input
+          <OmniboxField
             ref={inputRef}
+            {...props.omnibox}
             value={props.address}
-            onChange={(event) => props.onAddressChange(event.target.value)}
-            aria-label="Pesquisar ou digitar endereço"
-            placeholder="Pesquisar ou digitar endereço"
+            privateTab={props.privateTab}
+            onChange={props.onAddressChange}
+            onSubmit={props.onSubmit}
           />
           {Math.abs(props.zoom - 1) > 0.001 && (
             <button
@@ -118,7 +139,9 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
             type="button"
             className={cn("fav-button", props.favorite && "on")}
             onClick={props.onToggleFavorite}
-            title={props.favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+            title={
+              props.favorite ? "Editar favorito (Ctrl/⌘ D)" : "Adicionar aos favoritos (Ctrl/⌘ D)"
+            }
             aria-label="Favoritar página"
             aria-pressed={props.favorite}
           >
@@ -127,6 +150,17 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
           <kbd>{props.isMac ? "⌘ K" : "Ctrl K"}</kbd>
         </form>
         <div className="toolbar-actions">
+          {props.updateReady && (
+            <button
+              type="button"
+              className="update-pill"
+              onClick={props.onInstallUpdate}
+              title={`Versão ${props.updateReady} baixada: reiniciar para atualizar`}
+            >
+              <RefreshCw />
+              <span>Atualizar</span>
+            </button>
+          )}
           <button
             type="button"
             className="privacy-pill"

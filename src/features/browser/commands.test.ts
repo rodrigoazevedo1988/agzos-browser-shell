@@ -34,6 +34,8 @@ function context(state: BrowserState = initialState, desktop = false) {
     step: vi.fn(),
     openFind: vi.fn(),
     toggleDownloads: vi.fn(),
+    bookmarkPage: vi.fn(),
+    bookmarkAllTabs: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
@@ -54,6 +56,10 @@ describe("atalhos", () => {
     ["k", {}, "omnibox.focus"],
     ["D", { shift: true }, "tabs.bookmark-all"],
     ["N", { shift: true }, "tab.new-private"],
+    ["h", {}, "history.open"],
+    ["y", { meta: true }, "history.open"],
+    ["O", { shift: true }, "bookmarks.manager"],
+    ["B", { shift: true }, "bookmarks.toggle-bar"],
   ])("Ctrl+%s %o → %s", (value, extra, id) => {
     expect(commandForKey(key(value, extra))?.id).toBe(id);
   });

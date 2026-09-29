@@ -2120,3 +2120,686 @@ button.download-name:hover {
   height: 38px;
   border-radius: 9px;
 }
+
+/* ---------------------------------------------------------------------------
+   1.6: omnibox com sugestões, barra de favoritos, histórico, favoritos,
+   permissões do site e atualização.
+   --------------------------------------------------------------------------- */
+.omnibox {
+  position: relative;
+}
+.site-button {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: -5px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  transition: background-color var(--dur-exit);
+}
+.site-button:hover,
+.site-button.on {
+  background: color-mix(in oklab, var(--primary) 13%, transparent);
+}
+.site-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.omnibox-suggestions {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  left: -1px;
+  right: -1px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--card) 96%, transparent);
+  backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow:
+    var(--glass-shine),
+    0 0 0 1px var(--glass-edge),
+    0 22px 55px oklch(0 0 0 / 22%);
+  animation: panel-in var(--dur-enter) var(--ease-out);
+  transform-origin: top center;
+}
+.omnibox-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 8px 0 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.omnibox-option.selected {
+  background: color-mix(in oklab, var(--primary) 13%, transparent);
+}
+.omnibox-option > svg,
+.omnibox-option > img {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--muted-foreground);
+}
+.omnibox-option[data-kind="tab"] > svg,
+.omnibox-option[data-kind="bookmark"] > svg,
+.omnibox-option.selected > svg {
+  color: var(--primary);
+}
+.omnibox-option-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--foreground);
+}
+.omnibox-option-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.omnibox-option-detail::before {
+  content: "—";
+  margin-right: 8px;
+  opacity: 0.5;
+}
+.omnibox-option[data-kind="tab"] .omnibox-option-detail {
+  color: var(--primary);
+}
+.omnibox .omnibox-option-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0;
+  cursor: pointer;
+}
+.omnibox-option.selected .omnibox-option-remove,
+.omnibox-option-remove:focus-visible {
+  opacity: 1;
+}
+.omnibox-option-remove:hover {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+.omnibox .omnibox-option-remove svg {
+  width: 13px;
+  color: currentColor;
+}
+
+.update-pill {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  animation: panel-in var(--dur-enter) var(--ease-out);
+}
+.update-pill svg {
+  width: 14px;
+}
+.update-pill:hover {
+  filter: brightness(1.08);
+}
+.update-pill:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Barra de favoritos: fina, sem roubar altura da página. */
+.bookmarks-bar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  -webkit-app-region: no-drag;
+}
+.bookmarks-empty {
+  padding: 0 6px;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.bookmark-chip {
+  height: 26px;
+  max-width: 190px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-exit) var(--ease-in),
+    transform var(--dur-exit) var(--ease-in);
+}
+.bookmark-chip span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.bookmark-chip > svg {
+  width: 14px;
+  flex: 0 0 14px;
+  color: var(--primary);
+}
+.bookmark-chip:hover {
+  background: color-mix(in oklab, var(--primary) 10%, var(--muted));
+  transition-duration: var(--dur-enter);
+  transition-timing-function: var(--ease-out);
+}
+.bookmark-chip:active {
+  transform: scale(0.96);
+}
+.bookmark-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.bookmark-chip.drop-target,
+.library-row.drop-target,
+.library-folder.drop-target {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.bookmark-others {
+  margin-left: auto;
+}
+.bookmark-favicon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 3px;
+}
+.bookmark-letter {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--primary) 14%, var(--muted));
+  color: var(--primary);
+  font-size: 9.5px;
+  font-weight: 800;
+}
+
+/* Editor de favorito (popover da estrela). */
+.bookmark-editor {
+  right: 180px;
+  width: min(340px, calc(100% - 24px));
+}
+.bookmark-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+.bookmark-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+.bookmark-form input,
+.bookmark-form select,
+.library-page select,
+.permission-select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 400;
+}
+.bookmark-form input:focus,
+.bookmark-form select:focus,
+.library-page input:focus,
+.library-page select:focus,
+.permission-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+.bookmark-form input[aria-invalid="true"] {
+  border-color: var(--primary);
+}
+.form-error {
+  color: var(--primary);
+  font-weight: 600;
+}
+.bookmark-form-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+.bookmark-form-actions button {
+  height: 30px;
+  font-size: 12.5px;
+}
+.bookmark-form-actions svg {
+  width: 14px;
+}
+
+/* Páginas da casca: histórico e favoritos. */
+.library-page {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+.library-head {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.library-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.library-title > svg {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--primary) 12%, var(--muted));
+  color: var(--primary);
+}
+.library-title h1 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-size: 30px;
+  font-weight: 500;
+}
+.library-title p {
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.library-search {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+.library-search:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+.library-search > svg {
+  width: 16px;
+  color: var(--primary);
+}
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 14px;
+}
+.library-search input:focus {
+  box-shadow: none;
+}
+.library-search button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.library-search button svg {
+  width: 14px;
+}
+.library-clear {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.library-clear svg {
+  width: 14px;
+}
+.library-empty,
+.library-message {
+  margin: 28px 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+.library-message {
+  margin: 14px 0 0;
+  color: var(--primary);
+  font-weight: 600;
+}
+.library-group h2,
+.library-folder-head h2 {
+  margin: 26px 0 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.library-group ul,
+.library-folder-view > ul,
+.library-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.library-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 8px;
+  transition: background-color var(--dur-exit);
+}
+.library-row:hover {
+  background: var(--muted);
+}
+.library-row time {
+  width: 44px;
+  flex: 0 0 44px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.library-row > button:not(.library-link) {
+  opacity: 0;
+}
+.library-row:hover > button,
+.library-row > button:focus-visible {
+  opacity: 1;
+}
+.library-row-folder {
+  width: 16px;
+  flex: 0 0 16px;
+  color: var(--primary);
+}
+.library-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.library-link strong,
+.library-link span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.library-link strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.library-link span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.library-link:hover strong {
+  color: var(--primary);
+}
+.library-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.library-more {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+.bookmarks-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 24px;
+  margin-top: 20px;
+}
+.library-tree {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+}
+.library-folder {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.library-folder span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.library-folder svg {
+  width: 15px;
+  flex: 0 0 15px;
+  color: var(--primary);
+}
+.library-folder:hover {
+  background: var(--muted);
+}
+.library-folder.selected {
+  background: color-mix(in oklab, var(--primary) 13%, transparent);
+  font-weight: 700;
+}
+.library-folder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.library-folder-head h2 {
+  margin: 0;
+}
+.library-folder-head > div {
+  display: flex;
+  gap: 4px;
+}
+.library-folder-head svg {
+  width: 14px;
+}
+.library-folder-view {
+  min-height: 240px;
+}
+.library-draft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+.library-draft input {
+  flex: 1;
+  min-width: 160px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .bookmarks-layout {
+    grid-template-columns: 1fr;
+  }
+  .library-tree {
+    position: static;
+  }
+}
+
+/* Permissões (painel do site e configurações). */
+.site-panel {
+  right: auto;
+  left: 150px;
+  transform-origin: top left;
+}
+.vertical-tabs .site-panel {
+  left: 330px;
+}
+.permission-list {
+  margin: 0;
+  padding: 6px 12px 10px;
+  list-style: none;
+}
+.permission-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 6px;
+  font-size: 12.5px;
+}
+.permission-list li > svg {
+  width: 14px;
+  color: var(--muted-foreground);
+}
+.permission-list li > span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.permission-list li > span small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.permission-select {
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+.permission-select:disabled {
+  opacity: 0.55;
+}
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: none;
+  cursor: pointer;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.site-note {
+  margin: 10px 18px 0;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.site-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.settings-links {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px 4px;
+}
+.settings-links svg {
+  width: 14px;
+}
+.settings-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.settings-update p {
+  margin: 12px 18px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.settings-update .download-progress {
+  margin: 10px 18px 0;
+}
+/* Botões das páginas da casca no mesmo tamanho dos painéis. */
+.library-clear button,
+.library-folder-head button,
+.library-more button,
+.library-draft button {
+  height: 32px;
+  font-size: 12.5px;
+}
+.library-folder-head > div button {
+  height: 30px;
+}

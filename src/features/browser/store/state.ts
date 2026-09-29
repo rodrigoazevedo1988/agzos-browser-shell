@@ -1,7 +1,17 @@
 import type { AdblockStats, BlockedTracker, DownloadRecord } from "../desktop";
-import type { ClosedTab, EngineId, Entry, QuickLink, Tab, TabOrientation } from "../types";
+import type {
+  BookmarkNode,
+  ClosedTab,
+  EngineId,
+  Entry,
+  QuickLink,
+  Tab,
+  TabOrientation,
+} from "../types";
 
 export const HOME_URL = "agzos://inicio";
+export const HISTORY_URL = "agzos://historico";
+export const BOOKMARKS_URL = "agzos://favoritos";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 
@@ -20,6 +30,10 @@ export type Prefs = {
   orientation: TabOrientation;
   railCollapsed: boolean;
   pausedHosts: string[];
+  /** Barra de favoritos abaixo da barra de endereço. */
+  bookmarksBar: boolean;
+  /** Sugestões do motor de busca na omnibox (o texto digitado vai para o buscador). */
+  searchSuggestions: boolean;
 };
 
 export const defaultPrefs: Prefs = {
@@ -30,6 +44,8 @@ export const defaultPrefs: Prefs = {
   orientation: "horizontal",
   railCollapsed: false,
   pausedHosts: [],
+  bookmarksBar: true,
+  searchSuggestions: true,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };
@@ -42,10 +58,13 @@ export type BrowserState = {
   activeId: number;
   closedTabs: ClosedTab[];
   links: QuickLink[];
+  bookmarks: BookmarkNode[];
   prefs: Prefs;
   // Só em memória.
   nextId: number;
   address: string;
+  /** O usuário mexeu na barra: a página carregando não sobrescreve o texto (como no Chrome). */
+  addressEdited: boolean;
   hydrated: boolean;
   viewNav: ViewNav | null;
   audioPlaying: number[];
@@ -73,9 +92,11 @@ export const initialState: BrowserState = {
   activeId: 1,
   closedTabs: [],
   links: defaultLinks,
+  bookmarks: [],
   prefs: defaultPrefs,
   nextId: 2,
   address: HOME_URL,
+  addressEdited: false,
   hydrated: false,
   viewNav: null,
   audioPlaying: [],

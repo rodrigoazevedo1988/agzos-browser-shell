@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -165,12 +167,16 @@ function tempProfile() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "agzos-e2e-"));
 }
 
-async function launch(profile: string): Promise<{ app: ElectronApplication; window: Page }> {
+async function launch(
+  profile: string,
+  extraEnv: Record<string, string> = {},
+): Promise<{ app: ElectronApplication; window: Page }> {
   const app = await electron.launch({
     args: ["--no-sandbox", root],
     cwd: root,
     env: {
       ...process.env,
+      ...extraEnv,
       AGZOS_USER_DATA: profile,
       AGZOS_DOWNLOADS_DIR: path.join(profile, "Downloads"),
       // Listas locais: o teste não depende da internet nem das listas reais.
@@ -349,7 +355,7 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
       Object.keys(stored)
         .filter((key) => !key.startsWith("meta:"))
         .sort(),
-    ).toEqual(["closedTabs", "links", "prefs", "session", "version"]);
+    ).toEqual(["bookmarks", "closedTabs", "links", "prefs", "session", "version"]);
     expect(stored["session"]).toContain("/salva");
     expect(JSON.stringify(stored)).not.toContain("secreta");
   } finally {
@@ -776,5 +782,205 @@ test("scriptlet do mundo isolado reescreve script inline mesmo com Trusted Types
     await expect.poll(() => inTab(app, url, "window.resultado")).toBe("LIMPO");
   } finally {
     await app.close();
+  }
+});
+
+/** Roda JavaScript na aba como se viesse de um clique (pedidos de permissão). */
+async function withGesture<T>(app: ElectronApplication, url: string, code: string): Promise<T> {
+  return app.evaluate(
+    ({ webContents }, [target, source]) =>
+      webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL() === target)!
+        .executeJavaScript(source!, true),
+    [url, code] as const,
+  ) as Promise<T>;
+}
+
+test("1.6: histórico das navegações reais (sem a anônima), sugestão na omnibox e reinício", async () => {
+  const profile = tempProfile();
+  const first = await launch(profile);
+  await go(first.window, `${origin}/historia-um`);
+  await expect(tabs(first.window).first()).toContainText("Página HISTORIA-UM");
+  await go(first.window, `${origin}/historia-dois`);
+  await expect(tabs(first.window).first()).toContainText("Página HISTORIA-DOIS");
+  await first.window.getByRole("button", { name: "Nova aba anônima" }).click();
+  await go(first.window, `${origin}/historia-secreta`);
+  await expect(tabs(first.window).last()).toContainText("Página HISTORIA-SECRETA");
+  await first.app.close();
+
+  const second = await launch(profile);
+  const { window } = second;
+  try {
+    // Omnibox: o histórico aparece como sugestão e o título veio da página.
+    await omnibox(window).fill("");
+    await omnibox(window).pressSequentially("historia");
+    const list = window.getByRole("listbox", { name: "Sugestões" });
+    await expect(list.getByRole("option", { name: /Página HISTORIA-UM/ })).toBeVisible();
+    await expect(list.getByRole("option", { name: /SECRETA/ })).toHaveCount(0);
+    await omnibox(window).press("Escape");
+
+    await window.keyboard.press("Control+h");
+    const page = window.locator(".library-page");
+    await expect(page.getByRole("heading", { name: "Histórico", level: 1 })).toBeVisible();
+    await expect(page.locator(".library-row")).toHaveCount(2);
+    await expect(page.getByText("Página HISTORIA-DOIS")).toBeVisible();
+    // Clicar abre o site na aba do histórico (vira página de verdade).
+    await page.getByText("Página HISTORIA-UM").click();
+    await expect(tabs(window).last()).toContainText("Página HISTORIA-UM");
+    await expect.poll(() => liveViews(second.app, "/historia-um")).toHaveLength(1);
+  } finally {
+    await second.app.close();
+  }
+});
+
+test("1.6: permissão lembrada vale depois de reiniciar; bloqueio vira 'denied'", async () => {
+  const profile = tempProfile();
+  const url = `${origin}/notificacoes`;
+  const first = await launch(profile);
+  try {
+    await go(first.window, url);
+    await expect(tabs(first.window).first()).toContainText("Página NOTIFICACOES");
+    // Sem decisão, a página continua vendo "default" (identidade de Chrome intacta).
+    expect(await inTab(first.app, url, "Notification.permission")).toBe("default");
+    const asked = withGesture<string>(first.app, url, "Notification.requestPermission()");
+    const bar = first.window.getByRole("alertdialog", { name: "Pedido de permissão" });
+    await expect(bar).toContainText("quer mostrar notificações");
+    await bar.getByRole("button", { name: "Permitir" }).click();
+    expect(await asked).toBe("granted");
+  } finally {
+    await first.app.close();
+  }
+
+  const second = await launch(profile);
+  const { window } = second;
+  try {
+    // A sessão volta com a página aberta.
+    await expect(tabs(window).first()).toContainText("Página NOTIFICACOES");
+    await expect
+      .poll(() => inTab(second.app, url, "document.readyState").catch(() => ""))
+      .toBe("complete");
+    // Lembrado: responde sem perguntar.
+    expect(await withGesture(second.app, url, "Notification.requestPermission()")).toBe("granted");
+    await expect(window.getByRole("alertdialog", { name: "Pedido de permissão" })).toHaveCount(0);
+
+    // Cadeado → Bloquear: a próxima carga vê "denied", como no Chrome.
+    await window.getByRole("button", { name: "Informações do site" }).click();
+    const panel = window.getByRole("complementary", { name: "Informações do site" });
+    await panel.getByLabel(/^Notificações em/).selectOption("block");
+    await panel.getByRole("button", { name: "Fechar informações do site" }).click();
+    await window.getByRole("button", { name: "Recarregar" }).click();
+    await expect.poll(() => inTab(second.app, url, "Notification.permission")).toBe("denied");
+    expect(await withGesture(second.app, url, "Notification.requestPermission()")).toBe("denied");
+
+    // Configurações lista o site e volta para "Perguntar".
+    await window.getByRole("button", { name: "Configurações" }).click();
+    const settings = window.getByRole("complementary", { name: "Configurações" });
+    const select = settings.getByLabel(/^Notificações em 127\.0\.0\.1/);
+    await expect(select).toHaveValue("block");
+    await select.selectOption("ask");
+    await expect(settings.getByText(/o site aparece aqui/)).toBeVisible();
+  } finally {
+    await second.app.close();
+  }
+});
+
+test("1.6: favorito pela estrela persiste no SQLite e abre pela barra", async () => {
+  const profile = tempProfile();
+  const first = await launch(profile);
+  await go(first.window, `${origin}/favorita`);
+  await expect(tabs(first.window).first()).toContainText("Página FAVORITA");
+  await first.window.keyboard.press("Control+d");
+  const editor = first.window.getByRole("complementary", { name: "Favorito adicionado" });
+  await editor.getByLabel("Nome do favorito").fill("Minha favorita");
+  await editor.getByRole("button", { name: "Concluído" }).click();
+  await first.window.waitForTimeout(800);
+  await first.app.close();
+
+  const second = await launch(profile);
+  try {
+    await second.window.keyboard.press("Control+t");
+    const bar = second.window.getByRole("navigation", { name: "Barra de favoritos" });
+    await bar.getByRole("button", { name: "Minha favorita" }).click();
+    await expect(tabs(second.window).last()).toContainText("Página FAVORITA");
+    await expect(second.window.getByLabel("Favoritar página")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  } finally {
+    await second.app.close();
+  }
+});
+
+test("1.6: atualização encontra a versão nova, confere, baixa e instala ao reiniciar", async () => {
+  // Pacote "1.99.0" no formato do build-all.sh (tar.gz do Linux), servido como no VPS.
+  const work = tempProfile();
+  const install = path.join(work, "instalado");
+  fs.mkdirSync(path.join(install, "resources", "app"), { recursive: true });
+  fs.writeFileSync(path.join(install, "resources", "app", "package.json"), '{"version":"1.3.8"}');
+  const pkg = path.join(work, "pacote");
+  fs.mkdirSync(path.join(pkg, "resources", "app"), { recursive: true });
+  fs.writeFileSync(path.join(pkg, "resources", "app", "package.json"), '{"version":"1.99.0"}');
+  // O app reaberto é o executável com o mesmo nome do atual (aqui, o "electron" do teste).
+  fs.writeFileSync(
+    path.join(pkg, "electron"),
+    `#!/bin/sh\necho reaberto > "${work}/reaberto.txt"\n`,
+    { mode: 0o755 },
+  );
+  const archive = path.join(work, "pacote.tar.gz");
+  execFileSync("tar", ["-czf", archive, "-C", pkg, "."]);
+  const bytes = fs.readFileSync(archive);
+  const feed = http.createServer((request, response) => {
+    if (request.url === "/browser/latest.json") {
+      response.end(
+        JSON.stringify({
+          version: "1.99.0",
+          notes: "teste",
+          files: {
+            "linux-x64": {
+              url: "v1.99.0/Agnos-Browser-linux-x64.tar.gz",
+              sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+              size: bytes.length,
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (request.url === "/browser/v1.99.0/Agnos-Browser-linux-x64.tar.gz") {
+      response.end(bytes);
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  });
+  await new Promise<void>((resolve) => feed.listen(0, "127.0.0.1", resolve));
+  const feedUrl = `http://127.0.0.1:${(feed.address() as AddressInfo).port}/browser/latest.json`;
+  const { app, window } = await launch(path.join(work, "perfil"), {
+    AGZOS_UPDATE_URL: feedUrl,
+    AGZOS_UPDATE_INSTALL_DIR: install,
+  });
+  let closed = false;
+  app.on("close", () => (closed = true));
+  try {
+    await window.getByRole("button", { name: "Configurações" }).click();
+    const settings = window.getByRole("complementary", { name: "Configurações" });
+    await settings.getByRole("button", { name: "Verificar agora" }).click();
+    await expect(settings.getByText(/Versão 1\.99\.0 pronta/)).toBeVisible({ timeout: 20_000 });
+    await settings.getByRole("button", { name: "Fechar configurações" }).click();
+    // Botão na barra: reinicia e instala.
+    await window.getByRole("button", { name: "Atualizar" }).click();
+    await expect.poll(() => closed, { timeout: 15_000 }).toBe(true);
+    const result = path.join(work, "perfil", "atualizacoes", "resultado.txt");
+    await expect.poll(() => fs.existsSync(result), { timeout: 15_000 }).toBe(true);
+    expect(fs.readFileSync(result, "utf8").trim()).toBe("ok 1.99.0");
+    expect(
+      fs.readFileSync(path.join(install, "resources", "app", "package.json"), "utf8"),
+    ).toContain("1.99.0");
+    await expect.poll(() => fs.existsSync(path.join(work, "reaberto.txt"))).toBe(true);
+  } finally {
+    if (!closed) await app.close();
+    feed.closeAllConnections();
+    feed.close();
   }
 });

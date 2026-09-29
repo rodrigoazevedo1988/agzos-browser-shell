@@ -1,6 +1,14 @@
+import { parseBookmarks } from "../bookmarks";
 import type { HydratePayload } from "../store/reducer";
-import { CLOSED_TABS_LIMIT, defaultPrefs, type BrowserState, type Prefs } from "../store/state";
-import type { ClosedTab, Entry, QuickLink, Tab } from "../types";
+import {
+  BOOKMARKS_URL,
+  CLOSED_TABS_LIMIT,
+  HISTORY_URL,
+  defaultPrefs,
+  type BrowserState,
+  type Prefs,
+} from "../store/state";
+import type { BookmarkNode, ClosedTab, Entry, QuickLink, Tab } from "../types";
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -12,9 +20,20 @@ export type Snapshot = {
   /** null = usar os atalhos padrão. */
   links: QuickLink[] | null;
   closedTabs: ClosedTab[];
+  /** null = ainda não existia (antes da 1.6): os favoritos nascem dos atalhos. */
+  bookmarks: BookmarkNode[] | null;
 };
 
-export const SNAPSHOT_SECTIONS = ["version", "prefs", "session", "links", "closedTabs"] as const;
+export const SNAPSHOT_SECTIONS = [
+  "version",
+  "prefs",
+  "session",
+  "links",
+  "closedTabs",
+  "bookmarks",
+] as const;
+
+const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL]);
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -25,7 +44,14 @@ const isString = (value: unknown): value is string => typeof value === "string";
 
 function parseEntry(value: unknown): Entry | null {
   if (!isObject(value) || !isString(value["title"]) || !isString(value["url"])) return null;
-  const kind = value["kind"] === "home" ? "home" : value["kind"] === "page" ? "page" : null;
+  const kind =
+    value["kind"] === "home"
+      ? "home"
+      : value["kind"] === "page"
+        ? "page"
+        : value["kind"] === "internal" && INTERNAL_URLS.has(value["url"])
+          ? "internal"
+          : null;
   return kind ? { title: value["title"], url: value["url"], kind } : null;
 }
 
@@ -92,6 +118,8 @@ export function parsePrefs(value: unknown): Prefs {
     shield: bool("shield"),
     aiOpen: bool("aiOpen"),
     railCollapsed: bool("railCollapsed"),
+    bookmarksBar: bool("bookmarksBar"),
+    searchSuggestions: bool("searchSuggestions"),
     engine:
       raw["engine"] === "yandex" || raw["engine"] === "duckduckgo" ? raw["engine"] : "duckduckgo",
     orientation: raw["orientation"] === "vertical" ? "vertical" : "horizontal",
@@ -114,12 +142,13 @@ export function parseSnapshot(value: unknown): Snapshot | null {
     session: { tabs: parseTabs(session["tabs"]), activeId },
     links: parseLinks(value["links"]),
     closedTabs: parseClosedTabs(value["closedTabs"]),
+    bookmarks: parseBookmarks(value["bookmarks"]),
   };
 }
 
 export type PersistedSlice = Pick<
   BrowserState,
-  "tabs" | "activeId" | "prefs" | "links" | "closedTabs"
+  "tabs" | "activeId" | "prefs" | "links" | "closedTabs" | "bookmarks"
 >;
 
 export function snapshotOf(state: PersistedSlice): Snapshot {
@@ -133,6 +162,7 @@ export function snapshotOf(state: PersistedSlice): Snapshot {
     },
     links: state.links,
     closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
+    bookmarks: state.bookmarks,
   };
 }
 
@@ -144,6 +174,7 @@ export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | nu
     activeId: snapshot.session.activeId,
     links: snapshot.links,
     closedTabs: snapshot.closedTabs,
+    bookmarks: snapshot.bookmarks,
   };
 }
 
@@ -190,6 +221,7 @@ export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
     links: parseLinks(readJson(storage, "agzos-links")),
     // A 1.3 empilhava no fim e reabria o último.
     closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),
+    bookmarks: null,
   };
 }
 

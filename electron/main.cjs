@@ -21,6 +21,15 @@ const {
 } = require("./adblock.cjs");
 const { createDownloadManager } = require("./downloads.cjs");
 const { nextZoom, zoomHostOf } = require("./zoom.cjs");
+const {
+  createPermissions,
+  permissionTypesOf,
+  checkTypesOf,
+  requestOrigin,
+  AUTO_ALLOWED,
+} = require("./permissions.cjs");
+const { fetchSuggestions } = require("./suggest.cjs");
+const { createUpdater, DEFAULT_FEED } = require("./updater.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -42,7 +51,6 @@ const developmentUrl = process.argv
 
 const views = new Map();
 const pendingPermissions = new Map();
-const rememberedMedia = new Map();
 const crashedViews = new Set();
 const rejectedLoginViews = new Set();
 let mainWindow = null;
@@ -54,6 +62,8 @@ let permissionSeq = 0;
 let database = null;
 let adblock = null;
 let downloads = null;
+let permissions = null;
+let updater = null;
 // webContents.id → id da aba, para saber quem fez cada requisição.
 const tabIdByContents = new Map();
 // Zoom das abas anônimas: vale na sessão, nunca vai para o disco.
@@ -572,29 +582,83 @@ function buildTabContextMenu(context) {
   return Menu.buildFromTemplate(items);
 }
 
-function allowMediaPermissions(ses) {
+const wiredPermissionSessions = new WeakSet();
+
+// Permissões por site (electron/permissions.cjs): decisão salva responde sozinha; sem
+// decisão, a casca pergunta (barra de permissão) e "Lembrar" grava no SQLite.
+function wirePermissions(ses) {
+  if (wiredPermissionSessions.has(ses)) return;
+  wiredPermissionSessions.add(ses);
+  const isPrivate = () => ses === privateSession();
   ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
-    if (permission === "media") {
-      let origin = details.requestingOrigin ?? "origem desconhecida";
-      try {
-        origin = new URL(details.requestingUrl ?? details.requestingOrigin).origin;
-      } catch {
-        origin = details.requestingOrigin ?? "origem desconhecida";
-      }
-      if (rememberedMedia.has(origin)) {
-        callback(rememberedMedia.get(origin));
-        return;
-      }
-      const id = `perm-${++permissionSeq}`;
-      pendingPermissions.set(id, { callback, origin });
-      sendToChrome("agzos:permission-request", {
-        id,
-        origin,
-        mediaTypes: details.mediaTypes ?? [],
-      });
+    const types = permissionTypesOf(permission, details);
+    if (!types) {
+      callback(AUTO_ALLOWED.includes(permission));
       return;
     }
-    callback(["fullscreen", "pointerLock", "clipboard-sanitized-write"].includes(permission));
+    const origin = requestOrigin(details);
+    const decision = permissions ? permissions.decide(origin, types, isPrivate()) : null;
+    if (decision !== null || !origin) {
+      callback(Boolean(decision));
+      return;
+    }
+    const id = `perm-${++permissionSeq}`;
+    pendingPermissions.set(id, { callback, origin, types, isPrivate: isPrivate() });
+    sendToChrome("agzos:permission-request", {
+      id,
+      origin,
+      types,
+      mediaTypes: details.mediaTypes ?? [],
+    });
+  });
+  // Só o bloqueio explícito muda o check (ver o comentário em permissions.cjs).
+  ses.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
+    const types = checkTypesOf(permission, details);
+    if (!types || !permissions) return true;
+    const origin = requestOrigin({ ...details, requestingOrigin });
+    return !permissions.blocked(origin, types, isPrivate());
+  });
+}
+
+// --- Histórico (nunca da aba anônima; ver db.cjs). ---
+
+function recordVisit(contents, url, { sameDocument = false } = {}) {
+  // O about:blank da preparação dos scriptlets fica de fora pelo filtro de http(s).
+  if (!database || isPrivateContents(contents) || !/^https?:\/\//i.test(url)) return;
+  try {
+    const title = contents.getTitle();
+    // No pushState o título ainda é o da página anterior: o page-title-updated corrige.
+    const usable = !sameDocument && title && title !== url && !url.endsWith(title) ? title : "";
+    database.addVisit({ url, title: usable });
+  } catch (error) {
+    console.error("Agzos: não foi possível registrar a visita.", error);
+  }
+}
+
+function historyCall(work, fallback) {
+  if (!database) return fallback;
+  try {
+    return work(database);
+  } catch (error) {
+    console.error("Agzos: erro no histórico.", error);
+    return fallback;
+  }
+}
+
+/** Menu nativo genérico (pastas da barra de favoritos, menu de um favorito). */
+function menuTemplateOf(items, depth = 0) {
+  if (!Array.isArray(items) || depth > 8) return [];
+  return items.slice(0, 500).flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    if (item.separator) return [{ type: "separator" }];
+    const label = String(item.label ?? "").slice(0, 120) || "—";
+    if (Array.isArray(item.children)) {
+      const submenu = menuTemplateOf(item.children, depth + 1);
+      return [
+        { label, submenu: submenu.length ? submenu : [{ label: "(vazia)", enabled: false }] },
+      ];
+    }
+    return [{ label, id: String(item.id ?? ""), enabled: item.enabled !== false }];
   });
 }
 
@@ -639,6 +703,10 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+d",
   "mod+f",
   "mod+j",
+  "mod+h",
+  "mod+y",
+  "mod+shift+o",
+  "mod+shift+b",
   "mod+shift+t",
   "mod+shift+d",
   "mod+shift+n",
@@ -1028,11 +1096,24 @@ function wireView(id, view) {
   contents.on("zoom-changed", (_event, direction) => changeZoom(id, direction === "in" ? 1 : -1));
   contents.on("did-navigate", () => applyStoredZoom(id, contents));
   contents.on("did-stop-loading", () => scheduleThumbnail(id, 600));
+  contents.on("did-navigate", (_event, url) => recordVisit(contents, url));
+  contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+    if (isMainFrame) recordVisit(contents, url, { sameDocument: true });
+  });
+  contents.on("page-title-updated", (_event, title) => {
+    if (!isPrivateContents(contents)) {
+      historyCall((db) => db.updateHistoryTitle(contents.getURL(), title));
+    }
+  });
   contents.on("did-navigate", () => notifyTabState(id));
   contents.on("did-navigate-in-page", () => notifyTabState(id));
   contents.on("page-title-updated", () => notifyTabState(id));
   contents.on("page-favicon-updated", (_event, icons) => {
-    sendToChrome("agzos:tab-event", { type: "favicon", id, icon: icons.at(-1) ?? null });
+    const icon = icons.at(-1) ?? null;
+    if (icon && /^https?:/.test(icon) && !isPrivateContents(contents)) {
+      historyCall((db) => db.updateHistoryIcon(contents.getURL(), icon));
+    }
+    sendToChrome("agzos:tab-event", { type: "favicon", id, icon });
   });
   contents.on("media-started-playing", () =>
     sendToChrome("agzos:tab-event", { type: "audio", id, playing: true }),
@@ -1142,7 +1223,7 @@ function registerIpc() {
     views.set(id, { view });
     tabIdByContents.set(view.webContents.id, id);
     mainWindow.contentView.addChildView(view);
-    allowMediaPermissions(view.webContents.session);
+    wirePermissions(view.webContents.session);
     wireView(id, view);
     if (isWebUrl(url)) {
       // O comando CDP sai antes do loadURL (sem esperar: numa aba nova ele só responde
@@ -1319,9 +1400,84 @@ function registerIpc() {
     const pending = pendingPermissions.get(id);
     if (!pending) return;
     pendingPermissions.delete(id);
-    if (remember) rememberedMedia.set(pending.origin, Boolean(allow));
+    if (remember) {
+      permissions?.remember(pending.origin, pending.types, Boolean(allow), pending.isPrivate);
+    }
     pending.callback(Boolean(allow));
   });
+
+  ipcMain.handle("permissions:list", () => permissions?.list() ?? []);
+  ipcMain.handle("permissions:set", (_event, { origin, type, value }) => ({
+    ok: Boolean(permissions?.set(origin, type, value ?? null)),
+  }));
+  ipcMain.handle("permissions:reset", (_event, { origin }) => ({
+    ok: Boolean(permissions?.reset(origin)),
+  }));
+
+  ipcMain.handle("history:list", (_event, query) =>
+    historyCall(
+      (db) =>
+        db.listHistory({
+          text: typeof query?.text === "string" ? query.text.slice(0, 200) : "",
+          before: Number.isFinite(query?.before) ? query.before : null,
+          limit: Number.isInteger(query?.limit) ? query.limit : 100,
+        }),
+      [],
+    ),
+  );
+  ipcMain.handle("history:search", (_event, { text, limit }) =>
+    historyCall(
+      (db) =>
+        db.searchHistory(
+          typeof text === "string" ? text.slice(0, 200) : "",
+          Number.isInteger(limit) ? limit : 40,
+        ),
+      [],
+    ),
+  );
+  ipcMain.handle("history:delete", (_event, { ids }) => {
+    historyCall((db) => db.deleteVisits(ids));
+  });
+  ipcMain.handle("history:delete-url", (_event, { url }) => {
+    if (typeof url === "string") historyCall((db) => db.deleteHistoryUrl(url));
+  });
+  ipcMain.handle("history:clear", (_event, range) => {
+    historyCall((db) =>
+      db.clearHistory({
+        from: Number.isFinite(range?.from) ? range.from : 0,
+        to: Number.isFinite(range?.to) ? range.to : Number.MAX_SAFE_INTEGER,
+      }),
+    );
+  });
+
+  ipcMain.handle("omnibox:suggest", (_event, { engine, text }) =>
+    fetchSuggestions((url, init) => net.fetch(url, init), engine, text),
+  );
+
+  ipcMain.handle("menu:show", (_event, items) => {
+    const template = menuTemplateOf(items);
+    if (!template.length || !mainWindow) return null;
+    return new Promise((resolve) => {
+      let chosen = null;
+      const attachClicks = (entries) =>
+        entries.map((entry) =>
+          entry.submenu
+            ? { ...entry, submenu: attachClicks(entry.submenu) }
+            : entry.id !== undefined
+              ? { ...entry, click: () => (chosen = entry.id) }
+              : entry,
+        );
+      Menu.buildFromTemplate(attachClicks(template)).popup({
+        window: mainWindow,
+        // O click chega antes do fechamento; o setTimeout garante a ordem.
+        callback: () => setTimeout(() => resolve(chosen), 0),
+      });
+    });
+  });
+
+  ipcMain.handle("update:state", () => updater?.state() ?? null);
+  ipcMain.handle("update:check", () => updater?.check() ?? null);
+  ipcMain.handle("update:install", () => ({ ok: Boolean(updater?.install({ reopen: true })) }));
 
   ipcMain.handle("state:load", () => {
     if (!database) return { available: false, sections: {} };
@@ -1429,6 +1585,24 @@ function startServices() {
     // Sem estado salvo: escudo ligado, nenhum site pausado.
   }
   adblock.start();
+  permissions = createPermissions({ database });
+
+  // AGZOS_UPDATE_URL troca o feed (testes); "off" desliga. Fora do pacote (dev, e2e) só
+  // verifica com o feed definido, e nunca sozinho.
+  const feed = process.env.AGZOS_UPDATE_URL;
+  if (feed !== "off" && (app.isPackaged || feed)) {
+    updater = createUpdater({
+      feedUrl: feed || DEFAULT_FEED,
+      currentVersion: app.getVersion(),
+      installDir: process.env.AGZOS_UPDATE_INSTALL_DIR || null,
+      workDir: path.join(app.getPath("userData"), "atualizacoes"),
+      fetchImpl: (url, init) => net.fetch(url, init),
+      emit: (state) => sendToChrome("agzos:update", state),
+      quit: () => app.quit(),
+      log: (message) => console.log(`Agzos: ${message}`),
+    });
+    updater.start({ auto: app.isPackaged });
+  }
 }
 
 function openStateDatabase() {
@@ -1453,7 +1627,16 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => downloads?.cancelAll());
+app.on("before-quit", () => {
+  downloads?.cancelAll();
+  updater?.stop();
+  // Atualização já baixada entra ao fechar (como no Chrome); abre na versão nova.
+  try {
+    updater?.installOnQuit();
+  } catch (error) {
+    console.error("Agzos: não foi possível instalar a atualização.", error);
+  }
+});
 
 app.on("will-quit", () => {
   adblock?.close();
