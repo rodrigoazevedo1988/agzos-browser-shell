@@ -10,6 +10,7 @@ const {
   shell,
   safeStorage,
   net,
+  webContents,
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -40,6 +41,12 @@ const {
 } = require("./windows.cjs");
 const { HOVER_CARD_HTML, cardBounds, metricRows } = require("./hover-card.cjs");
 const { SWITCHER_HTML, switcherChoice, switcherBounds } = require("./switcher-layer.cjs");
+const {
+  createLayerView,
+  sanitizeOverlay,
+  wheelEvent,
+  overlayDebugger,
+} = require("./chrome-overlay.cjs");
 const {
   CHECK_INTERVAL_MS,
   hibernateConfigOf,
@@ -1331,6 +1338,7 @@ function wireView(view) {
     const ctx = ctxNow();
     if (!ctx) return;
     ctx.fullscreenActive = true;
+    closePanelLayer(ctx, { notify: true, refocus: false });
     view.setBounds(fullRect(ctx));
     send(ctx, "agzos:fullscreen", { active: true });
   });
@@ -1460,6 +1468,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     switcherOpen: false,
     switcherView: null,
     preview: null,
+    overlay: null,
   };
   const shellId = window.webContents.id;
   contexts.set(shellId, ctx);
@@ -1486,8 +1495,19 @@ function createWindow({ record = null, near = null, session: initial = null, ado
       return;
     }
     applyLayout(ctx);
+    placePanelLayer(ctx);
   });
-  window.on("move", saveBoundsSoon);
+  // Arrastar, minimizar ou esconder a janela fecha o painel aberto. Só vale movimento de
+  // verdade: o gerenciador de janelas manda "move" (e "blur") soltos ao mostrar a janela.
+  const dismissPanel = () => closePanelLayer(ctx, { notify: true, refocus: false });
+  window.on("move", () => {
+    saveBoundsSoon();
+    const from = ctx.overlay?.model ? ctx.overlay.position : null;
+    const [x, y] = window.getPosition();
+    if (from && (from[0] !== x || from[1] !== y)) dismissPanel();
+  });
+  window.on("minimize", dismissPanel);
+  window.on("hide", dismissPanel);
   window.on("maximize", saveBoundsSoon);
   window.on("unmaximize", saveBoundsSoon);
   window.on("leave-full-screen", () => setTimeout(() => applyLayout(ctx), 50));
@@ -1511,6 +1531,15 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
     if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) {
       ctx.switcherView.webContents.close();
+    }
+    if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) {
+      ctx.overlay.view.webContents.close();
+    }
+    for (const [id, pending] of pendingOverlayCalls) {
+      if (pending.ctx !== ctx) continue;
+      pendingOverlayCalls.delete(id);
+      clearTimeout(pending.timer);
+      pending.resolve(undefined);
     }
     for (const [id, entry] of ctx.views) dropView(ctx, id, entry);
     contexts.delete(shellId);
@@ -1783,15 +1812,8 @@ async function pictureInPictureActive(contents) {
 
 function previewLayer(ctx) {
   if (ctx.preview && !ctx.preview.webContents.isDestroyed()) return ctx.preview;
-  const view = new WebContentsView({
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-  });
-  view.setBackgroundColor("#00000000");
-  view.setBounds(HIDDEN_RECT);
   // Só a casca mexe no cartão: nada de navegar, abrir janelas ou receber foco de teclado.
-  view.webContents.on("will-navigate", (event) => event.preventDefault());
-  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  view.webContents.setIgnoreMenuShortcuts(true);
+  const view = createLayerView(WebContentsView);
   void view.webContents
     .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HOVER_CARD_HTML)}`)
     .catch(() => {});
@@ -1828,6 +1850,8 @@ function tabMetrics(contents) {
 let previewSeq = 0;
 
 async function showPreview(ctx, { id, rect, side, card }) {
+  // Um overlay por vez: com painel aberto não há prévia.
+  if (ctx.overlay?.model) return;
   const seq = ++previewSeq;
   ctx.previewSeq = seq;
   const view = previewLayer(ctx);
@@ -1869,14 +1893,8 @@ async function showPreview(ctx, { id, rect, side, card }) {
 
 function switcherLayer(ctx) {
   if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) return ctx.switcherView;
-  const view = new WebContentsView({
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-  });
-  view.setBackgroundColor("#00000000");
-  view.setBounds(HIDDEN_RECT);
+  const view = createLayerView(WebContentsView);
   const contents = view.webContents;
-  contents.setWindowOpenHandler(() => ({ action: "deny" }));
-  contents.setIgnoreMenuShortcuts(true);
   // Clique num cartão: agzos-switcher://N vira "confirmar a guia N".
   contents.on("will-navigate", (event, url) => {
     event.preventDefault();
@@ -1955,6 +1973,139 @@ function hidePreview(ctx) {
   void view.webContents.executeJavaScript("window.hide && window.hide()").catch(() => {});
 }
 
+// --- Painéis da toolbar na camada acima da página (chrome-overlay.cjs). ---
+
+const logOverlay = overlayDebugger();
+const OVERLAY_PAGE = path.join(__dirname, "..", "dist", "overlay.html");
+const OVERLAY_LOAD_TIMEOUT_MS = 10_000;
+const pendingOverlayCalls = new Map();
+let overlayCallSeq = 0;
+
+/** A camada dos painéis da janela: criada na primeira abertura e reusada depois. */
+function panelLayer(ctx) {
+  if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) return ctx.overlay;
+  if (!fs.existsSync(OVERLAY_PAGE)) return null;
+  const view = createLayerView(WebContentsView, {
+    preload: path.join(__dirname, "overlay-preload.cjs"),
+    menuShortcuts: true,
+  });
+  view.setVisible(false);
+  const contents = view.webContents;
+  const layer = { view, ready: false, model: null, returnFocus: null, position: null };
+  layer.loaded = new Promise((resolve) => {
+    layer.markReady = resolve;
+    contents.once("destroyed", () => resolve(false));
+    contents.once("did-fail-load", () => resolve(false));
+  });
+  // Atalhos do app com o foco no painel: o painel fecha e o atalho segue para a casca
+  // (Ctrl+T abre a guia, Ctrl+Tab abre o seletor). Mesmo caminho das teclas da página,
+  // inclusive o Ctrl sintético que tira a supressão de teclas do Chromium.
+  contents.on("before-input-event", (event, input) => {
+    if (input.type === "keyUp" && (input.key === "Control" || input.key === "Meta")) {
+      send(ctx, "agzos:modifier-up", { key: input.key });
+      return;
+    }
+    if (input.type !== "keyDown" || !FORWARDED_SHORTCUTS.has(shortcutCombo(input))) return;
+    closePanelLayer(ctx, { notify: true, refocus: false });
+    forwardAppShortcut(ctx, input, event, { contents });
+  });
+  // A camada caiu: fecha o painel e descarta a camada (a próxima abertura cria outra).
+  contents.on("render-process-gone", () => {
+    closePanelLayer(ctx, { notify: true });
+    if (ctx.overlay === layer) ctx.overlay = null;
+    if (!ctx.window.isDestroyed()) ctx.window.contentView.removeChildView(view);
+    if (!contents.isDestroyed()) contents.close();
+  });
+  void contents.loadFile(OVERLAY_PAGE).catch(() => layer.markReady(false));
+  ctx.overlay = layer;
+  return layer;
+}
+
+function overlayOfEvent(event) {
+  for (const ctx of contexts.values()) {
+    if (ctx.overlay?.view.webContents === event.sender) return ctx;
+  }
+  return null;
+}
+
+function renderPanelLayer(ctx) {
+  const layer = ctx.overlay;
+  if (!layer?.ready || layer.view.webContents.isDestroyed()) return;
+  layer.view.webContents.send("agzos:overlay-render", layer.model);
+}
+
+/** Cobre a área de conteúdo da janela: o painel fica onde a casca o desenharia. */
+function placePanelLayer(ctx) {
+  const layer = ctx.overlay;
+  if (!layer?.model || ctx.window.isDestroyed()) return;
+  // Por cima de tudo (guias abertas depois ficariam na frente).
+  ctx.window.contentView.addChildView(layer.view);
+  layer.view.setBounds(fullRect(ctx));
+  layer.view.setVisible(true);
+}
+
+/** Abre (ou troca) o painel. false: a camada não existe; a casca usa a foto (plano B). */
+async function openPanelLayer(ctx, model) {
+  const layer = panelLayer(ctx);
+  if (!layer) {
+    logOverlay("snapshot-fallback", `kind=${model.kind} reason=no-overlay-page`);
+    return { ok: false };
+  }
+  const opening = !layer.model;
+  layer.model = model;
+  if (opening) {
+    // Um overlay por vez: o painel ganha da prévia.
+    hidePreview(ctx);
+    const focused = webContents.getFocusedWebContents();
+    layer.returnFocus = focused && focused !== layer.view.webContents ? focused : null;
+    layer.position = ctx.window.getPosition();
+  }
+  // Primeira abertura carrega a camada (o bundle da casca); com o main ocupado (listas do
+  // adblock montando na partida) pode levar alguns segundos. Passou disso: plano B.
+  const ready = await Promise.race([
+    layer.loaded,
+    new Promise((resolve) => setTimeout(() => resolve(false), OVERLAY_LOAD_TIMEOUT_MS)),
+  ]);
+  if (layer.model !== model) return { ok: true };
+  if (!ready || layer.view.webContents.isDestroyed() || ctx.window.isDestroyed()) {
+    layer.model = null;
+    logOverlay("snapshot-fallback", `kind=${model.kind} reason=overlay-not-ready`);
+    return { ok: false };
+  }
+  renderPanelLayer(ctx);
+  placePanelLayer(ctx);
+  if (opening) {
+    layer.view.webContents.focus();
+    logOverlay("live-overlay", `kind=${model.kind} window=${ctx.key}`);
+  }
+  return { ok: true };
+}
+
+/** Esconde a camada. `notify`: quem fechou foi o main/camada (a casca limpa o painel). */
+function closePanelLayer(ctx, { notify = false, refocus = true } = {}) {
+  const layer = ctx.overlay;
+  if (!layer?.model) return;
+  layer.model = null;
+  const contents = layer.view.webContents;
+  const hadFocus = !contents.isDestroyed() && contents.isFocused();
+  layer.view.setVisible(false);
+  layer.view.setBounds(HIDDEN_RECT);
+  if (!contents.isDestroyed()) contents.send("agzos:overlay-render", null);
+  if (notify) send(ctx, "agzos:overlay-dismissed", {});
+  // Camada escondida não fica com o foco: volta para onde estava (a casca, em geral).
+  if (refocus && hadFocus && !ctx.window.isDestroyed()) {
+    const back = layer.returnFocus;
+    if (back && !back.isDestroyed()) back.focus();
+    else ctx.window.webContents.focus();
+  }
+  layer.returnFocus = null;
+}
+
+/** Guia nova por cima da camada: a camada volta ao topo. */
+function raisePanelLayer(ctx) {
+  if (ctx.overlay?.model) ctx.window.contentView.addChildView(ctx.overlay.view);
+}
+
 function tabSession(tab) {
   return { tabs: [{ ...tab, id: 1 }], activeId: 1 };
 }
@@ -1990,6 +2141,7 @@ function registerIpc() {
     ctx.views.set(id, { view, hiddenSince: null });
     tabOfContents.set(view.webContents.id, { ctx, id });
     ctx.window.contentView.addChildView(view);
+    raisePanelLayer(ctx);
     wirePermissions(view.webContents.session);
     wireView(view);
     const history = ctx.hibernated.get(id);
@@ -2028,6 +2180,7 @@ function registerIpc() {
   ipcMain.handle("tab:snapshot", async (event, { id }) => {
     const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || !isVisible(contents)) return null;
+    logOverlay("snapshot-fallback", "capturePage");
     try {
       const image = await contents.capturePage();
       if (image.isEmpty()) return null;
@@ -2115,6 +2268,7 @@ function registerIpc() {
       return { ok: false };
     }
     if (JSON.stringify(tab).length > MAX_SESSION_BYTES) return { ok: false };
+    closePanelLayer(ctx, { notify: true });
     const entry = ctx.views.get(id);
     const moved = { id: 1, view: entry?.view ?? null, history: ctx.hibernated.get(id) ?? null };
     if (entry) {
@@ -2260,6 +2414,64 @@ function registerIpc() {
   ipcMain.handle("preview:hide", (event) => {
     const ctx = ctxOfEvent(event);
     if (ctx) hidePreview(ctx);
+  });
+
+  ipcMain.handle("overlay:open", (event, payload) => {
+    const ctx = ctxOfEvent(event);
+    const model = sanitizeOverlay(payload);
+    if (!ctx || !model) return { ok: false };
+    return openPanelLayer(ctx, model);
+  });
+
+  ipcMain.handle("overlay:close", (event) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) closePanelLayer(ctx);
+  });
+
+  // A casca respondeu a uma chamada do painel (overlay:call).
+  ipcMain.handle("overlay:reply", (event, { id, result }) => {
+    const pending = pendingOverlayCalls.get(id);
+    if (!pending || pending.ctx !== ctxOfEvent(event)) return;
+    pendingOverlayCalls.delete(id);
+    clearTimeout(pending.timer);
+    pending.resolve(result);
+  });
+
+  ipcMain.on("overlay:ready", (event) => {
+    const ctx = overlayOfEvent(event);
+    if (!ctx) return;
+    ctx.overlay.ready = true;
+    ctx.overlay.markReady(true);
+  });
+
+  // Função do painel (onClose, onAction…): roda na casca, que tem o estado.
+  ipcMain.handle("overlay:call", (event, { name, args }) => {
+    const ctx = overlayOfEvent(event);
+    if (!ctx?.overlay.model || !ctx.overlay.model.fns.includes(name)) return undefined;
+    const id = ++overlayCallSeq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        pendingOverlayCalls.delete(id);
+        resolve(undefined);
+      }, 30_000);
+      pendingOverlayCalls.set(id, { ctx, resolve, timer });
+      send(ctx, "agzos:overlay-call", { id, name, args: Array.isArray(args) ? args : [] });
+    });
+  });
+
+  // Clique fora do painel ou Esc.
+  ipcMain.on("overlay:dismiss", (event) => {
+    const ctx = overlayOfEvent(event);
+    if (ctx) closePanelLayer(ctx, { notify: true });
+  });
+
+  // Rolagem fora do painel: vai para a página por baixo.
+  ipcMain.on("overlay:wheel", (event, payload) => {
+    const ctx = overlayOfEvent(event);
+    if (!ctx || ctx.activeTabId === null || !isShown(ctx, ctx.activeTabId)) return;
+    const contents = tabContents(ctx, ctx.activeTabId);
+    const input = contents && wheelEvent(ctx.lastRect, payload);
+    if (input) contents.sendInputEvent(input);
   });
 
   ipcMain.handle("switcher:state", (event, { open }) => {

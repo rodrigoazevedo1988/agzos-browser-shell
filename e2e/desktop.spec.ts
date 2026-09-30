@@ -94,6 +94,17 @@ const PAGES: Record<string, string> = {
     <script>const c = document.getElementById("c"), x = c.getContext("2d"); let t = 0;
     setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 50);
     const v = document.getElementById("v"); v.srcObject = c.captureStream(20); v.play();</script>`,
+  // <video autoplay loop> tocando (fonte local, sem depender da internet) + contador de
+  // quadros pintados (requestAnimationFrame para quando a guia sai de cena).
+  "/video-vivo": `<!doctype html><title>Vídeo vivo</title>
+    <canvas id="c" width="320" height="180" hidden></canvas>
+    <video id="v" autoplay loop muted playsinline width="320" height="180"></video>
+    <div style="height: 4000px">rolar</div>
+    <script>const c = document.getElementById("c"), x = c.getContext("2d"); let t = 0;
+    setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 40);
+    const v = document.getElementById("v"); v.srcObject = c.captureStream(25); v.play();
+    window.painted = 0; const tick = () => { window.painted++; requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);</script>`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
 };
@@ -257,10 +268,12 @@ async function keyInTab(
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
 /** Espera o motor de filtros ficar pronto (o rodapé do painel mostra a data das listas). */
-async function waitForFilters(window: Page) {
+async function waitForFilters(app: ElectronApplication, window: Page) {
   await window.getByRole("button", { name: /bloqueados/ }).click();
-  await expect(window.getByText(/atualizadas em/)).toBeVisible({ timeout: 20_000 });
-  await window.getByRole("button", { name: "Fechar proteção" }).click();
+  // O painel abre na camada acima da página (dist/overlay.html).
+  const layer = await overlayPage(app);
+  await expect(layer.getByText(/atualizadas em/)).toBeVisible({ timeout: 20_000 });
+  await layer.getByRole("button", { name: "Fechar proteção" }).click();
 }
 
 /** URLs de todos os WebContents de página (abas) vivos no main process. */
@@ -449,7 +462,7 @@ test("adblock bloqueia de verdade, conta por página e pausa por site", async ()
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/com-anuncio`;
   try {
-    await waitForFilters(window);
+    await waitForFilters(app, window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Com anúncio");
     const pill = window.getByRole("button", { name: /bloqueados/ });
@@ -466,12 +479,13 @@ test("adblock bloqueia de verdade, conta por página e pausa por site", async ()
       .toEqual({ script: false, caixa: "none" });
 
     await pill.click();
-    const panel = window.getByRole("complementary", { name: "Rastreadores bloqueados" });
+    const layer = await overlayPage(app);
+    const panel = layer.getByRole("complementary", { name: "Rastreadores bloqueados" });
     await expect(panel).toContainText("2 bloqueados nesta página");
     await expect(panel).toContainText("Anúncios");
     await expect(panel).toContainText("Rastreadores");
     await panel.getByText("Pausar neste site").click();
-    await window.getByRole("button", { name: "Fechar proteção" }).click();
+    await layer.getByRole("button", { name: "Fechar proteção" }).click();
     await window.getByRole("button", { name: "Recarregar" }).click();
     await expect.poll(() => inTab(app, url, "Boolean(window.anuncioCarregou)")).toBe(true);
     await expect(pill.locator("strong")).toHaveText("0");
@@ -491,7 +505,7 @@ test("downloads: salva na pasta, mostra progresso, pausa/retoma e persiste", asy
     const button = first.window.getByRole("button", { name: "Downloads", exact: true });
     await expect(button).toBeVisible();
     await first.window.keyboard.press(`${MOD}+j`);
-    const panel = first.window.getByRole("complementary", { name: "Downloads" });
+    const panel = (await overlayPage(first.app)).getByRole("complementary", { name: "Downloads" });
     // Nome já existia na pasta: vira "relatorio (1).txt".
     await expect(panel).toContainText("relatorio (1).txt");
     await expect
@@ -514,7 +528,7 @@ test("downloads: salva na pasta, mostra progresso, pausa/retoma e persiste", asy
   const second = await launch(profile);
   try {
     await second.window.keyboard.press(`${MOD}+j`);
-    const panel = second.window.getByRole("complementary", { name: "Downloads" });
+    const panel = (await overlayPage(second.app)).getByRole("complementary", { name: "Downloads" });
     await expect(panel).toContainText("relatorio (1).txt");
     await expect(panel).toContainText("lento.bin");
     await panel.getByRole("button", { name: "Remover lento.bin" }).click();
@@ -637,7 +651,7 @@ test("fechar o app com download em andamento não trava e o registra como cancel
   const second = await launch(profile);
   try {
     await second.window.keyboard.press(`${MOD}+j`);
-    const panel = second.window.getByRole("complementary", { name: "Downloads" });
+    const panel = (await overlayPage(second.app)).getByRole("complementary", { name: "Downloads" });
     await expect(panel.locator('[data-state="cancelled"]')).toContainText("Cancelado");
   } finally {
     await second.app.close();
@@ -678,7 +692,7 @@ test("scriptlets (+js) rodam antes dos scripts da página, mesmo com CSP de nonc
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/scriptlet`;
   try {
-    await waitForFilters(window);
+    await waitForFilters(app, window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Scriptlet");
     // Já na primeira carga de uma guia nova (a guia passa antes por about:blank).
@@ -696,18 +710,21 @@ test("scriptlets (+js) rodam antes dos scripts da página, mesmo com CSP de nonc
   }
 });
 
-test("painel aberto mostra a foto da página no lugar (não fica preto)", async () => {
-  const { app, window } = await launch(tempProfile());
+test("sugestões da omnibox por cima da página mostram a foto dela no lugar (não fica preto)", async () => {
+  // Os painéis da toolbar abrem na camada acima da página (1.5.4); a lista da omnibox
+  // continua na casca: a guia sai da frente e uma foto entra no lugar.
+  const { app, window } = await launch(tempProfile(), { AGZOS_DEBUG_OVERLAY: "1" });
   const url = `${origin}/foto`;
   try {
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Página FOTO");
     await window.waitForTimeout(400);
-    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    await omnibox(window).fill("agzos foto");
+    await expect(window.getByRole("listbox")).toBeVisible();
     const photo = window.locator(".view-snapshot");
     await expect(photo).toBeVisible();
     expect(await photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(100);
-    // O WebContentsView saiu da frente (senão cobriria o painel).
+    // O WebContentsView saiu da frente (senão cobriria a lista).
     await expect
       .poll(() =>
         app.evaluate(({ BrowserWindow }, target) => {
@@ -721,7 +738,13 @@ test("painel aberto mostra a foto da página no lugar (não fica preto)", async 
         }, url),
       )
       .toBe(0);
-    await window.keyboard.press("Escape");
+    expect(
+      await app.evaluate(
+        () => (globalThis as { __agzosOverlay?: Record<string, number> }).__agzosOverlay,
+      ),
+    ).toEqual({ "live-overlay": 0, "snapshot-fallback": 1 });
+    await omnibox(window).press("Escape");
+    await omnibox(window).blur();
     await expect(photo).toHaveCount(0);
   } finally {
     await app.close();
@@ -732,7 +755,7 @@ test("páginas de login ficam intocadas: sem scriptlet, sem CSS de ocultação",
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/login`;
   try {
-    await waitForFilters(window);
+    await waitForFilters(app, window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("Entrar");
     await window.waitForTimeout(800);
@@ -798,7 +821,7 @@ test("scriptlets ao chegar por link (navegação iniciada pela página)", async 
   const other = origin.replace("127.0.0.1", "localhost");
   const target = `${other}/scriptlet`;
   try {
-    await waitForFilters(window);
+    await waitForFilters(app, window);
     const start = `${origin}/com-link?para=${encodeURIComponent(target)}`;
     await go(window, start);
     await expect(tabs(window).first()).toContainText("Com link");
@@ -820,7 +843,7 @@ test("scriptlet do mundo isolado reescreve script inline mesmo com Trusted Types
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/tt`;
   try {
-    await waitForFilters(window);
+    await waitForFilters(app, window);
     await go(window, url);
     await expect(tabs(window).first()).toContainText("TT");
     // Da carga seguinte em diante o registro vale antes de qualquer script da página.
@@ -917,7 +940,9 @@ test("1.6: permissão lembrada vale depois de reiniciar; bloqueio vira 'denied'"
 
     // Cadeado → Bloquear: a próxima carga vê "denied", como no Chrome.
     await window.getByRole("button", { name: "Informações do site" }).click();
-    const panel = window.getByRole("complementary", { name: "Informações do site" });
+    const panel = (await overlayPage(second.app)).getByRole("complementary", {
+      name: "Informações do site",
+    });
     await panel.getByLabel(/^Notificações em/).selectOption("block");
     await panel.getByRole("button", { name: "Fechar informações do site" }).click();
     await window.getByRole("button", { name: "Recarregar" }).click();
@@ -946,7 +971,9 @@ test("1.6: favorito pela estrela persiste no SQLite e abre pela barra", async ()
   await go(first.window, `${origin}/favorita`);
   await expect(tabs(first.window).first()).toContainText("Página FAVORITA");
   await first.window.keyboard.press("Control+d");
-  const editor = first.window.getByRole("complementary", { name: "Favorito adicionado" });
+  const editor = (await overlayPage(first.app)).getByRole("complementary", {
+    name: "Favorito adicionado",
+  });
   await editor.getByLabel("Nome do favorito").fill("Minha favorita");
   await editor.getByRole("button", { name: "Concluído" }).click();
   await first.window.waitForTimeout(800);
@@ -1358,7 +1385,11 @@ test("1.5.1: depois de atualizar, aviso com a versão, as novidades e confetes (
     await expect(dialog).toHaveCount(0);
     // Pelas Configurações, as novidades da versão atual (sem confetes).
     await second.window.getByRole("button", { name: "Menu do Agzos" }).click();
-    await second.window.getByRole("menuitem", { name: "Novidades desta versão" }).click();
+    await (
+      await overlayPage(second.app)
+    )
+      .getByRole("menuitem", { name: "Novidades desta versão" })
+      .click();
     const again = second.window.getByRole("dialog", { name: "Novidades desta versão" });
     await expect(again).toContainText(`Agzos Browser ${version}`);
     await expect(second.window.locator("canvas.confetti")).toHaveCount(0);
@@ -1545,7 +1576,7 @@ test("1.5.2: configurações completas em agzos://configuracoes (Ctrl+,) e menu 
   const { app, window } = await launch(tempProfile());
   try {
     await window.getByRole("button", { name: "Menu do Agzos" }).click();
-    const menu = window.getByRole("menu", { name: "Menu do Agzos" });
+    const menu = (await overlayPage(app)).getByRole("menu", { name: "Menu do Agzos" });
     await expect(menu.getByRole("menuitem", { name: /Nova janela/ })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Sair" })).toBeVisible();
     await menu.getByRole("menuitem", { name: /Configurações/ }).click();
@@ -1557,6 +1588,194 @@ test("1.5.2: configurações completas em agzos://configuracoes (Ctrl+,) e menu 
     await nav.getByRole("button", { name: "Downloads" }).click();
     // AGZOS_DOWNLOADS_DIR do teste: <perfil>/Downloads.
     await expect(window.locator(".settings-main")).toContainText(/agzos-e2e-.*Downloads/);
+  } finally {
+    await app.close();
+  }
+});
+
+/** A camada dos painéis (dist/overlay.html), como página do Playwright. */
+async function overlayPage(app: ElectronApplication) {
+  let found: Page | undefined;
+  await expect
+    .poll(() => {
+      found = app.windows().find((page) => page.url().endsWith("/overlay.html"));
+      return Boolean(found);
+    })
+    .toBe(true);
+  return found!;
+}
+
+/** A guia com `url` está à vista (bounds > 0) e a camada dos painéis por cima? */
+async function layersOf(app: ElectronApplication, url: string) {
+  return app.evaluate(({ BrowserWindow }, target) => {
+    const children = BrowserWindow.getAllWindows()[0]!.contentView.children as (
+      Electron.WebContentsView | Electron.View
+    )[];
+    const contentsOf = (child: Electron.View) =>
+      (child as { webContents?: Electron.WebContents }).webContents;
+    const page = children.find((child) => contentsOf(child)?.getURL() === target);
+    const layer = children.find((child) => contentsOf(child)?.getURL().endsWith("/overlay.html"));
+    return {
+      pageWidth: page?.getBounds().width ?? 0,
+      overlayVisible: Boolean(layer && layer.getVisible() && layer.getBounds().width > 0),
+      overlayOnTop: Boolean(layer) && children.at(-1) === layer,
+      counts: (globalThis as { __agzosOverlay?: Record<string, number> }).__agzosOverlay ?? null,
+    };
+  }, url);
+}
+
+test("1.5.4: menus da toolbar abrem na camada e a página (vídeo) segue pintando", async () => {
+  const { app, window } = await launch(tempProfile(), { AGZOS_DEBUG_OVERLAY: "1" });
+  const url = `${origin}/video-vivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    await expect
+      .poll(() => inTab<number>(app, url, "document.getElementById('v').currentTime"))
+      .toBeGreaterThan(0.2);
+
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    const overlay = await overlayPage(app);
+    const menu = overlay.getByRole("menu", { name: "Menu do Agzos" });
+    await expect(menu.getByRole("menuitem", { name: /Nova janela/ })).toBeVisible();
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(true);
+    const layers = await layersOf(app, url);
+    // A guia não saiu de cena e nenhuma foto foi tirada.
+    expect(layers.pageWidth).toBeGreaterThan(0);
+    expect(layers.overlayOnTop).toBe(true);
+    expect(layers.counts).toEqual({ "live-overlay": 1, "snapshot-fallback": 0 });
+    await expect(window.locator(".view-snapshot")).toHaveCount(0);
+    // Com o menu aberto o vídeo anda e a página pinta quadros novos.
+    const t0 = await inTab<number>(app, url, "document.getElementById('v').currentTime");
+    const f0 = await inTab<number>(app, url, "window.painted");
+    await expect
+      .poll(() => inTab<number>(app, url, "document.getElementById('v').currentTime"), {
+        intervals: [50],
+        timeout: 3000,
+      })
+      .toBeGreaterThanOrEqual(t0 + 0.8);
+    expect(await inTab<number>(app, url, "window.painted")).toBeGreaterThan(f0 + 10);
+    await expect(window.getByRole("button", { name: "Menu do Agzos" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+
+    // Rolar fora do menu rola a página por baixo.
+    await overlay.mouse.move(400, 600);
+    await overlay.mouse.wheel(0, 600);
+    await expect.poll(() => inTab<number>(app, url, "window.scrollY")).toBeGreaterThan(100);
+    await expect(menu).toBeVisible();
+
+    // Esc fecha; o foco não fica na camada escondida.
+    await overlay.keyboard.press("Escape");
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await expect(window.getByRole("button", { name: "Menu do Agzos" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(
+      await app.evaluate(
+        ({ webContents }) =>
+          webContents.getFocusedWebContents()?.getURL().endsWith("/overlay.html") ?? false,
+      ),
+    ).toBe(false);
+
+    // Downloads e proteção (adblock) também: camada, sem foto.
+    await window.getByRole("button", { name: /bloqueados/ }).click();
+    await expect(overlay.getByRole("button", { name: "Fechar proteção" })).toBeVisible();
+    // Clique fora fecha (e não chega à página).
+    await overlay.mouse.click(600, 500);
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+
+    // Menu aberto + Ctrl+T: guia nova e o menu fecha.
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    await expect(menu).toBeVisible();
+    // Tecla de verdade na camada (passa pelo before-input-event, como um teclado físico).
+    await app.evaluate(({ webContents }, mod) => {
+      const layer = webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().endsWith("/overlay.html"))!;
+      const modifiers = [mod === "Meta" ? "meta" : "control"] as ("meta" | "control")[];
+      layer.sendInputEvent({ type: "keyDown", keyCode: "T", modifiers });
+      layer.sendInputEvent({ type: "keyUp", keyCode: "T", modifiers });
+    }, MOD);
+    await expect(tabs(window)).toHaveCount(2);
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+
+    // Item do menu dispara o mesmo comando de hoje.
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    await menu.getByRole("menuitem", { name: /Nova guia anônima/ }).click();
+    await expect(tabs(window)).toHaveCount(3);
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+
+    const counts = (await layersOf(app, url)).counts!;
+    expect(counts["snapshot-fallback"]).toBe(0);
+    expect(counts["live-overlay"]).toBe(4);
+
+    // A camada caiu: a próxima abertura cria outra (sem cair na foto).
+    await app.evaluate(({ webContents }) => {
+      webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL().endsWith("/overlay.html"))!
+        .forcefullyCrashRenderer();
+    });
+    await expect
+      .poll(() => app.windows().filter((page) => page.url().endsWith("/overlay.html")).length)
+      .toBe(0);
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    const reborn = await overlayPage(app);
+    await expect(
+      reborn.getByRole("menu", { name: "Menu do Agzos" }).getByRole("menuitem", { name: "Sair" }),
+    ).toBeVisible();
+    expect((await layersOf(app, url)).counts!["snapshot-fallback"]).toBe(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("1.5.4: várias janelas: o painel abre só na janela clicada, cada uma com a sua camada", async () => {
+  const { app, window } = await launch(tempProfile(), { AGZOS_DEBUG_OVERLAY: "1" });
+  try {
+    await window.keyboard.press(`${MOD}+n`);
+    const [first, second] = await waitShells(app, 2);
+    const openLayers = () =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((win) =>
+          win.contentView.children.some((child) => {
+            const contents = (child as { webContents?: Electron.WebContents }).webContents;
+            return (
+              Boolean(contents?.getURL().endsWith("/overlay.html")) &&
+              child.getVisible() &&
+              child.getBounds().width > 0
+            );
+          }),
+        ),
+      );
+    await second!.getByRole("button", { name: "Menu do Agzos" }).click();
+    await expect.poll(async () => (await openLayers()).filter(Boolean).length).toBe(1);
+    await expect(second!.getByRole("button", { name: "Menu do Agzos" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(first!.getByRole("button", { name: "Menu do Agzos" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    // A outra janela abre o seu próprio painel (uma camada por janela).
+    await first!.getByRole("button", { name: "Menu do Agzos" }).click();
+    await expect.poll(async () => (await openLayers()).filter(Boolean).length).toBeGreaterThan(0);
+    await expect(first!.getByRole("button", { name: "Menu do Agzos" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const layerCount = () =>
+      app.evaluate(
+        ({ webContents }) =>
+          webContents
+            .getAllWebContents()
+            .filter((contents) => contents.getURL().endsWith("/overlay.html")).length,
+      );
+    await expect.poll(layerCount).toBe(2);
   } finally {
     await app.close();
   }

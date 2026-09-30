@@ -88,4 +88,9 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   setSwitcherOpen: (open) => ipcRenderer.invoke("switcher:state", { open }),
   onSwitcherKey: subscribe("agzos:switcher-key"),
   onAdblockStats: subscribe("agzos:adblock-stats"),
+  overlayOpen: (payload) => ipcRenderer.invoke("overlay:open", payload),
+  overlayClose: () => ipcRenderer.invoke("overlay:close"),
+  overlayReply: (id, result) => ipcRenderer.invoke("overlay:reply", { id, result }),
+  onOverlayCall: subscribe("agzos:overlay-call"),
+  onOverlayDismissed: subscribe("agzos:overlay-dismissed"),
 });

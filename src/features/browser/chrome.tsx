@@ -19,7 +19,7 @@ import { profileFor, replyFor } from "@/features/ai/templates";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
-import { AppMenu, type AppMenuAction } from "@/features/settings/menu";
+import { type AppMenuAction } from "@/features/settings/menu";
 import { SettingsPage } from "@/features/settings/page";
 import { SitePanel } from "@/features/site/panel";
 import { originOf } from "@/features/site/permissions";
@@ -36,6 +36,8 @@ import {
   type UpdateState,
 } from "./desktop";
 import { useDesktopSync } from "./desktop-sync";
+import { PanelView, type PanelSpec } from "./overlay/panels";
+import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
@@ -592,11 +594,6 @@ export function AgzosBrowser() {
     };
   }, [switcherOpen, desktop]);
 
-  // O WebContentsView fica por cima da casca: com painel ou seletor aberto ele sai da
-  // frente. Antes, uma foto da página entra no lugar dela (senão a área fica preta).
-  const overlay =
-    panel !== null || (switcherVisible && !switcherLayer) || omniboxOpen || whatsNew !== null;
-
   // Seletor na camada: os cartões vão uma vez ao abrir; depois só o índice.
   const layerShown = useRef(false);
   const switcherIds = state.switcher?.ids.join(",") ?? "";
@@ -631,44 +628,6 @@ export function AgzosBrowser() {
     }
     void desktop.renderSwitcher({ index: switcherIndex });
   }, [desktop, switcherLayer, switcherVisible, switcherIds, switcherIndex]);
-  const [viewHidden, setViewHidden] = useState(false);
-  const [snapshot, setSnapshot] = useState<string | null>(null);
-  const activeIdRef = useRef(state.activeId);
-  activeIdRef.current = state.activeId;
-  useEffect(() => {
-    if (!overlay) {
-      setViewHidden(false);
-      // A página nativa volta por cima; a foto sai logo depois, sem piscar.
-      const timer = window.setTimeout(() => setSnapshot(null), 150);
-      return () => window.clearTimeout(timer);
-    }
-    if (!desktop) {
-      setViewHidden(true);
-      return;
-    }
-    let cancelled = false;
-    void desktop
-      .snapshotTab(activeIdRef.current)
-      .catch(() => null)
-      .then((image) => {
-        if (cancelled) return;
-        setSnapshot(image);
-        setViewHidden(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [overlay, desktop]);
-
-  useDesktopSync({
-    desktop,
-    state,
-    dispatch,
-    panelOpen: viewHidden,
-    runCommandRef,
-    runHotkeyRef,
-    onPermission: setPermission,
-  });
 
   const openAddress = useCallback(
     (raw: string) => {
@@ -779,7 +738,13 @@ export function AgzosBrowser() {
       return tab ? tabCardOf(stateRef.current, tab, { desktop: desktop !== null }) : null;
     },
     side: prefs.orientation === "vertical" ? "right" : "below",
-    disabled: overlay || state.switcher !== null || tabMenu.menu !== null,
+    // Um overlay por vez: painel, seletor, omnibox ou aviso abertos desligam a prévia.
+    disabled:
+      panel !== null ||
+      omniboxOpen ||
+      whatsNew !== null ||
+      state.switcher !== null ||
+      tabMenu.menu !== null,
   });
 
   const tabHandlers: TabHandlers = {
@@ -859,16 +824,201 @@ export function AgzosBrowser() {
     }
   };
 
+  const closePanel = () => setPanel(null);
+  const stageClasses = [
+    prefs.dark && "dark",
+    state.fullscreen && "fs",
+    // App do Mac sem barra de título nativa: a casca desenha a área de arrastar.
+    desktop && isMac && "mac-frameless",
+    prefs.orientation === "vertical" && "vertical-tabs",
+  ].filter((name): name is string => typeof name === "string");
+  const bookmarkNode =
+    panel === "bookmark" && editing
+      ? state.bookmarks.find((item) => item.id === editing.id)
+      : undefined;
+  // Painel aberto: no app vai para a camada acima da página (a página segue viva); na web
+  // (ou se a camada falhar) é desenhado aqui mesmo.
+  const panelSpec: PanelSpec | null =
+    panel === "privacy"
+      ? {
+          kind: "privacy",
+          props: {
+            host: currentHost,
+            shield: prefs.shield,
+            setShield: (shield) => setPrefs({ shield }),
+            paused,
+            onPauseChange: (pause) =>
+              dispatch({ type: "prefs/pause-host", host: privacyHost, pause }),
+            count: blockedCount,
+            trackers: protectedNow ? (pageBlocked?.trackers ?? []) : [],
+            protectedNow,
+            desktop: desktop !== null,
+            stats: state.adblock,
+            onUpdateLists: async () => {
+              if (!desktop) return;
+              await desktop.adblockUpdate();
+              dispatch({ type: "adblock/stats", stats: await desktop.adblockStats() });
+            },
+            onClose: closePanel,
+          },
+        }
+      : panel === "downloads"
+        ? {
+            kind: "downloads",
+            props: {
+              downloads: state.downloads,
+              desktop: desktop !== null,
+              onAction: (id, action) => {
+                if (!desktop) return;
+                void desktop.downloadAction(id, action).then(async ({ ok }) => {
+                  if (ok && action === "remove") {
+                    dispatch({ type: "downloads/set", list: await desktop.downloadsList() });
+                  }
+                });
+              },
+              onClear: () => {
+                if (!desktop) return;
+                void desktop
+                  .downloadsClear()
+                  .then((list) => dispatch({ type: "downloads/set", list }));
+              },
+              onClose: closePanel,
+            },
+          }
+        : panel === "menu"
+          ? {
+              kind: "menu",
+              props: {
+                desktop: desktop !== null,
+                isMac,
+                appVersion,
+                updateReady: update?.status === "ready" ? update.version : null,
+                zoom: state.zoom[activeTab.id] ?? 1,
+                canZoom: desktop !== null && current.kind === "page",
+                canFind: desktop !== null && current.kind === "page",
+                dark: prefs.dark,
+                onAction: runMenuAction,
+                onZoom: (direction) => void desktop?.zoom(activeTab.id, direction),
+                onFullscreen: () => void desktop?.toggleFullscreen(),
+                onToggleDark: () => setPrefs({ dark: !prefs.dark }),
+                onClose: closePanel,
+              },
+            }
+          : panel === "bookmark" && editing && bookmarkNode
+            ? {
+                kind: "bookmark",
+                key: bookmarkNode.id,
+                props: {
+                  node: bookmarkNode,
+                  nodes: state.bookmarks,
+                  added: editing.added,
+                  onSave: ({ title, url, parentId }) => {
+                    dispatch({
+                      type: "bookmarks/update",
+                      id: bookmarkNode.id,
+                      title,
+                      ...(url ? { url } : {}),
+                    });
+                    if (parentId !== bookmarkNode.parentId) {
+                      dispatch({ type: "bookmarks/move", id: bookmarkNode.id, parentId });
+                    }
+                    setPanel(null);
+                  },
+                  onRemove: () => {
+                    dispatch({ type: "bookmarks/remove", id: bookmarkNode.id });
+                    setPanel(null);
+                  },
+                  onClose: closePanel,
+                },
+              }
+            : panel === "site"
+              ? {
+                  kind: "site",
+                  props: {
+                    url: current.url,
+                    privateTab: Boolean(activeTab.private),
+                    permissions: sitePermissions,
+                    zoom: state.zoom[activeTab.id] ?? 1,
+                    onChange: (type, value) => {
+                      const origin = originOf(current.url);
+                      if (!desktop || !origin) return;
+                      void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+                    },
+                    onReset: () => {
+                      const origin = originOf(current.url);
+                      if (!desktop || !origin) return;
+                      void desktop.permissionsReset(origin).then(refreshPermissions);
+                    },
+                    onResetZoom: () => void desktop?.zoom(activeTab.id, 0),
+                    onClose: closePanel,
+                  },
+                }
+              : panel === "key"
+                ? {
+                    kind: "key",
+                    props: {
+                      credentials,
+                      copied,
+                      onCopy: (id, value) => void copyText(id, value),
+                      onAdd: (item) => setCredentials((list) => [...list, item]),
+                      onRemove: (domain) =>
+                        setCredentials((list) => list.filter((item) => item.domain !== domain)),
+                      onClose: closePanel,
+                    },
+                  }
+                : null;
+
+  const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, closePanel);
+  const panelInline = panelSpec !== null && overlayStatus === "inline";
+
+  // O WebContentsView fica por cima da casca: com seletor, omnibox ou aviso aberto (ou um
+  // painel no plano B) ele sai da frente e uma foto da página entra no lugar (senão a área
+  // fica preta). Painéis no app vão para a camada acima da página: nada de foto.
+  const overlay =
+    panelInline || (switcherVisible && !switcherLayer) || omniboxOpen || whatsNew !== null;
+
+  const [viewHidden, setViewHidden] = useState(false);
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const activeIdRef = useRef(state.activeId);
+  activeIdRef.current = state.activeId;
+  useEffect(() => {
+    if (!overlay) {
+      setViewHidden(false);
+      // A página nativa volta por cima; a foto sai logo depois, sem piscar.
+      const timer = window.setTimeout(() => setSnapshot(null), 150);
+      return () => window.clearTimeout(timer);
+    }
+    if (!desktop) {
+      setViewHidden(true);
+      return;
+    }
+    let cancelled = false;
+    void desktop
+      .snapshotTab(activeIdRef.current)
+      .catch(() => null)
+      .then((image) => {
+        if (cancelled) return;
+        setSnapshot(image);
+        setViewHidden(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [overlay, desktop]);
+
+  useDesktopSync({
+    desktop,
+    state,
+    dispatch,
+    panelOpen: viewHidden,
+    runCommandRef,
+    runHotkeyRef,
+    onPermission: setPermission,
+  });
+
   return (
     <main
-      className={cn(
-        "browser-stage",
-        prefs.dark && "dark",
-        state.fullscreen && "fs",
-        // App do Mac sem barra de título nativa: a casca desenha a área de arrastar.
-        desktop && isMac && "mac-frameless",
-        prefs.orientation === "vertical" && "vertical-tabs",
-      )}
+      className={cn("browser-stage", ...stageClasses)}
       data-ready={state.hydrated ? "true" : undefined}
     >
       <section className="browser-window" aria-label="Agzos Browser">
@@ -1075,128 +1225,7 @@ export function AgzosBrowser() {
           </div>
         </div>
 
-        {panel === "privacy" && (
-          <PrivacyPanel
-            host={currentHost}
-            shield={prefs.shield}
-            setShield={(shield) => setPrefs({ shield })}
-            paused={paused}
-            onPauseChange={(pause) =>
-              dispatch({ type: "prefs/pause-host", host: privacyHost, pause })
-            }
-            count={blockedCount}
-            trackers={protectedNow ? (pageBlocked?.trackers ?? []) : []}
-            protectedNow={protectedNow}
-            desktop={desktop !== null}
-            stats={state.adblock}
-            onUpdateLists={async () => {
-              if (!desktop) return;
-              await desktop.adblockUpdate();
-              dispatch({ type: "adblock/stats", stats: await desktop.adblockStats() });
-            }}
-            onClose={() => setPanel(null)}
-          />
-        )}
-        {panel === "downloads" && (
-          <DownloadsPanel
-            downloads={state.downloads}
-            desktop={desktop !== null}
-            onAction={(id, action) => {
-              if (!desktop) return;
-              void desktop.downloadAction(id, action).then(async ({ ok }) => {
-                if (ok && action === "remove") {
-                  dispatch({ type: "downloads/set", list: await desktop.downloadsList() });
-                }
-              });
-            }}
-            onClear={() => {
-              if (!desktop) return;
-              void desktop
-                .downloadsClear()
-                .then((list) => dispatch({ type: "downloads/set", list }));
-            }}
-            onClose={() => setPanel(null)}
-          />
-        )}
-        {panel === "menu" && (
-          <AppMenu
-            desktop={desktop !== null}
-            isMac={isMac}
-            appVersion={appVersion}
-            updateReady={update?.status === "ready" ? update.version : null}
-            zoom={state.zoom[activeTab.id] ?? 1}
-            canZoom={desktop !== null && current.kind === "page"}
-            canFind={desktop !== null && current.kind === "page"}
-            dark={prefs.dark}
-            onAction={runMenuAction}
-            onZoom={(direction) => void desktop?.zoom(activeTab.id, direction)}
-            onFullscreen={() => void desktop?.toggleFullscreen()}
-            onToggleDark={() => setPrefs({ dark: !prefs.dark })}
-            onClose={() => setPanel(null)}
-          />
-        )}
-        {panel === "bookmark" &&
-          (() => {
-            const node = editing && state.bookmarks.find((item) => item.id === editing.id);
-            if (!node) return null;
-            return (
-              <BookmarkEditor
-                key={node.id}
-                node={node}
-                nodes={state.bookmarks}
-                added={editing.added}
-                onSave={({ title, url, parentId }) => {
-                  dispatch({
-                    type: "bookmarks/update",
-                    id: node.id,
-                    title,
-                    ...(url ? { url } : {}),
-                  });
-                  if (parentId !== node.parentId) {
-                    dispatch({ type: "bookmarks/move", id: node.id, parentId });
-                  }
-                  setPanel(null);
-                }}
-                onRemove={() => {
-                  dispatch({ type: "bookmarks/remove", id: node.id });
-                  setPanel(null);
-                }}
-                onClose={() => setPanel(null)}
-              />
-            );
-          })()}
-        {panel === "site" && (
-          <SitePanel
-            url={current.url}
-            privateTab={Boolean(activeTab.private)}
-            permissions={sitePermissions}
-            zoom={state.zoom[activeTab.id] ?? 1}
-            onChange={(type, value) => {
-              const origin = originOf(current.url);
-              if (!desktop || !origin) return;
-              void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
-            }}
-            onReset={() => {
-              const origin = originOf(current.url);
-              if (!desktop || !origin) return;
-              void desktop.permissionsReset(origin).then(refreshPermissions);
-            }}
-            onResetZoom={() => void desktop?.zoom(activeTab.id, 0)}
-            onClose={() => setPanel(null)}
-          />
-        )}
-        {panel === "key" && (
-          <KeyPanel
-            credentials={credentials}
-            copied={copied}
-            onCopy={(id, value) => void copyText(id, value)}
-            onAdd={(item) => setCredentials((list) => [...list, item])}
-            onRemove={(domain) =>
-              setCredentials((list) => list.filter((item) => item.domain !== domain))
-            }
-            onClose={() => setPanel(null)}
-          />
-        )}
+        {panelInline && panelSpec && <PanelView spec={panelSpec} />}
       </section>
       {state.switcher && switcherVisible && !switcherLayer && (
         <TabSwitcher

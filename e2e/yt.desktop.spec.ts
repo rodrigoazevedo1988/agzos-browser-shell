@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
 // Regressão da 1.3.5–1.3.7: os scriptlets eram juntados num script só e duas cópias de
 // `class JSONPath` viravam SyntaxError, então nenhum rodava e o YouTube seguia com anúncios.
@@ -96,8 +96,16 @@ test("regras reais do uBO para o YouTube tiram os anúncios do player já na 1ª
     const window = await app.firstWindow();
     await window.locator('.browser-stage[data-ready="true"]').waitFor();
     await window.getByRole("button", { name: /bloqueados/ }).click();
-    await expect(window.getByText(/atualizadas em/)).toBeVisible({ timeout: 20_000 });
-    await window.getByRole("button", { name: "Fechar proteção" }).click();
+    // O painel abre na camada acima da página (dist/overlay.html).
+    let layer: Page | undefined;
+    await expect
+      .poll(() => {
+        layer = app.windows().find((page) => page.url().endsWith("/overlay.html"));
+        return Boolean(layer);
+      })
+      .toBe(true);
+    await expect(layer!.getByText(/atualizadas em/)).toBeVisible({ timeout: 20_000 });
+    await layer!.getByRole("button", { name: "Fechar proteção" }).click();
     const omni = window.getByLabel("Pesquisar ou digitar endereço");
     await omni.fill(`${origin}/watch?v=abc`);
     await omni.press("Enter");
