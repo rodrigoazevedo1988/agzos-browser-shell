@@ -3871,7 +3871,7 @@ button.download-name:hover {
 .group-colors {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .group-colors button {
   width: 20px;
@@ -3910,6 +3910,11 @@ button.download-name:hover {
 }
 
 /* Tela dividida (2.0): dois panes lado a lado e a divisória arrastável entre eles. */
+.viewport.split {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .split-view {
   flex: 1;
   min-height: 0;

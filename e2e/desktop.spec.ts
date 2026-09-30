@@ -1815,3 +1815,225 @@ test("1.5.4: várias janelas: o painel abre só na janela clicada, cada uma com 
     await app.close();
   }
 });
+
+// --- 2.0: nível Opera/Vivaldi ---
+
+/** Filhos nativos da 1ª janela com a URL e a área (bounds) de cada um. */
+async function nativeChildren(app: ElectronApplication) {
+  return app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.contentView.children.map((child) => {
+      const contents = (child as { webContents?: Electron.WebContents }).webContents;
+      return { url: contents?.getURL() ?? "", bounds: child.getBounds() };
+    }),
+  );
+}
+
+/** Tecla de verdade (passa pelo before-input-event) no webContents com foco. */
+async function pressInFocused(app: ElectronApplication, keyCode: string, modifiers: string[]) {
+  await app.evaluate(
+    ({ webContents }, [code, mods]) => {
+      const contents = webContents.getFocusedWebContents()!;
+      const list = mods as ("control" | "shift" | "alt" | "meta")[];
+      contents.sendInputEvent({ type: "keyDown", keyCode: code as string, modifiers: list });
+      contents.sendInputEvent({ type: "keyUp", keyCode: code as string, modifiers: list });
+    },
+    [keyCode, modifiers] as const,
+  );
+}
+
+test("2.0: barra de endereço seleciona tudo no 1º clique e copia o link pelo ícone", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/copiar-link`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Página COPIAR-LINK");
+    await omnibox(window).evaluate((input: HTMLInputElement) => input.blur());
+    await omnibox(window).click();
+    expect(
+      await omnibox(window).evaluate(
+        (input: HTMLInputElement) =>
+          input.selectionStart === 0 && input.selectionEnd === input.value.length,
+      ),
+    ).toBe(true);
+    await omnibox(window).evaluate((input: HTMLInputElement) => input.blur());
+    await window.getByRole("button", { name: "Copiar link" }).click();
+    await expect(window.getByRole("button", { name: "Link copiado" })).toBeVisible();
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(url);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.0: Ctrl+K abre a busca de comandos na camada; Enter executa", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await window.keyboard.press(`${MOD}+k`);
+    const layer = await overlayPage(app);
+    const input = layer.getByRole("combobox", { name: "Buscar comandos" });
+    await expect(input).toBeVisible();
+    await input.fill("guia anonima");
+    await expect(layer.getByRole("option").first()).toContainText("Nova guia anônima");
+    await input.press("Enter");
+    await expect(tabs(window)).toHaveCount(2);
+    await expect(tabs(window).last()).toHaveAttribute("aria-label", /anônima/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.0: grupo de guias com nome e cor; recolher esconde as guias", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/grupo-a`);
+    await expect(tabs(window).first()).toContainText("Página GRUPO-A");
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await go(window, `${origin}/grupo-b`);
+    await expect(tabs(window).last()).toContainText("Página GRUPO-B");
+    // Clique direito na guia → "Adicionar guia a novo grupo" (atalho Ctrl+Shift+G).
+    await window.keyboard.press(`${MOD}+Shift+g`);
+    const layer = await overlayPage(app);
+    const name = layer.getByRole("textbox", { name: "Nome do grupo" });
+    await expect(name).toBeVisible();
+    await name.fill("Trabalho");
+    await layer.getByRole("radio", { name: "Verde" }).click();
+    await name.press("Enter");
+    const chip = window.locator(".tab-group-chip");
+    await expect(chip).toHaveText("Trabalho");
+    await expect(chip).toHaveAttribute("style", /#22c55e/);
+    // Recolher: a guia ativa sai do grupo e as do grupo somem da barra.
+    await window.getByRole("button", { name: "Nova aba", exact: true }).click();
+    await chip.click();
+    await expect(chip).toHaveAttribute("aria-expanded", "false");
+    await expect(tabs(window).filter({ hasText: "GRUPO-B" })).toHaveCount(0);
+    await chip.click();
+    await expect(tabs(window).filter({ hasText: "GRUPO-B" })).toHaveCount(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.0: workspaces separam as guias e voltam depois de reiniciar", async () => {
+  const profile = tempProfile();
+  const first = await launch(profile);
+  try {
+    await go(first.window, `${origin}/pessoal`);
+    await expect(tabs(first.window).first()).toContainText("Página PESSOAL");
+    await first.window.getByRole("button", { name: /^Workspace / }).click();
+    const layer = await overlayPage(first.app);
+    await layer.getByRole("button", { name: "Novo workspace" }).click();
+    await layer.getByRole("textbox", { name: "Nome do workspace" }).fill("Estudos");
+    await layer.getByRole("button", { name: "Criar workspace" }).click();
+    await expect(first.window.getByRole("button", { name: "Workspace Estudos" })).toBeVisible();
+    await expect(tabs(first.window)).toHaveCount(1);
+    await go(first.window, `${origin}/estudos`);
+    await expect(tabs(first.window).first()).toContainText("Página ESTUDOS");
+    // Ctrl+K também troca de workspace.
+    await first.window.keyboard.press(`${MOD}+k`);
+    const search = layer.getByRole("combobox", { name: "Buscar comandos" });
+    await search.fill("pessoal");
+    await search.press("Enter");
+    await expect(first.window.getByRole("button", { name: "Workspace Pessoal" })).toBeVisible();
+    await expect(tabs(first.window)).toHaveCount(1);
+    await expect(tabs(first.window).first()).toContainText("Página PESSOAL");
+    await first.window.waitForTimeout(1200);
+  } finally {
+    await first.app.close();
+  }
+
+  const second = await launch(profile);
+  try {
+    await expect(second.window.getByRole("button", { name: "Workspace Pessoal" })).toBeVisible();
+    await expect(tabs(second.window)).toHaveCount(1);
+    await second.window.getByRole("button", { name: "Workspace Pessoal" }).click();
+    const layer = await overlayPage(second.app);
+    await layer
+      .getByRole("button", { name: /Estudos/ })
+      .first()
+      .click();
+    await expect(tabs(second.window).first()).toContainText("ESTUDOS");
+  } finally {
+    await second.app.close();
+  }
+});
+
+test("2.0: tela dividida mostra duas páginas lado a lado; clicar num lado ativa a guia", async () => {
+  const { app, window } = await launch(tempProfile());
+  const left = `${origin}/lado-a`;
+  const right = `${origin}/lado-b`;
+  try {
+    await go(window, left);
+    await expect(tabs(window).first()).toContainText("Página LADO-A");
+    await window.keyboard.press(`${MOD}+Alt+Shift+s`);
+    await expect(tabs(window)).toHaveCount(2);
+    await go(window, right);
+    await expect(tabs(window).last()).toContainText("Página LADO-B");
+    await expect
+      .poll(async () => {
+        const views = await nativeChildren(app);
+        const a = views.find((view) => view.url === left)?.bounds;
+        const b = views.find((view) => view.url === right)?.bounds;
+        return Boolean(a && b && a.width > 100 && b.width > 100 && a.x + a.width <= b.x);
+      })
+      .toBe(true);
+    const active = window.locator(".tabs .browser-tab.active");
+    await expect(active).toContainText("LADO-B");
+    // Foco na página da esquerda (como um clique nela): ela vira a guia ativa.
+    await app.evaluate(({ webContents }, target) => {
+      webContents
+        .getAllWebContents()
+        .find((contents) => contents.getURL() === target)!
+        .focus();
+    }, left);
+    await expect(active).toContainText("LADO-A");
+    await expect(omnibox(window)).toHaveValue(left);
+    // As duas continuam à vista; outra guia desfaz a vista (a divisão fica guardada).
+    const both = await nativeChildren(app);
+    expect(
+      both.filter((view) => [left, right].includes(view.url) && view.bounds.width > 0),
+    ).toHaveLength(2);
+    await window.getByRole("separator", { name: /Divisória/ }).dblclick();
+    await expect
+      .poll(
+        async () =>
+          (await nativeChildren(app)).filter(
+            (view) => [left, right].includes(view.url) && view.bounds.width > 0,
+          ).length,
+      )
+      .toBe(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.0: painel lateral abre ao lado da página, fica carregado e some ao fechar", async () => {
+  const panelUrl = `${origin}/painel-lateral`;
+  const { app, window } = await launch(tempProfile(), { AGZOS_SIDE_PANEL_URL: panelUrl });
+  const page = `${origin}/principal`;
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Página PRINCIPAL");
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "WhatsApp" })
+      .click();
+    await expect(window.getByRole("complementary", { name: "Painel WhatsApp" })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const views = await nativeChildren(app);
+        const panel = views.find((view) => view.url === panelUrl)?.bounds;
+        const tab = views.find((view) => view.url === page)?.bounds;
+        return Boolean(panel && tab && panel.width > 200 && panel.x + panel.width <= tab.x);
+      })
+      .toBe(true);
+    // Fechar esconde, mas a página do painel continua viva (mensagens seguem chegando).
+    await window.getByRole("button", { name: "Fechar WhatsApp" }).click();
+    await expect
+      .poll(
+        async () => (await nativeChildren(app)).find((view) => view.url === panelUrl)?.bounds.width,
+      )
+      .toBe(0);
+    expect(await liveViews(app, "/painel-lateral")).toHaveLength(1);
+  } finally {
+    await app.close();
+  }
+});

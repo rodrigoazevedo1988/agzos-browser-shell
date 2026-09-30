@@ -582,3 +582,55 @@ test("1.5.2: pausar o mouse numa guia mostra a prévia", async ({ page }) => {
   await page.mouse.move(700, 600);
   await expect(card).toHaveCount(0);
 });
+
+test("2.0: Ctrl+K, grupo de guias pelo menu, workspace novo e tela dividida (versão web)", async ({
+  page,
+}) => {
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
+  // Busca de comandos: acha "Nova guia anônima" sem acento e executa com Enter.
+  await page.keyboard.press(`${mod}+k`);
+  const search = page.getByRole("combobox", { name: "Buscar comandos" });
+  await search.fill("guia anonima");
+  await search.press("Enter");
+  await expect(tabs(page)).toHaveCount(2);
+  await expect(search).toHaveCount(0);
+
+  // Clique direito na guia → novo grupo; o balão pede o nome.
+  await tabs(page).first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Adicionar guia a novo grupo" }).click();
+  const name = page.getByRole("textbox", { name: "Nome do grupo" });
+  await name.fill("Leituras");
+  await name.press("Enter");
+  await expect(page.locator(".tab-group-chip")).toHaveText("Leituras");
+
+  // Tela dividida: nova guia ao lado; as duas aparecem.
+  await page.keyboard.press(`${mod}+Alt+Shift+s`);
+  await expect(page.locator("section.viewport.split")).toBeVisible();
+  await expect(page.locator(".split-pane")).toHaveCount(2);
+  await page.getByRole("separator", { name: /Divisória/ }).dblclick();
+  await expect(page.locator(".split-pane")).toHaveCount(0);
+
+  // Workspace novo: a barra só mostra as guias dele; voltar mostra as outras.
+  const before = await tabs(page).count();
+  await page.getByRole("button", { name: /^Workspace / }).click();
+  await page.getByRole("button", { name: "Novo workspace" }).click();
+  await page.getByRole("textbox", { name: "Nome do workspace" }).fill("Viagem");
+  await page.getByRole("button", { name: "Criar workspace" }).click();
+  await expect(page.getByRole("button", { name: "Workspace Viagem" })).toBeVisible();
+  await expect(tabs(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Workspace Viagem" }).click();
+  await page
+    .getByRole("button", { name: /Pessoal/ })
+    .first()
+    .click();
+  await expect(tabs(page)).toHaveCount(before);
+
+  // Painel lateral na web: explica que é do app.
+  await page
+    .getByRole("navigation", { name: "Painéis laterais" })
+    .getByRole("button", { name: "Telegram" })
+    .click();
+  await expect(page.getByRole("complementary", { name: "Painel Telegram" })).toContainText(
+    "app Agzos para computador",
+  );
+});
