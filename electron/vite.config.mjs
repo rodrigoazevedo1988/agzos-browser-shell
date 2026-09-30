@@ -18,5 +18,12 @@ export default defineConfig({
   build: {
     outDir: path.join(directory, "..", "dist"),
     emptyOutDir: true,
+    rollupOptions: {
+      // A casca e a camada dos painéis por cima da página (chrome-overlay.cjs).
+      input: {
+        main: path.join(directory, "renderer", "index.html"),
+        overlay: path.join(directory, "renderer", "overlay.html"),
+      },
+    },
   },
 });

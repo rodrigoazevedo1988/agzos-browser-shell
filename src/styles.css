@@ -3436,3 +3436,12 @@ button.download-name:hover {
     padding: 18px 16px 60px;
   }
 }
+
+/* Camada dos painéis por cima da página (dist/overlay.html, 1.5.4): só o painel é opaco;
+   o resto é transparente e a página segue pintando por baixo. */
+.overlay-stage,
+.overlay-stage.dark,
+.overlay-stage .browser-window {
+  background: transparent;
+  transition: none;
+}

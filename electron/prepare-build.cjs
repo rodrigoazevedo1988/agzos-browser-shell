@@ -8,6 +8,9 @@ const entry = path.join(destination, "index.html");
 if (!fs.existsSync(entry)) {
   throw new Error("The web build did not produce a static index.html for Electron.");
 }
+if (!fs.existsSync(path.join(destination, "overlay.html"))) {
+  throw new Error("The web build did not produce overlay.html (chrome overlay layer).");
+}
 const html = fs.readFileSync(entry, "utf8");
 if (/\b(?:src|href)=["']\//.test(html)) {
   throw new Error("Electron bundle contains absolute asset URLs. Keep Vite base set to './'.");

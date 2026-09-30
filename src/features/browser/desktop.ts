@@ -1,3 +1,4 @@
+import type { OverlayPayload } from "./overlay/bridge";
 import type { TabCard } from "./tab-preview";
 import type { Credential, HistoryUrl, HistoryVisit, Tab } from "./types";
 
@@ -263,6 +264,16 @@ export type DesktopBridge = {
       | null,
   ): Promise<void>;
   onAdblockStats(callback: (stats: AdblockStats) => void): () => void;
+  /** Painel da toolbar na camada acima da página (abre, troca ou atualiza). */
+  overlayOpen(payload: OverlayPayload): Promise<{ ok: boolean }>;
+  overlayClose(): Promise<void>;
+  /** Resposta a uma função do painel chamada na camada. */
+  overlayReply(id: number, result: unknown): Promise<void>;
+  onOverlayCall(
+    callback: (payload: { id: number; name: string; args: unknown[] }) => void,
+  ): () => void;
+  /** A camada fechou o painel (clique fora, Esc, atalho, janela arrastada). */
+  onOverlayDismissed(callback: () => void): () => void;
 };
 
 type DesktopWindow = Window & { agzosDesktop?: DesktopBridge };
