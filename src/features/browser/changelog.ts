@@ -7,11 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.5",
+    date: "2026-10-04",
+    items: [
+      "Com um menu aberto, clicar fora fecha o menu e o clique já vale (link, guia ou botão), como no Comet.",
+    ],
+  },
+  {
     version: "1.5.4",
     date: "2026-10-03",
     items: [
       "Menus da toolbar não congelam mais o vídeo da página: o menu ⋯, downloads, proteção, site, favorito e cofre abrem por cima e a página continua viva.",
-      "Com um menu aberto, a rolagem fora dele rola a página; clicar fora fecha o menu e o clique já vale (link, guia ou botão), como no Comet.",
+      "Com um menu aberto, a rolagem fora dele rola a página; clicar fora ou Esc fecham.",
     ],
   },
   {

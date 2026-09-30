@@ -429,7 +429,7 @@ contextIsolation, ELECTRON_FILES, regras de hibernação.
 
 | Caso | Decisão |
 |---|---|
-| Clique fora do cartão | Como no Comet (conferido pelo dono do produto): fecha **e o clique vale** para o que está embaixo. A camada manda o ponto; o main repassa `mouseMove`/`mouseDown`/`mouseUp` (`sendInputEvent`) para a página, em coordenadas dela, ou para a casca (guias, omnibox, botões), e dá o foco ao alvo. Clicar no botão do próprio painel (⋯, downloads, estrela…) só fecha: a casca não reabre com o clique repassado (vale uma vez, decidido de forma síncrona por `panelRef`, porque o aviso e o clique chegam em qualquer ordem). |
+| Clique fora do cartão | 1.5.4 comia o clique. **1.5.5**, como no Comet (conferido pelo dono do produto): fecha **e o clique vale** para o que está embaixo. A camada manda o ponto; o main repassa `mouseMove`/`mouseDown`/`mouseUp` (`sendInputEvent`) para a página, em coordenadas dela, ou para a casca (guias, omnibox, botões), e dá o foco ao alvo. Clicar no botão do próprio painel (⋯, downloads, estrela…) só fecha: a casca não reabre com o clique repassado (vale uma vez, decidido de forma síncrona por `panelRef`, porque o aviso e o clique chegam em qualquer ordem). |
 | Rolagem fora do cartão | A página rola: `sendInputEvent` `mouseWheel` na guia ativa, com as coordenadas convertidas da janela para a página. |
 | Esc | Fecha, pela camada ou pelo próprio componente. |
 | Atalho do app com o foco no painel (Ctrl+T, Ctrl+Tab, Ctrl+J…) | O painel fecha e o atalho segue pelo `forwardAppShortcut`, o mesmo caminho da página, com o Ctrl sintético. |
