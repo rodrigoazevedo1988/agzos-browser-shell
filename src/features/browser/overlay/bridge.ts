@@ -72,7 +72,8 @@ export type OverlayBridge = {
   ready(): void;
   onRender(callback: (model: OverlayPayload | null) => void): () => void;
   call(name: string, args: unknown[]): Promise<unknown>;
-  dismiss(): void;
+  /** Esc (sem ponto) ou clique fora do painel (o clique segue para o que está embaixo). */
+  dismiss(click?: { x: number; y: number; button: number }): void;
   wheel(payload: { x: number; y: number; deltaX: number; deltaY: number }): void;
 };
 

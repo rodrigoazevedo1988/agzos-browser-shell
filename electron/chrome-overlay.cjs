@@ -88,6 +88,22 @@ function wheelEvent(rect, payload) {
   };
 }
 
+const MOUSE_BUTTONS = ["left", "middle", "right"];
+
+/**
+ * Clique fora do painel (como no Comet): o painel fecha e o clique vale para o que está
+ * embaixo. Eventos para sendInputEvent no ponto dado (coordenadas do alvo).
+ */
+function clickEvents(point, button) {
+  const which = MOUSE_BUTTONS[Number(button)] ?? "left";
+  const base = { x: point.x, y: point.y, button: which, clickCount: 1 };
+  return [
+    { type: "mouseMove", x: point.x, y: point.y },
+    { type: "mouseDown", ...base },
+    { type: "mouseUp", ...base },
+  ];
+}
+
 /**
  * AGZOS_DEBUG_OVERLAY=1: loga a estratégia de cada painel (live-overlay | snapshot-fallback)
  * e conta em `globalThis.__agzosOverlay` (os testes leem).
@@ -109,5 +125,6 @@ module.exports = {
   sanitizeOverlay,
   pagePoint,
   wheelEvent,
+  clickEvents,
   overlayDebugger,
 };

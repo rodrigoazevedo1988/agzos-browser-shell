@@ -25,6 +25,7 @@ const overlay = require(
     rect: { x: number; y: number; width: number; height: number } | null,
     payload: { x: number; y: number; deltaX: number; deltaY: number },
   ) => Record<string, unknown> | null;
+  clickEvents: (point: { x: number; y: number }, button: number) => Record<string, unknown>[];
   overlayDebugger: (env: Record<string, string | undefined>) => (strategy: string) => void;
 };
 
@@ -109,6 +110,16 @@ describe("chrome-overlay.cjs", () => {
     expect(overlay.wheelEvent(rect, { x: 400, y: 400, deltaX: 0, deltaY: 1e9 })!["deltaY"]).toBe(
       -2000,
     );
+  });
+
+  it("clique fora vira mover, apertar e soltar no mesmo ponto (botão do DOM → do Chromium)", () => {
+    expect(overlay.clickEvents({ x: 5, y: 7 }, 0)).toEqual([
+      { type: "mouseMove", x: 5, y: 7 },
+      { type: "mouseDown", x: 5, y: 7, button: "left", clickCount: 1 },
+      { type: "mouseUp", x: 5, y: 7, button: "left", clickCount: 1 },
+    ]);
+    expect(overlay.clickEvents({ x: 1, y: 1 }, 2)[1]).toMatchObject({ button: "right" });
+    expect(overlay.clickEvents({ x: 1, y: 1 }, 9)[1]).toMatchObject({ button: "left" });
   });
 
   it("AGZOS_DEBUG_OVERLAY=1 conta a estratégia de cada painel", () => {

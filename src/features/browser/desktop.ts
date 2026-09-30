@@ -1,4 +1,5 @@
 import type { OverlayPayload } from "./overlay/bridge";
+import type { PanelKind } from "./overlay/panels";
 import type { TabCard } from "./tab-preview";
 import type { Credential, HistoryUrl, HistoryVisit, Tab } from "./types";
 
@@ -273,7 +274,9 @@ export type DesktopBridge = {
     callback: (payload: { id: number; name: string; args: unknown[] }) => void,
   ): () => void;
   /** A camada fechou o painel (clique fora, Esc, atalho, janela arrastada). */
-  onOverlayDismissed(callback: () => void): () => void;
+  onOverlayDismissed(
+    callback: (payload: { kind?: PanelKind; click?: "shell" | "page" | false }) => void,
+  ): () => void;
 };
 
 type DesktopWindow = Window & { agzosDesktop?: DesktopBridge };

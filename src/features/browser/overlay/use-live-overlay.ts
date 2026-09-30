@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { DesktopBridge } from "../desktop";
 import { cloneableResult, splitProps, type OverlayPayload } from "./bridge";
-import type { PanelSpec } from "./panels";
+import type { PanelKind, PanelSpec } from "./panels";
 
 /**
  * - `inline`: o painel é desenhado na casca (web, ou plano B do app com a foto da página);
@@ -18,7 +18,7 @@ export function useLiveOverlay(
   desktop: DesktopBridge | null,
   spec: PanelSpec | null,
   classes: string[],
-  onDismiss: () => void,
+  onDismiss: (payload: { kind?: PanelKind; click?: "shell" | "page" | false }) => void,
 ): OverlayStatus {
   const handlers = useRef<Record<string, (...args: unknown[]) => unknown>>({});
   const dismissRef = useRef(onDismiss);
@@ -81,7 +81,7 @@ export function useLiveOverlay(
         .catch(() => undefined)
         .then((result) => desktop.overlayReply(id, cloneableResult(result)));
     });
-    const offDismiss = desktop.onOverlayDismissed(() => dismissRef.current());
+    const offDismiss = desktop.onOverlayDismissed((payload) => dismissRef.current(payload));
     return () => {
       offCall();
       offDismiss();
