@@ -446,6 +446,7 @@ function ownerCtx(contents) {
     contexts.get(contents.id) ??
     tabOfContents.get(contents.id)?.ctx ??
     popupOwner.get(contents) ??
+    sidePanelOwner.get(contents.id) ??
     lastFocused
   );
 }
@@ -490,6 +491,7 @@ function isShown(ctx, id) {
 }
 
 function applyLayout(ctx) {
+  layoutSidePanels(ctx);
   if (ctx.fullscreenActive || ctx.window.isDestroyed()) return;
   const now = Date.now();
   const panes = paneIds(ctx);
@@ -1431,6 +1433,7 @@ function wireView(view) {
     if (!ctx) return;
     ctx.fullscreenActive = true;
     closePanelLayer(ctx, { notify: true, refocus: false });
+    layoutSidePanels(ctx);
     view.setBounds(fullRect(ctx));
     send(ctx, "agzos:fullscreen", { active: true });
   });
@@ -1553,6 +1556,10 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     // Tela dividida (2.0): as duas guias e a área de cada pane.
     split: null,
     paneRects: new Map(),
+    // Painéis laterais (2.0): app → { view }, o aberto e a área dele.
+    sidePanels: new Map(),
+    sidePanel: null,
+    sidePanelRect: null,
     panelOpen: false,
     fullscreenActive: false,
     crashed: new Set(),
@@ -1630,6 +1637,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) {
       ctx.overlay.view.webContents.close();
     }
+    for (const app of [...ctx.sidePanels.keys()]) unloadSidePanel(ctx, app);
     for (const [id, pending] of pendingOverlayCalls) {
       if (pending.ctx !== ctx) continue;
       pendingOverlayCalls.delete(id);
@@ -2221,6 +2229,55 @@ function clickThrough({ target, point }, button) {
   for (const input of clickEvents(point, button)) target.sendInputEvent(input);
 }
 
+// --- Painéis laterais (2.0): WhatsApp, Telegram… cada um no seu WebContentsView. ---
+
+// webContents do painel → janela dona (links abrem guias nela, permissões perguntam nela).
+const sidePanelOwner = new Map();
+
+function sidePanelView(ctx, app, url) {
+  const known = ctx.sidePanels.get(app);
+  if (known && !known.view.webContents.isDestroyed()) return known;
+  // Mesma sessão das guias (login compartilhado), isolado e sem preload.
+  const view = new WebContentsView({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  view.setBackgroundColor("#FFFFFF");
+  view.setBounds(HIDDEN_RECT);
+  const contents = view.webContents;
+  const id = contents.id;
+  sidePanelOwner.set(id, ctx);
+  contents.once("destroyed", () => sidePanelOwner.delete(id));
+  // Links e janelas novas viram guias da janela (popups de login seguem como popup).
+  wirePopups(contents);
+  wireShortcuts(contents);
+  contents.on("render-process-gone", (_event, details) => {
+    if (details.reason !== "clean-exit" && !contents.isDestroyed()) contents.reload();
+  });
+  ctx.window.contentView.addChildView(view);
+  raisePanelLayer(ctx);
+  void contents.loadURL(url).catch(() => {});
+  const entry = { view, url };
+  ctx.sidePanels.set(app, entry);
+  return entry;
+}
+
+function layoutSidePanels(ctx) {
+  if (ctx.window.isDestroyed()) return;
+  for (const [app, entry] of ctx.sidePanels) {
+    const shown =
+      ctx.sidePanel === app && ctx.sidePanelRect && !ctx.panelOpen && !ctx.fullscreenActive;
+    entry.view.setBounds(shown ? ctx.sidePanelRect : HIDDEN_RECT);
+  }
+}
+
+function unloadSidePanel(ctx, app) {
+  const entry = ctx.sidePanels.get(app);
+  if (!entry) return;
+  ctx.sidePanels.delete(app);
+  if (!ctx.window.isDestroyed()) ctx.window.contentView.removeChildView(entry.view);
+  if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
+}
+
 /** Guia nova por cima da camada: a camada volta ao topo. */
 function raisePanelLayer(ctx) {
   if (ctx.overlay?.model) ctx.window.contentView.addChildView(ctx.overlay.view);
@@ -2322,6 +2379,48 @@ function registerIpc() {
       if (!Number.isSafeInteger(id) || !ctx.split || id === ctx.activeTabId) ctx.lastRect = rect;
     }
     applyLayout(ctx);
+  });
+
+  // Painéis laterais (2.0).
+  ipcMain.handle("sidepanel:show", (event, { app, url } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || typeof app !== "string" || !/^[a-z0-9-]{1,30}$/.test(app)) return;
+    if (typeof url !== "string" || !/^https:\/\//.test(url)) return;
+    // Testes: uma página local no lugar do app (sem depender da internet).
+    sidePanelView(ctx, app, process.env.AGZOS_SIDE_PANEL_URL || url);
+    ctx.sidePanel = app;
+    layoutSidePanels(ctx);
+  });
+
+  ipcMain.handle("sidepanel:hide", (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    // O painel sai de cena mas continua carregado (as mensagens seguem chegando).
+    const entry = ctx.sidePanels.get(ctx.sidePanel);
+    const hadFocus =
+      entry && !entry.view.webContents.isDestroyed() && entry.view.webContents.isFocused();
+    ctx.sidePanel = null;
+    layoutSidePanels(ctx);
+    if (hadFocus && !ctx.window.isDestroyed()) ctx.window.webContents.focus();
+  });
+
+  ipcMain.handle("sidepanel:bounds", (event, rect) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    const valid = rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite);
+    ctx.sidePanelRect = valid && rect.width > 0 && rect.height > 0 ? rect : null;
+    layoutSidePanels(ctx);
+  });
+
+  ipcMain.handle("sidepanel:reload", (event, { app } = {}) => {
+    const entry = ctxOfEvent(event)?.sidePanels.get(app);
+    if (!entry || entry.view.webContents.isDestroyed()) return;
+    void entry.view.webContents.loadURL(entry.url).catch(() => {});
+  });
+
+  ipcMain.handle("sidepanel:unload", (event, { app } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) unloadSidePanel(ctx, app);
   });
 
   // Tela dividida (2.0): as duas guias à vista, ou null.

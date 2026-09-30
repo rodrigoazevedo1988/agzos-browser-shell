@@ -153,6 +153,12 @@ export type DesktopBridge = {
   setBounds(rect: DesktopRect, id?: number): Promise<void>;
   /** Tela dividida à vista (as duas guias) ou null. */
   setSplit(ids: [number, number] | null): Promise<void>;
+  /** Painéis laterais (2.0): o app aberto, a área dele, recarregar e descarregar. */
+  sidePanelShow(app: string, url: string): Promise<void>;
+  sidePanelHide(): Promise<void>;
+  sidePanelBounds(rect: DesktopRect): Promise<void>;
+  sidePanelReload(app: string): Promise<void>;
+  sidePanelUnload(app: string): Promise<void>;
   navigate(id: number, url: string): Promise<void>;
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;

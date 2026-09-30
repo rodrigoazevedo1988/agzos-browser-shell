@@ -63,6 +63,7 @@ export type CommandId =
   | "workspace.new"
   | "workspace.next"
   | "workspace.previous"
+  | "sidepanels.toggle"
   | "history.open"
   | "bookmarks.manager"
   | "bookmarks.toggle-bar";
@@ -102,6 +103,8 @@ export type CommandContext = {
     editGroup: (groupId: number) => void;
     /** Painel de workspaces; `create` já abre o formulário de um novo. */
     openWorkspaces: (create?: boolean) => void;
+    /** Mostra ou esconde a barra lateral dos painéis (WhatsApp, Telegram…). */
+    toggleSidebar: () => void;
   };
 };
 
@@ -534,6 +537,12 @@ export const commands: Command[] = [
     enabled: ({ state }) => state.workspaces.length > 1,
     run: ({ state, dispatch }) =>
       dispatch({ type: "workspace/switch", id: stepWorkspace(state, 1) }),
+  },
+  {
+    id: "sidepanels.toggle",
+    label: ({ state }) =>
+      state.prefs.sidebar ? "Ocultar painéis laterais" : "Mostrar painéis laterais",
+    run: ({ ui }) => ui.toggleSidebar(),
   },
   {
     id: "workspace.previous",

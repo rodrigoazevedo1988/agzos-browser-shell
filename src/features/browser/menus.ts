@@ -28,7 +28,7 @@ export const TAB_MENU: MenuLayout = [
 export const STRIP_MENU: MenuLayout = [
   ["tab.new", "window.new", "tab.reopen-closed"],
   "separator",
-  ["palette.open", "split.new", "workspaces.open", "workspace.new"],
+  ["palette.open", "split.new", "workspaces.open", "workspace.new", "sidepanels.toggle"],
   "separator",
   ["tabs.vertical", "tabs.horizontal"],
 ];

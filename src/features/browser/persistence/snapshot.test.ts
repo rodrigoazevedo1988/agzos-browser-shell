@@ -187,6 +187,9 @@ describe("migração da 1.3", () => {
         searchSuggestions: true,
         hibernate: true,
         hibernateMinutes: 30,
+        sidebar: true,
+        sidePanels: ["whatsapp", "telegram", "messenger", "instagram"],
+        sidePanelWidth: 400,
       },
       session: {
         tabs: legacyTabs,

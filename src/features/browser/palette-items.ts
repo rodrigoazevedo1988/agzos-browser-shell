@@ -1,5 +1,6 @@
 import { commands, isEnabled, labelOf, shortcutLabel, type CommandContext } from "./commands";
 import type { PaletteItem } from "./palette";
+import { sidePanelApp } from "./side-panels";
 import { activeTabOf, entryOf, hostOf, orderTabs } from "./store/selectors";
 
 /** Comandos que não fazem sentido na busca (atalhos de posição, o próprio Ctrl+K). */
@@ -52,6 +53,17 @@ export function paletteItems(ctx: CommandContext, { mac }: { mac: boolean }): Pa
       label: labelOf(command, ctx, active.id),
       shortcut: shortcutLabel(command, mac),
       keywords: command.id.replace(/[.-]/g, " "),
+    });
+  }
+
+  for (const id of state.prefs.sidePanels) {
+    const app = sidePanelApp(id);
+    if (!app) continue;
+    items.push({
+      id: `panel:${app.id}`,
+      group: "Comandos",
+      label: `Abrir ${app.name} no painel lateral`,
+      keywords: "painel lateral mensagens",
     });
   }
 

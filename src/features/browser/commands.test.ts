@@ -41,6 +41,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     openPalette: vi.fn(),
     editGroup: vi.fn(),
     openWorkspaces: vi.fn(),
+    toggleSidebar: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
@@ -304,7 +305,16 @@ describe("menus da versão web", () => {
     const labels = groups.flatMap((group) =>
       group === "separator" ? [] : group.map((i) => i.label),
     );
-    expect(labels).toEqual(["Nova guia", "Reabrir guia fechada", "Mostrar guias horizontalmente"]);
+    expect(labels).toEqual([
+      "Nova guia",
+      "Reabrir guia fechada",
+      "Buscar comandos",
+      "Dividir tela (nova guia ao lado)",
+      "Workspaces",
+      "Novo workspace…",
+      "Ocultar painéis laterais",
+      "Mostrar guias horizontalmente",
+    ]);
     expect(groups.at(-1)).not.toBe("separator");
   });
 });

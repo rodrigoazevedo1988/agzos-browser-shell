@@ -18,6 +18,8 @@ import type {
   Workspace,
 } from "../types";
 
+import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
+
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
 export const BOOKMARKS_URL = "agzos://favoritos";
@@ -53,6 +55,12 @@ export type Prefs = {
   hibernate: boolean;
   /** Minutos sem uso antes de hibernar (ver HIBERNATE_MINUTES). */
   hibernateMinutes: number;
+  /** Barra lateral com os painéis (WhatsApp, Telegram…), 2.0. */
+  sidebar: boolean;
+  /** Painéis que aparecem na barra lateral (ids de side-panels.ts), na ordem. */
+  sidePanels: string[];
+  /** Largura do painel lateral aberto (px). */
+  sidePanelWidth: number;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -70,6 +78,9 @@ export const defaultPrefs: Prefs = {
   searchSuggestions: true,
   hibernate: true,
   hibernateMinutes: 30,
+  sidebar: true,
+  sidePanels: DEFAULT_SIDE_PANELS,
+  sidePanelWidth: SIDE_PANEL_WIDTH.initial,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };

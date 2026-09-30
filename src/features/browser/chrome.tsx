@@ -40,6 +40,8 @@ import { useDesktopSync } from "./desktop-sync";
 import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
+import { SIDE_PANEL_APPS, sidePanelApp } from "./side-panels";
+import { SideBar, SidePanel } from "./ui/side-bar";
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -156,6 +158,13 @@ export function AgzosBrowser() {
     anchor: { x: number; y: number } | null;
   } | null>(null);
   const [workspaceCreate, setWorkspaceCreate] = useState(false);
+  // Painel lateral aberto nesta janela (2.0).
+  const [sidePanel, setSidePanel] = useState<string | null>(null);
+  const sideApps = useMemo(
+    () => prefs.sidePanels.flatMap((id) => sidePanelApp(id) ?? []),
+    [prefs.sidePanels],
+  );
+  const openSideApp = sideApps.find((app) => app.id === sidePanel) ?? null;
   // "Mudar para esta guia" na omnibox: as outras abas normais.
   const switchableTabs = useMemo(
     () => state.tabs.filter((tab) => tab.id !== state.activeId && !tab.private),
@@ -343,6 +352,36 @@ export function AgzosBrowser() {
     },
     [flash],
   );
+
+  // "+" (ou clique direito) na barra lateral: quais painéis aparecem.
+  const manageSidePanels = (event: MouseEvent) => {
+    event.preventDefault();
+    const enabled = new Set(prefs.sidePanels);
+    const items: NativeMenuItem[] = [
+      ...SIDE_PANEL_APPS.map((app) => ({
+        id: `toggle:${app.id}`,
+        label: `${enabled.has(app.id) ? "✓  " : "     "}${app.name}`,
+      })),
+      { separator: true },
+      { id: "hide", label: "Ocultar barra lateral" },
+    ];
+    void showMenu(event.clientX, event.clientY, items).then((choice) => {
+      if (choice === "hide") {
+        setPrefs({ sidebar: false });
+        setSidePanel(null);
+        return;
+      }
+      const id = choice?.startsWith("toggle:") ? choice.slice("toggle:".length) : null;
+      if (!id) return;
+      if (enabled.has(id)) {
+        setPrefs({ sidePanels: prefs.sidePanels.filter((item) => item !== id) });
+        if (sidePanel === id) setSidePanel(null);
+        void desktop?.sidePanelUnload(id);
+      } else {
+        setPrefs({ sidePanels: [...prefs.sidePanels, id] });
+      }
+    });
+  };
 
   const openInternal = useCallback((url: string, title: string) => {
     dispatch({ type: "nav/open-internal", entry: { title, url, kind: "internal" } });
@@ -571,6 +610,10 @@ export function AgzosBrowser() {
       openWorkspaces: (create = false) => {
         setWorkspaceCreate(create);
         setPanel("workspaces");
+      },
+      toggleSidebar: () => {
+        if (prefs.sidebar) setSidePanel(null);
+        setPrefs({ sidebar: !prefs.sidebar });
       },
     },
   };
@@ -953,7 +996,10 @@ export function AgzosBrowser() {
     const value = rest.join(":");
     if (kind === "tab") dispatch({ type: "tab/activate", id: Number(value) });
     else if (kind === "ws") dispatch({ type: "workspace/switch", id: Number(value) });
-    else if (kind === "url") openUrl(value, true);
+    else if (kind === "panel") {
+      setPrefs({ sidebar: true });
+      setSidePanel(value);
+    } else if (kind === "url") openUrl(value, true);
     else if (kind === "cmd") {
       // Depois de o painel fechar: comandos que abrem outro painel (downloads) não brigam.
       window.setTimeout(() => runCommand(ctxRef.current, value, null, "menu"), 0);
@@ -1340,6 +1386,25 @@ export function AgzosBrowser() {
         )}
 
         <div className="browser-body">
+          {prefs.sidebar && !state.fullscreen && (
+            <SideBar
+              apps={sideApps}
+              open={sidePanel}
+              onToggle={(id) => setSidePanel((open) => (open === id ? null : id))}
+              onManage={manageSidePanels}
+            />
+          )}
+          {openSideApp && prefs.sidebar && !state.fullscreen && (
+            <SidePanel
+              key={openSideApp.id}
+              app={openSideApp}
+              width={prefs.sidePanelWidth}
+              desktop={desktop}
+              onClose={() => setSidePanel(null)}
+              onOpenInTab={(url) => openUrl(url, true)}
+              onResize={(width) => setPrefs({ sidePanelWidth: width })}
+            />
+          )}
           {prefs.orientation === "vertical" && (
             <TabRail
               {...listProps}

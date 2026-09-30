@@ -1,4 +1,5 @@
 import { parseBookmarks } from "../bookmarks";
+import { clampPanelWidth, parseSidePanels } from "../side-panels";
 import type { HydratePayload } from "../store/reducer";
 import {
   BOOKMARKS_URL,
@@ -193,6 +194,9 @@ export function parsePrefs(value: unknown): Prefs {
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),
     hibernate: bool("hibernate"),
+    sidebar: bool("sidebar"),
+    sidePanels: parseSidePanels(raw["sidePanels"]),
+    sidePanelWidth: clampPanelWidth(raw["sidePanelWidth"]),
     hibernateMinutes: (HIBERNATE_MINUTES as readonly unknown[]).includes(raw["hibernateMinutes"])
       ? (raw["hibernateMinutes"] as number)
       : defaultPrefs.hibernateMinutes,
