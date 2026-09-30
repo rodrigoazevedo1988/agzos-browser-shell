@@ -38,6 +38,7 @@ import {
 import { useDesktopSync } from "./desktop-sync";
 import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
+import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
@@ -70,7 +71,7 @@ import { WhatsNew } from "./ui/whats-new";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
 
-type Panel = "key" | "privacy" | "menu" | "downloads" | "bookmark" | "site";
+type Panel = "key" | "privacy" | "menu" | "downloads" | "bookmark" | "site" | "palette";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -538,6 +539,7 @@ export function AgzosBrowser() {
       showWhatsNew: () => {
         if (appVersion) setWhatsNew({ from: null, to: appVersion, celebrate: false });
       },
+      openPalette: () => setPanel("palette"),
     },
   };
   const ctxRef = useRef(ctx);
@@ -866,6 +868,17 @@ export function AgzosBrowser() {
   };
 
   const closePanel = () => setPanel(null);
+  // Item escolhido na busca de comandos (Ctrl+K).
+  const runPaletteItem = (id: string) => {
+    const [kind, ...rest] = id.split(":");
+    const value = rest.join(":");
+    if (kind === "tab") dispatch({ type: "tab/activate", id: Number(value) });
+    else if (kind === "url") openUrl(value, true);
+    else if (kind === "cmd") {
+      // Depois de o painel fechar: comandos que abrem outro painel (downloads) não brigam.
+      window.setTimeout(() => runCommand(ctxRef.current, value, null, "menu"), 0);
+    }
+  };
   const stageClasses = [
     prefs.dark && "dark",
     state.fullscreen && "fs",
@@ -994,20 +1007,29 @@ export function AgzosBrowser() {
                     onClose: closePanel,
                   },
                 }
-              : panel === "key"
+              : panel === "palette"
                 ? {
-                    kind: "key",
+                    kind: "palette",
                     props: {
-                      credentials,
-                      copied,
-                      onCopy: (id, value) => void copyText(id, value),
-                      onAdd: (item) => setCredentials((list) => [...list, item]),
-                      onRemove: (domain) =>
-                        setCredentials((list) => list.filter((item) => item.domain !== domain)),
+                      items: paletteItems(ctx, { mac: isMac }),
+                      onRun: runPaletteItem,
                       onClose: closePanel,
                     },
                   }
-                : null;
+                : panel === "key"
+                  ? {
+                      kind: "key",
+                      props: {
+                        credentials,
+                        copied,
+                        onCopy: (id, value) => void copyText(id, value),
+                        onAdd: (item) => setCredentials((list) => [...list, item]),
+                        onRemove: (domain) =>
+                          setCredentials((list) => list.filter((item) => item.domain !== domain)),
+                        onClose: closePanel,
+                      },
+                    }
+                  : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1130,6 +1152,8 @@ export function AgzosBrowser() {
             open: panel === "site",
             onToggle: () => togglePanel("site"),
           }}
+          shareUrl={current.kind === "page" ? current.url : null}
+          onCopyLink={(url) => writeClipboard(url)}
           updateReady={update?.status === "ready" ? update.version : null}
           onInstallUpdate={() => void desktop?.updateInstall()}
         />

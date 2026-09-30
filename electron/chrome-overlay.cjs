@@ -11,7 +11,15 @@
 // manda os dados (IPC) e as funções viram chamadas de volta para ela (overlay:call).
 
 /** Painéis que abrem na camada. */
-const OVERLAY_KINDS = new Set(["menu", "downloads", "privacy", "site", "key", "bookmark"]);
+const OVERLAY_KINDS = new Set([
+  "menu",
+  "downloads",
+  "privacy",
+  "site",
+  "key",
+  "bookmark",
+  "palette",
+]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
 const CLASS_NAME = /^[a-z][a-z0-9-]{0,40}$/;

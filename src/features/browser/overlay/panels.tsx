@@ -7,6 +7,8 @@ import { PrivacyPanel } from "@/features/privacy/panel";
 import { AppMenu } from "@/features/settings/menu";
 import { SitePanel } from "@/features/site/panel";
 
+import { CommandPalette } from "../ui/command-palette";
+
 /**
  * Painéis da toolbar. O mesmo componente roda na casca (web, plano B) ou na camada acima
  * da página (app: dist/overlay.html), com as mesmas props.
@@ -17,7 +19,8 @@ export type PanelSpec =
   | { kind: "privacy"; key?: string; props: ComponentProps<typeof PrivacyPanel> }
   | { kind: "site"; key?: string; props: ComponentProps<typeof SitePanel> }
   | { kind: "key"; key?: string; props: ComponentProps<typeof KeyPanel> }
-  | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> };
+  | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> }
+  | { kind: "palette"; key?: string; props: ComponentProps<typeof CommandPalette> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -36,5 +39,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <KeyPanel key={key} {...spec.props} />;
     case "bookmark":
       return <BookmarkEditor key={key} {...spec.props} />;
+    case "palette":
+      return <CommandPalette key={key} {...spec.props} />;
   }
 }

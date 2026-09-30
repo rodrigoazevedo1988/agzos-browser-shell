@@ -38,6 +38,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     bookmarkAllTabs: vi.fn(),
     pictureInPicture: vi.fn(),
     showWhatsNew: vi.fn(),
+    openPalette: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
@@ -55,7 +56,7 @@ describe("atalhos", () => {
     ["w", {}, "tab.close"],
     ["r", { meta: true }, "tab.reload"],
     ["l", {}, "omnibox.focus"],
-    ["k", {}, "omnibox.focus"],
+    ["k", {}, "palette.open"],
     ["D", { shift: true }, "tabs.bookmark-all"],
     ["N", { shift: true }, "tab.new-private"],
     ["h", {}, "history.open"],

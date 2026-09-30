@@ -52,6 +52,7 @@ export type CommandId =
   | "zoom.out"
   | "zoom.reset"
   | "omnibox.focus"
+  | "palette.open"
   | "history.open"
   | "bookmarks.manager"
   | "bookmarks.toggle-bar";
@@ -85,6 +86,8 @@ export type CommandContext = {
     pictureInPicture: (tabId: number) => void;
     /** Aviso com as novidades da versão atual (sem confetes). */
     showWhatsNew: () => void;
+    /** Busca de comandos (Ctrl+K). */
+    openPalette: () => void;
   };
 };
 
@@ -445,8 +448,14 @@ export const commands: Command[] = [
   {
     id: "omnibox.focus",
     label: "Ir para a barra de endereço",
-    shortcuts: [{ key: "l" }, { key: "k" }],
+    shortcuts: [{ key: "l" }],
     run: ({ ui }) => ui.focusOmnibox(),
+  },
+  {
+    id: "palette.open",
+    label: "Buscar comandos",
+    shortcuts: [{ key: "k" }],
+    run: ({ ui }) => ui.openPalette(),
   },
 ];
 
