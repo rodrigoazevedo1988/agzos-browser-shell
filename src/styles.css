@@ -3609,3 +3609,302 @@ button.download-name:hover {
   color: var(--muted-foreground);
   font-size: 13px;
 }
+
+/* Grupos de guias (2.0): chip colorido antes das guias do grupo; as guias levam a cor
+   numa linha embaixo (na vertical, à esquerda). */
+.tab-group-chip {
+  align-self: center;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 140px;
+  height: 24px;
+  margin: 0 2px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--group-color);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+.tab-group-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-group-chip.dot {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0;
+}
+.tab-group-chip.collapsed {
+  opacity: 0.85;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.08),
+    3px 0 0 -1px var(--group-color);
+}
+.tab-group-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.browser-tab.grouped {
+  box-shadow: inset 0 -2px 0 var(--group-color);
+}
+.rail-tabs .tab-group-chip {
+  align-self: flex-start;
+  margin: 6px 8px 2px;
+}
+.rail-tabs .browser-tab.grouped {
+  box-shadow: inset 3px 0 0 var(--group-color);
+}
+/* Tela dividida: as duas guias ficam marcadas na barra. */
+.browser-tab.in-split::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0.8;
+}
+
+/* Workspaces (2.0). */
+.workspace-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  height: 30px;
+  max-width: 150px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-button.compact {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.workspace-button.on,
+.workspace-button:hover {
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+.workspace-button .workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-head .workspace-button {
+  flex: 1;
+  max-width: none;
+}
+.workspace-panel {
+  top: 50px;
+  right: auto;
+  left: 12px;
+  width: min(330px, calc(100% - 24px));
+  transform-origin: top left;
+}
+.vertical-tabs .workspace-panel {
+  top: 96px;
+}
+.workspace-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+.workspace-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 7px;
+}
+.workspace-list li.active {
+  background: color-mix(in oklab, var(--primary) 9%, transparent);
+}
+.workspace-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-row:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.workspace-row .workspace-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-row small {
+  color: var(--muted-foreground);
+}
+.workspace-row svg {
+  width: 14px;
+  height: 14px;
+  color: var(--primary);
+}
+.icon-action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.icon-action svg {
+  width: 14px;
+  height: 14px;
+}
+.icon-action:hover {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+.icon-action.danger:hover {
+  color: var(--primary);
+}
+.workspace-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 12px);
+  margin: 0 6px 8px;
+  padding: 9px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  cursor: pointer;
+}
+.workspace-new svg {
+  width: 14px;
+  height: 14px;
+  color: var(--primary);
+}
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+.workspace-form input,
+.group-editor input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 13px;
+  outline: 0;
+}
+.workspace-form input:focus,
+.group-editor input:focus {
+  border-color: var(--primary);
+}
+.workspace-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace-icons button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+.workspace-icons button.on {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+.workspace-form .settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Edição do grupo (balão ao lado do chip). */
+.group-editor {
+  position: fixed;
+  right: auto;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  transform-origin: top left;
+}
+.group-editor form input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.group-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.group-colors button {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.1);
+}
+.group-colors button.on {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--foreground);
+}
+.group-actions {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.group-actions button {
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.group-actions button:hover {
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+.group-actions button.danger {
+  color: var(--primary);
+}

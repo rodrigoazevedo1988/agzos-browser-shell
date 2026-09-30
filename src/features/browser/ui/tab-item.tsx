@@ -1,5 +1,5 @@
 import { Pin, PinOff, VenetianMask, Volume2, VolumeX, X } from "lucide-react";
-import type { MouseEvent } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,8 @@ export function TabItem({
   dropMark = null,
   confirmingClose,
   handlers,
+  groupColor = null,
+  inSplit = false,
 }: {
   tab: Tab;
   active: boolean;
@@ -35,6 +37,10 @@ export function TabItem({
   dropMark?: "before" | "after" | null;
   confirmingClose: boolean;
   handlers: TabHandlers;
+  /** Cor do grupo da guia (2.0). */
+  groupColor?: string | null;
+  /** Uma das duas guias da tela dividida. */
+  inSplit?: boolean;
 }) {
   const entry = entryOf(tab);
   return (
@@ -76,7 +82,10 @@ export function TabItem({
         tab.private && "private",
         hibernated && "hibernated",
         dropMark && `drop-${dropMark}`,
+        groupColor && "grouped",
+        inSplit && "in-split",
       )}
+      style={groupColor ? ({ "--group-color": groupColor } as CSSProperties) : undefined}
     >
       {tab.private ? (
         <VenetianMask aria-hidden="true" />

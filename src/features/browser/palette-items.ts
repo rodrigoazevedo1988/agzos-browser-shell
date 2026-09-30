@@ -30,6 +30,18 @@ export function paletteItems(ctx: CommandContext, { mac }: { mac: boolean }): Pa
     });
   }
 
+  if (state.workspaces.length > 1) {
+    for (const workspace of state.workspaces) {
+      items.push({
+        id: `ws:${workspace.id}`,
+        group: "Workspaces",
+        label: `${workspace.icon} ${workspace.name}`,
+        detail: workspace.id === state.activeWorkspaceId ? "Workspace atual" : undefined,
+        keywords: "workspace espaço",
+      });
+    }
+  }
+
   for (const command of commands) {
     if (HIDDEN.has(command.id)) continue;
     if (command.visible && !command.visible(ctx, active.id)) continue;

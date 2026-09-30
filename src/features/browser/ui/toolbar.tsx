@@ -16,7 +16,14 @@ import {
   Sun,
   VenetianMask,
 } from "lucide-react";
-import { forwardRef, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -62,6 +69,8 @@ export type ToolbarProps = {
   /** Endereço da página para o botão de copiar link (null: nada para copiar). */
   shareUrl: string | null;
   onCopyLink: (url: string) => Promise<void> | void;
+  /** Clique direito na barra (fora do campo de texto): o mesmo menu da barra de guias. */
+  onBarMenu?: (event: MouseEvent) => void;
   /** Atualização baixada e pronta: botão "Atualizar". */
   updateReady: string | null;
   onInstallUpdate: () => void;
@@ -80,7 +89,14 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
       void Promise.resolve(props.onCopyLink(props.shareUrl)).then(() => setCopied(true));
     };
     return (
-      <div className="toolbar">
+      <div
+        className="toolbar"
+        onContextMenu={(event) => {
+          // No campo de endereço vale o menu de texto (copiar/colar).
+          if ((event.target as HTMLElement).closest("input")) return;
+          props.onBarMenu?.(event);
+        }}
+      >
         <div className="nav-actions">
           <Button
             variant="ghost"

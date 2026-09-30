@@ -628,9 +628,17 @@ function buildPageContextMenu(contents, params) {
   return Menu.buildFromTemplate(template);
 }
 
+/** Texto vindo da casca para um item de menu (nome de grupo/workspace). */
+function menuText(value, fallback) {
+  const text = typeof value === "string" ? value.trim().slice(0, 40) : "";
+  return text || fallback;
+}
+
 function buildTabContextMenu(ctx, context) {
   const { kind, tabId, pinned, muted, audio, hasClosed, orientation, url, tabCount, active } =
     context;
+  const groups = Array.isArray(context.groups) ? context.groups.slice(0, 30) : [];
+  const workspaces = Array.isArray(context.workspaces) ? context.workspaces.slice(0, 30) : [];
   const action = (id, label, options = {}) => ({
     label,
     ...options,
@@ -646,6 +654,14 @@ function buildTabContextMenu(ctx, context) {
         accelerator: "CmdOrCtrl+Shift+T",
         enabled: Boolean(hasClosed),
       }),
+      { type: "separator" },
+      action("palette.open", "Buscar comandos", { accelerator: "CmdOrCtrl+K" }),
+      action("split.new", "Dividir tela (nova guia ao lado)", {
+        accelerator: "CmdOrCtrl+Alt+Shift+S",
+      }),
+      action("workspaces.open", "Workspaces…"),
+      action("workspace.new", "Novo workspace…"),
+      action("sidepanels.toggle", "Mostrar/ocultar painéis laterais"),
       { type: "separator" },
       orientation === "vertical"
         ? action("tabs.horizontal", "Mostrar guias horizontalmente")
@@ -663,9 +679,49 @@ function buildTabContextMenu(ctx, context) {
     action("tab.duplicate", "Duplicar"),
     action("tab.move-to-window", "Mover para nova janela", { enabled: (tabCount ?? 1) > 1 }),
     { type: "separator" },
+    // 2.0: grupos, tela dividida e workspaces.
+    action("group.new", "Adicionar guia a novo grupo", { accelerator: "CmdOrCtrl+Shift+G" }),
+  ];
+  const otherGroups = groups.filter((group) => group?.id !== context.groupId);
+  if (otherGroups.length) {
+    items.push({
+      label: "Adicionar ao grupo",
+      submenu: otherGroups.map((group) =>
+        action(`group.add:${Number(group.id)}`, menuText(group.title, "Grupo sem nome")),
+      ),
+    });
+  }
+  if (Number.isSafeInteger(context.groupId)) {
+    items.push(action("group.leave", "Remover do grupo"));
+  }
+  items.push({ type: "separator" });
+  if (context.inSplit) {
+    items.push(action("split.swap", "Trocar os lados da tela dividida"));
+    items.push(action("split.close", "Desfazer tela dividida"));
+  } else if (!active) {
+    items.push(action("split.with-tab", "Abrir em tela dividida com a guia atual"));
+  } else {
+    items.push(action("split.new", "Dividir tela (nova guia ao lado)"));
+  }
+  const otherWorkspaces = workspaces.filter((item) => item?.id !== context.workspaceId);
+  items.push({
+    label: "Mover para workspace",
+    submenu: [
+      ...otherWorkspaces.map((item) =>
+        action(
+          `workspace.move:${Number(item.id)}`,
+          `${menuText(item.icon, "").slice(0, 4)} ${menuText(item.name, "Workspace")}`.trim(),
+        ),
+      ),
+      ...(otherWorkspaces.length ? [{ type: "separator" }] : []),
+      action("workspace.new", "Novo workspace…"),
+    ],
+  });
+  items.push(
+    { type: "separator" },
     action("tab.toggle-pin", pinned ? "Desfixar" : "Fixar"),
     action("tab.hibernate", "Hibernar guia", { enabled: Boolean(loaded && !active) }),
-  ];
+  );
   if (audio || muted) {
     items.push(action("tab.toggle-mute", muted ? "Ativar som do site" : "Desativar som do site"));
   }
@@ -855,6 +911,10 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+9",
   "mod+[",
   "mod+]",
+  "mod+shift+g",
+  "mod+alt+shift+s",
+  "mod+alt+arrowup",
+  "mod+alt+arrowdown",
   "alt+arrowleft",
   "alt+arrowright",
   "mod+=",

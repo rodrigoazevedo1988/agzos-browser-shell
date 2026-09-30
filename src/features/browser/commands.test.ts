@@ -39,6 +39,8 @@ function context(state: BrowserState = initialState, desktop = false) {
     pictureInPicture: vi.fn(),
     showWhatsNew: vi.fn(),
     openPalette: vi.fn(),
+    editGroup: vi.fn(),
+    openWorkspaces: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

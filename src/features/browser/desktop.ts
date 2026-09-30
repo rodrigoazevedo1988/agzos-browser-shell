@@ -124,6 +124,13 @@ export type DesktopTabMenuContext = {
   tabCount?: number;
   /** Guia ativa (não pode ser hibernada). */
   active?: boolean;
+  /** 2.0: grupo da guia, grupos existentes, workspaces e tela dividida. */
+  groupId?: number | null;
+  groups?: { id: number; title: string }[];
+  workspaceId?: number;
+  workspaces?: { id: number; name: string; icon: string }[];
+  /** A guia está na tela dividida à vista. */
+  inSplit?: boolean;
 };
 
 export type DesktopPermissionRequest = {
