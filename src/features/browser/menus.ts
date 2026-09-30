@@ -12,6 +12,8 @@ type MenuLayout = (CommandId[] | "separator")[];
 export const TAB_MENU: MenuLayout = [
   ["window.new", "tab.new-right", "tab.reopen-closed", "tab.duplicate", "tab.move-to-window"],
   "separator",
+  ["group.new", "group.leave", "split.with-tab", "split.swap", "split.close"],
+  "separator",
   ["tab.toggle-pin", "tab.toggle-mute", "tab.hibernate"],
   "separator",
   ["tab.reload", "tab.copy-url"],
@@ -25,6 +27,8 @@ export const TAB_MENU: MenuLayout = [
 
 export const STRIP_MENU: MenuLayout = [
   ["tab.new", "window.new", "tab.reopen-closed"],
+  "separator",
+  ["palette.open", "split.new", "workspaces.open", "workspace.new", "sidepanels.toggle"],
   "separator",
   ["tabs.vertical", "tabs.horizontal"],
 ];

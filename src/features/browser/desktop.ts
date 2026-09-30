@@ -58,7 +58,9 @@ export type DesktopTabEvent =
   | { type: "zoom"; id: number; factor: number }
   | { type: "download-navigation"; id: number; urls: string[] }
   | { type: "thumbnail"; id: number; dataUrl: string }
-  | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null };
+  | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
+  /** Tela dividida: o usuário clicou na página do outro pane. */
+  | { type: "focused"; id: number };
 
 export type BlockedTracker = { host: string; category: string };
 
@@ -124,6 +126,13 @@ export type DesktopTabMenuContext = {
   tabCount?: number;
   /** Guia ativa (não pode ser hibernada). */
   active?: boolean;
+  /** 2.0: grupo da guia, grupos existentes, workspaces e tela dividida. */
+  groupId?: number | null;
+  groups?: { id: number; title: string }[];
+  workspaceId?: number;
+  workspaces?: { id: number; name: string; icon: string }[];
+  /** A guia está na tela dividida à vista. */
+  inSplit?: boolean;
 };
 
 export type DesktopPermissionRequest = {
@@ -140,7 +149,16 @@ export type DesktopBridge = {
     options?: { dark?: boolean; private?: boolean },
   ): Promise<void>;
   activateTab(id: number): Promise<void>;
-  setBounds(rect: DesktopRect): Promise<void>;
+  /** Área da página; com `id` (2.0), a do pane daquela guia na tela dividida. */
+  setBounds(rect: DesktopRect, id?: number): Promise<void>;
+  /** Tela dividida à vista (as duas guias) ou null. */
+  setSplit(ids: [number, number] | null): Promise<void>;
+  /** Painéis laterais (2.0): o app aberto, a área dele, recarregar e descarregar. */
+  sidePanelShow(app: string, url: string): Promise<void>;
+  sidePanelHide(): Promise<void>;
+  sidePanelBounds(rect: DesktopRect): Promise<void>;
+  sidePanelReload(app: string): Promise<void>;
+  sidePanelUnload(app: string): Promise<void>;
   navigate(id: number, url: string): Promise<void>;
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;

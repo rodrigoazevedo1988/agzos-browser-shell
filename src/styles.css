@@ -3445,3 +3445,636 @@ button.download-name:hover {
   background: transparent;
   transition: none;
 }
+
+/* Barra de endereço (2.0), como no Comet: o link de copiar fica à mão; favorito, ajustes
+   do site e proteção aparecem ao pausar o mouse na barra (ou com o foco nela). */
+.omnibox-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.omnibox-more {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.omnibox-more > button {
+  opacity: 0;
+  transition: opacity var(--dur-exit, 0.12s) var(--ease-in, ease-in);
+}
+.omnibox:hover .omnibox-more > button,
+.omnibox:focus-within .omnibox-more > button,
+.omnibox-more > button:focus-visible,
+.omnibox-more > button.on {
+  opacity: 1;
+  transition-duration: var(--dur-enter, 0.18s);
+}
+.omnibox-action {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.omnibox .omnibox-action svg {
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+}
+.omnibox-action:hover,
+.omnibox-action.on {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+.omnibox-action.copy-link.on {
+  color: var(--primary);
+}
+.omnibox-action:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Busca de comandos (Ctrl+K, 2.0): no topo, centralizada, na camada acima da página. */
+.command-palette {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  z-index: 97;
+  width: min(620px, calc(100% - 32px));
+  max-height: min(520px, calc(100vh - 96px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--card) 97%, transparent);
+  color: var(--foreground);
+  box-shadow:
+    0 0 0 1px var(--glass-edge, transparent),
+    0 24px 70px rgb(0 0 0 / 0.28);
+  backdrop-filter: blur(22px) saturate(1.5);
+}
+.command-palette-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.command-palette-input svg {
+  width: 16px;
+  height: 16px;
+  color: var(--primary);
+}
+.command-palette-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 14px;
+}
+.command-palette kbd {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-family: inherit;
+}
+.command-palette-list {
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+.command-palette-group {
+  padding: 8px 10px 4px;
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.command-palette-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.command-palette-option.selected {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+}
+.command-palette-option svg,
+.command-palette-option img {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  border-radius: 3px;
+}
+.command-palette-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-palette-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-palette-tag {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.command-palette-option:not(:has(.command-palette-detail)) .command-palette-label {
+  flex: 1;
+}
+.command-palette-empty {
+  margin: 0;
+  padding: 18px 16px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+/* Grupos de guias (2.0): chip colorido antes das guias do grupo; as guias levam a cor
+   numa linha embaixo (na vertical, à esquerda). */
+.tab-group-chip {
+  align-self: center;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 140px;
+  height: 24px;
+  margin: 0 2px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--group-color);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+.tab-group-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-group-chip.dot {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0;
+}
+.tab-group-chip.collapsed {
+  opacity: 0.85;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.08),
+    3px 0 0 -1px var(--group-color);
+}
+.tab-group-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.browser-tab.grouped {
+  box-shadow: inset 0 -2px 0 var(--group-color);
+}
+.rail-tabs .tab-group-chip {
+  align-self: flex-start;
+  margin: 6px 8px 2px;
+}
+.rail-tabs .browser-tab.grouped {
+  box-shadow: inset 3px 0 0 var(--group-color);
+}
+/* Tela dividida: as duas guias ficam marcadas na barra. */
+.browser-tab.in-split::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0.8;
+}
+
+/* Workspaces (2.0). */
+.workspace-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  height: 30px;
+  max-width: 150px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-button.compact {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.workspace-button.on,
+.workspace-button:hover {
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+.workspace-button .workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-head .workspace-button {
+  flex: 1;
+  max-width: none;
+}
+.workspace-panel {
+  top: 50px;
+  right: auto;
+  left: 12px;
+  width: min(330px, calc(100% - 24px));
+  transform-origin: top left;
+}
+.vertical-tabs .workspace-panel {
+  top: 96px;
+}
+.workspace-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+.workspace-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 7px;
+}
+.workspace-list li.active {
+  background: color-mix(in oklab, var(--primary) 9%, transparent);
+}
+.workspace-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-row:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.workspace-row .workspace-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-row small {
+  color: var(--muted-foreground);
+}
+.workspace-row svg {
+  width: 14px;
+  height: 14px;
+  color: var(--primary);
+}
+.icon-action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.icon-action svg {
+  width: 14px;
+  height: 14px;
+}
+.icon-action:hover {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+.icon-action.danger:hover {
+  color: var(--primary);
+}
+.workspace-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 12px);
+  margin: 0 6px 8px;
+  padding: 9px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  cursor: pointer;
+}
+.workspace-new svg {
+  width: 14px;
+  height: 14px;
+  color: var(--primary);
+}
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+.workspace-form input,
+.group-editor input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 13px;
+  outline: 0;
+}
+.workspace-form input:focus,
+.group-editor input:focus {
+  border-color: var(--primary);
+}
+.workspace-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace-icons button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+.workspace-icons button.on {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+.workspace-form .settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Edição do grupo (balão ao lado do chip). */
+.group-editor {
+  position: fixed;
+  right: auto;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  transform-origin: top left;
+}
+.group-editor form input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.group-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.group-colors button {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.1);
+}
+.group-colors button.on {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--foreground);
+}
+.group-actions {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.group-actions button {
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.group-actions button:hover {
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+.group-actions button.danger {
+  color: var(--primary);
+}
+
+/* Tela dividida (2.0): dois panes lado a lado e a divisória arrastável entre eles. */
+.viewport.split {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.split-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+}
+.split-pane {
+  position: relative;
+  flex-basis: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 2px solid transparent;
+}
+.split-pane.active {
+  border-top-color: var(--primary);
+}
+.split-pane > * {
+  flex: 1;
+  min-height: 0;
+}
+.split-divider {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  background: var(--secondary);
+  position: relative;
+  touch-action: none;
+}
+.split-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--border);
+  transform: translate(-50%, -50%);
+}
+.split-divider:hover::after {
+  background: var(--primary);
+}
+
+/* Painéis laterais (2.0), como no Opera: ícones à esquerda e o painel aberto ao lado. */
+.side-bar {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  border-right: 1px solid var(--border);
+  background: var(--secondary);
+  overflow-y: auto;
+}
+.side-bar-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.side-bar-item:hover {
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+.side-bar-item.on::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.side-bar-item.add svg {
+  width: 16px;
+  height: 16px;
+}
+.side-bar-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.side-app-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--app-color);
+  color: #fff;
+}
+.side-app-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.side-panel {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+}
+.side-panel-head {
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.side-panel-head strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-panel-head .side-app-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+.side-panel-head button svg {
+  width: 15px;
+  height: 15px;
+}
+.side-panel-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.side-panel-web {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 24px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+.side-panel-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.side-panel-resize:hover {
+  background: color-mix(in oklab, var(--primary) 30%, transparent);
+}

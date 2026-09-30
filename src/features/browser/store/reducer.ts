@@ -6,11 +6,24 @@ import type {
   DownloadRecord,
   LoadFailure,
 } from "../desktop";
-import type { BookmarkNode, ClosedTab, Entry, QuickLink, Tab } from "../types";
-import { entryOf, orderTabs } from "./selectors";
+import {
+  TAB_GROUP_COLORS,
+  type BookmarkNode,
+  type ClosedTab,
+  type Entry,
+  type QuickLink,
+  type SplitView,
+  type Tab,
+  type TabGroup,
+  type TabGroupColor,
+  type Workspace,
+} from "../types";
+import { entryOf, orderTabs, workspaceOf, workspaceTabs } from "./selectors";
 import {
   CLOSED_TABS_LIMIT,
+  DEFAULT_WORKSPACE_ID,
   HOME_URL,
+  defaultWorkspaces,
   defaultLinks,
   homeEntry,
   initialState,
@@ -25,6 +38,9 @@ export type HydratePayload = {
   links: QuickLink[] | null;
   closedTabs: ClosedTab[];
   bookmarks: BookmarkNode[] | null;
+  groups?: TabGroup[] | undefined;
+  workspaces?: Workspace[] | undefined;
+  split?: SplitView | null | undefined;
 };
 
 /** Seções compartilhadas que outra janela gravou. */
@@ -116,12 +132,125 @@ export type BrowserAction =
   /** Soltou o Ctrl (ou clicou): ativa a aba selecionada. */
   | { type: "switcher/commit"; index?: number }
   | { type: "switcher/cancel" }
-  | { type: "view/thumbnail"; id: number; dataUrl: string };
+  | { type: "view/thumbnail"; id: number; dataUrl: string }
+  // --- Grupos de guias (2.0) ---
+  /** Novo grupo com as guias (juntas, na posição da primeira). */
+  | { type: "group/create"; ids: number[]; title?: string; color?: TabGroupColor }
+  /** A guia entra no grupo (vai para o fim dele). */
+  | { type: "group/add"; id: number; groupId: number }
+  /** A guia sai do grupo (fica logo depois dele). */
+  | { type: "group/leave"; id: number }
+  | {
+      type: "group/update";
+      groupId: number;
+      title?: string;
+      color?: TabGroupColor;
+      collapsed?: boolean;
+    }
+  /** Desfaz o grupo (as guias ficam). */
+  | { type: "group/ungroup"; groupId: number }
+  /** Fecha todas as guias do grupo. */
+  | { type: "group/close"; groupId: number }
+  // --- Workspaces (2.0) ---
+  | { type: "workspace/create"; name: string; icon: string }
+  | { type: "workspace/switch"; id: number }
+  | { type: "workspace/update"; id: number; name?: string; icon?: string }
+  /** Apaga o workspace e fecha as guias dele (o padrão não pode ser apagado). */
+  | { type: "workspace/remove"; id: number }
+  | { type: "tab/move-to-workspace"; id: number; workspaceId: number }
+  // --- Tela dividida (2.0) ---
+  /** Divide a tela: `id` ao lado da guia ativa (sem `id`: uma guia nova). */
+  | { type: "split/open"; id?: number }
+  | { type: "split/close" }
+  | { type: "split/ratio"; ratio: number }
+  /** Troca os lados da tela dividida. */
+  | { type: "split/swap" };
 
 function homeTab(id: number, isPrivate?: boolean): Tab {
   return isPrivate
     ? { id, history: [homeEntry], index: 0, private: true }
     : { id, history: [homeEntry], index: 0 };
+}
+
+/** Guia nova no workspace indicado (o padrão fica sem o campo). */
+function inWorkspace(tab: Tab, workspaceId: number): Tab {
+  if (workspaceId === DEFAULT_WORKSPACE_ID) {
+    if (tab.workspaceId === undefined) return tab;
+    const { workspaceId: _omit, ...rest } = tab;
+    return rest;
+  }
+  return tab.workspaceId === workspaceId ? tab : { ...tab, workspaceId };
+}
+
+function withoutGroup(tab: Tab): Tab {
+  if (tab.groupId === undefined) return tab;
+  const { groupId: _omit, ...rest } = tab;
+  return rest;
+}
+
+/** Grupos sem guias somem; a tela dividida some se uma das guias sumiu ou mudou de lugar. */
+function pruneOrphans(state: BrowserState): BrowserState {
+  const used = new Set(state.tabs.map((tab) => tab.groupId).filter((id) => id !== undefined));
+  const groups = state.groups.some((group) => !used.has(group.id))
+    ? state.groups.filter((group) => used.has(group.id))
+    : state.groups;
+  let split = state.split;
+  if (split) {
+    const [a, b] = split.ids.map((id) => state.tabs.find((tab) => tab.id === id));
+    if (!a || !b || workspaceOf(a) !== workspaceOf(b)) split = null;
+  }
+  return groups === state.groups && split === state.split ? state : { ...state, groups, split };
+}
+
+function nextGroupColor(groups: TabGroup[]): TabGroupColor {
+  const used = new Set(groups.map((group) => group.color));
+  return TAB_GROUP_COLORS.find((color) => !used.has(color)) ?? TAB_GROUP_COLORS[groups.length % 9]!;
+}
+
+/** Reordena `ids` para ficarem juntos logo depois de `anchor` (ou no lugar da 1ª delas). */
+function gather(tabs: Tab[], ids: Set<number>, update: (tab: Tab) => Tab): Tab[] {
+  const first = tabs.findIndex((tab) => ids.has(tab.id));
+  if (first < 0) return tabs;
+  const moving = tabs.filter((tab) => ids.has(tab.id)).map(update);
+  const rest = tabs.filter((tab) => !ids.has(tab.id));
+  const at = tabs.slice(0, first).filter((tab) => !ids.has(tab.id)).length;
+  return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
+/** Grupo da guia depois de arrastada: entre duas do mesmo grupo entra nele; senão sai. */
+function regroupAfterMove(tabs: Tab[], id: number): Tab[] {
+  const display = orderTabs(tabs.filter((tab) => workspaceOf(tab) === workspaceOfId(tabs, id)));
+  const at = display.findIndex((tab) => tab.id === id);
+  const tab = display[at];
+  if (!tab || tab.pinned) return tabs;
+  const before = display[at - 1]?.groupId;
+  const after = display[at + 1]?.groupId;
+  let groupId: number | undefined;
+  if (before !== undefined && before === after) groupId = before;
+  else if (tab.groupId !== undefined && (before === tab.groupId || after === tab.groupId)) {
+    groupId = tab.groupId;
+  }
+  if (groupId === tab.groupId) return tabs;
+  return tabs.map((item) =>
+    item.id !== id ? item : groupId === undefined ? withoutGroup(item) : { ...item, groupId },
+  );
+}
+
+function workspaceOfId(tabs: Tab[], id: number) {
+  const tab = tabs.find((item) => item.id === id);
+  return tab ? workspaceOf(tab) : DEFAULT_WORKSPACE_ID;
+}
+
+/** Arrasta dentro do workspace da guia (`index` na ordem exibida dele, contada sem ela). */
+function moveInWorkspace(tabs: Tab[], id: number, index: number): Tab[] {
+  const workspaceId = workspaceOfId(tabs, id);
+  const own = tabs.filter((tab) => workspaceOf(tab) === workspaceId);
+  const moved = moveTab(own, id, index);
+  if (moved === own) return tabs;
+  return regroupAfterMove(
+    [...tabs.filter((tab) => workspaceOf(tab) !== workspaceId), ...moved],
+    id,
+  );
 }
 
 function withoutKeys<T>(record: Record<number, T>, ids: Set<number>): Record<number, T> {
@@ -154,8 +283,21 @@ function rememberClosed(closed: ClosedTab[], tabs: Tab[]): ClosedTab[] {
 function activate(state: BrowserState, tab: Tab): BrowserState {
   const recent =
     state.recent[0] === tab.id ? state.recent : [tab.id, ...withoutId(state.recent, tab.id)];
+  const workspaceId = workspaceOf(tab);
+  // Guia de um grupo recolhido: o grupo abre (a guia ativa sempre aparece).
+  const groups = state.groups.some((group) => group.id === tab.groupId && group.collapsed)
+    ? state.groups.map((group) =>
+        group.id === tab.groupId ? { ...group, collapsed: false } : group,
+      )
+    : state.groups;
   return {
     ...state,
+    groups,
+    activeWorkspaceId: workspaceId,
+    workspaceActive:
+      state.workspaceActive[workspaceId] === tab.id
+        ? state.workspaceActive
+        : { ...state.workspaceActive, [workspaceId]: tab.id },
     activeId: tab.id,
     address: entryOf(tab).url,
     addressEdited: false,
@@ -169,11 +311,11 @@ function activate(state: BrowserState, tab: Tab): BrowserState {
 
 /** Abas na ordem do Ctrl+Tab: usadas mais recentemente primeiro, depois as nunca vistas. */
 export function recentOrder(state: BrowserState): number[] {
-  const alive = new Set(state.tabs.map((tab) => tab.id));
+  // Só as guias do workspace ativo (como a barra).
+  const own = workspaceTabs(state);
+  const alive = new Set(own.map((tab) => tab.id));
   const seen = state.recent.filter((id) => alive.has(id));
-  const rest = orderTabs(state.tabs)
-    .map((tab) => tab.id)
-    .filter((id) => !seen.includes(id));
+  const rest = own.map((tab) => tab.id).filter((id) => !seen.includes(id));
   return [...seen, ...rest];
 }
 
@@ -236,9 +378,10 @@ function removeTabs(
     switcher: null,
   };
 
+  const workspaceId = state.activeWorkspaceId;
   if (!remaining.length) {
-    const replacement = homeTab(state.nextId);
-    return {
+    const replacement = inWorkspace(homeTab(state.nextId), workspaceId);
+    return pruneOrphans({
       ...state,
       ...cleanup,
       tabs: [replacement],
@@ -247,18 +390,25 @@ function removeTabs(
       address: HOME_URL,
       viewNav: null,
       closedTabs,
-    };
+      recent: [replacement.id],
+      workspaceActive: { [workspaceId]: replacement.id },
+    });
   }
 
-  const next = { ...state, ...cleanup, tabs: remaining, closedTabs };
+  const next = pruneOrphans({ ...state, ...cleanup, tabs: remaining, closedTabs });
   if (!ids.has(state.activeId)) return next;
+  // A vizinha da ativa, no mesmo workspace; workspace vazio ganha uma guia nova.
+  const own = state.tabs.filter((tab) => workspaceOf(tab) === workspaceId);
+  const index = own.findIndex((tab) => tab.id === state.activeId);
+  const left = remaining.filter((tab) => workspaceOf(tab) === workspaceId);
   const fallback =
-    remaining.find((tab) => tab.id === fallbackId) ??
-    (() => {
-      const index = state.tabs.findIndex((tab) => tab.id === state.activeId);
-      return remaining[Math.max(0, index - 1)] ?? remaining[0]!;
-    })();
-  return activate(next, fallback);
+    left.find((tab) => tab.id === fallbackId) ?? left[Math.max(0, index - 1)] ?? left[0];
+  if (fallback) return activate(next, fallback);
+  const replacement = inWorkspace(homeTab(next.nextId), workspaceId);
+  return activate(
+    { ...next, tabs: [...next.tabs, replacement], nextId: next.nextId + 1 },
+    replacement,
+  );
 }
 
 export function browserReducer(state: BrowserState, action: BrowserAction): BrowserState {
@@ -266,12 +416,39 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     case "hydrate": {
       const saved = action.payload;
       if (!saved) return { ...state, hydrated: true };
-      const tabs = saved.tabs?.length ? saved.tabs : state.tabs;
+      // Workspaces e grupos que as guias citam precisam existir (senão caem no padrão).
+      const workspaces = saved.workspaces?.some((item) => item.id === DEFAULT_WORKSPACE_ID)
+        ? saved.workspaces
+        : [...defaultWorkspaces, ...(saved.workspaces ?? [])];
+      const workspaceIds = new Set(workspaces.map((item) => item.id));
+      const savedGroups = saved.groups ?? [];
+      const groupIds = new Set(savedGroups.map((group) => group.id));
+      const tabs = (saved.tabs?.length ? saved.tabs : state.tabs).map((tab) => {
+        let next = tab;
+        if (next.workspaceId !== undefined && !workspaceIds.has(next.workspaceId)) {
+          next = inWorkspace(next, DEFAULT_WORKSPACE_ID);
+        }
+        if (next.groupId !== undefined && (!groupIds.has(next.groupId) || next.pinned)) {
+          next = withoutGroup(next);
+        }
+        return next;
+      });
       const active = tabs.find((tab) => tab.id === saved.activeId) ?? tabs[0]!;
       const nextId = Math.max(state.nextId, ...tabs.map((tab) => tab.id + 1));
+      const restored = pruneOrphans({
+        ...state,
+        tabs,
+        groups: savedGroups,
+        split: saved.split ?? null,
+      });
       return {
         ...state,
         hydrated: true,
+        workspaces,
+        groups: restored.groups,
+        split: restored.split,
+        activeWorkspaceId: workspaceOf(active),
+        workspaceActive: { [workspaceOf(active)]: active.id },
         prefs: saved.prefs,
         links: saved.links ?? defaultLinks,
         // Antes da 1.6 a estrela salvava nos atalhos: eles viram favoritos da barra.
@@ -306,7 +483,10 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/new": {
-      const tab = homeTab(state.nextId, action.private);
+      let tab = inWorkspace(homeTab(state.nextId, action.private), state.activeWorkspaceId);
+      // "Nova guia à direita" de uma guia agrupada entra no grupo (como no Chrome).
+      const reference = state.tabs.find((item) => item.id === action.rightOf);
+      if (reference?.groupId !== undefined) tab = { ...tab, groupId: reference.groupId };
       const tabs =
         action.rightOf != null
           ? insertAfter(state.tabs, action.rightOf, tab)
@@ -315,7 +495,10 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/open-page": {
-      const tab: Tab = { id: state.nextId, history: [action.entry], index: 0 };
+      const tab = inWorkspace(
+        { id: state.nextId, history: [action.entry], index: 0 },
+        state.activeWorkspaceId,
+      );
       return activate({ ...state, tabs: [...state.tabs, tab], nextId: state.nextId + 1 }, tab);
     }
 
@@ -325,7 +508,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/activate-relative": {
-      const display = orderTabs(state.tabs);
+      const display = workspaceTabs(state);
       if (display.length < 2) return state;
       const index = display.findIndex((tab) => tab.id === state.activeId);
       const target = display[(index + action.delta + display.length) % display.length]!;
@@ -333,7 +516,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/activate-index": {
-      const display = orderTabs(state.tabs);
+      const display = workspaceTabs(state);
       const target = action.index < 0 ? display[display.length - 1] : display[action.index];
       if (!target || target.id === state.activeId) return state;
       return activate(state, target);
@@ -346,12 +529,12 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
 
     case "tab/close-others": {
       if (!state.tabs.some((tab) => tab.id === action.id)) return state;
-      const doomed = state.tabs.filter((tab) => tab.id !== action.id && !tab.pinned);
+      const doomed = workspaceTabs(state).filter((tab) => tab.id !== action.id && !tab.pinned);
       return removeTabs(state, doomed, action.id);
     }
 
     case "tab/close-side": {
-      const display = orderTabs(state.tabs);
+      const display = workspaceTabs(state);
       const index = display.findIndex((tab) => tab.id === action.id);
       if (index < 0) return state;
       const doomed = display.filter((tab, position) => {
@@ -369,6 +552,8 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         history: source.history.slice(0, source.index + 1),
         index: source.index,
         ...(source.private ? { private: true } : {}),
+        ...(source.groupId !== undefined ? { groupId: source.groupId } : {}),
+        ...(source.workspaceId !== undefined ? { workspaceId: source.workspaceId } : {}),
       };
       return activate(
         { ...state, tabs: insertAfter(state.tabs, source.id, clone), nextId: state.nextId + 1 },
@@ -377,20 +562,26 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/move": {
-      const tabs = moveTab(state.tabs, action.id, action.index);
-      return tabs === state.tabs ? state : { ...state, tabs };
+      const tabs = moveInWorkspace(state.tabs, action.id, action.index);
+      return tabs === state.tabs ? state : pruneOrphans({ ...state, tabs });
     }
 
     case "tab/move-relative": {
-      const display = orderTabs(state.tabs);
-      const index = display.findIndex((tab) => tab.id === action.id);
-      if (index < 0) return state;
-      const tabs = moveTab(state.tabs, action.id, index + action.delta);
-      return tabs === state.tabs ? state : { ...state, tabs };
+      const tab = state.tabs.find((item) => item.id === action.id);
+      if (!tab) return state;
+      const display = workspaceTabs(state, workspaceOf(tab));
+      const index = display.findIndex((item) => item.id === action.id);
+      const tabs = moveInWorkspace(state.tabs, action.id, index + action.delta);
+      return tabs === state.tabs ? state : pruneOrphans({ ...state, tabs });
     }
 
     case "tab/toggle-pin":
-      return mapTab(state, action.id, (tab) => ({ ...tab, pinned: !tab.pinned }));
+      // Guia fixada sai do grupo (as fixadas ficam antes de tudo, como no Chrome).
+      return pruneOrphans(
+        mapTab(state, action.id, (tab) =>
+          tab.pinned ? { ...tab, pinned: false } : { ...withoutGroup(tab), pinned: true },
+        ),
+      );
 
     case "tab/toggle-mute":
       return mapTab(state, action.id, (tab) => ({ ...tab, muted: !tab.muted }));
@@ -398,11 +589,14 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     case "tab/reopen-closed": {
       const last = state.closedTabs[state.closedTabs.length - 1];
       if (!last) return state;
-      const tab: Tab = {
-        id: state.nextId,
-        history: [{ title: last.title, url: last.url, kind: "page" }],
-        index: 0,
-      };
+      const tab = inWorkspace(
+        {
+          id: state.nextId,
+          history: [{ title: last.title, url: last.url, kind: "page" }],
+          index: 0,
+        },
+        state.activeWorkspaceId,
+      );
       return activate(
         {
           ...state,
@@ -418,6 +612,11 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       const tab = homeTab(state.nextId);
       return {
         ...state,
+        groups: [],
+        workspaces: defaultWorkspaces,
+        activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceActive: { [DEFAULT_WORKSPACE_ID]: tab.id },
+        split: null,
         tabs: [tab],
         activeId: tab.id,
         nextId: state.nextId + 1,
@@ -466,7 +665,10 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         }));
         return { ...next, address: action.entry.url, addressEdited: false, viewNav: null };
       }
-      const tab: Tab = { id: state.nextId, history: [action.entry], index: 0 };
+      const tab = inWorkspace(
+        { id: state.nextId, history: [action.entry], index: 0 },
+        state.activeWorkspaceId,
+      );
       const tabs = active ? insertAfter(state.tabs, active.id, tab) : [...state.tabs, tab];
       return activate({ ...state, tabs, nextId: state.nextId + 1 }, tab);
     }
@@ -656,9 +858,15 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       if (tab.index === 0 || tab.history[tab.index - 1]!.kind === "home") {
         // Aba sem página antes do arquivo (como a guia em branco que o Chrome fecha): vira
         // uma aba nova, com outro id, para o main descartar o WebContentsView vazio.
-        const replacement = homeTab(state.nextId, tab.private);
+        const replacement = inWorkspace(homeTab(state.nextId, tab.private), workspaceOf(tab));
         const tabs = state.tabs.map((item) =>
-          item.id === tab.id ? { ...replacement, ...(tab.pinned ? { pinned: true } : {}) } : item,
+          item.id === tab.id
+            ? {
+                ...replacement,
+                ...(tab.pinned ? { pinned: true } : {}),
+                ...(tab.groupId !== undefined ? { groupId: tab.groupId } : {}),
+              }
+            : item,
         );
         const next = { ...state, tabs, nextId: state.nextId + 1 };
         return state.activeId === tab.id
@@ -739,6 +947,224 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     case "view/thumbnail":
       if (!state.tabs.some((tab) => tab.id === action.id)) return state;
       return { ...state, thumbnails: { ...state.thumbnails, [action.id]: action.dataUrl } };
+
+    // --- Grupos de guias ---
+
+    case "group/create": {
+      const members = state.tabs.filter((tab) => action.ids.includes(tab.id));
+      if (!members.length) return state;
+      const id = Math.max(0, ...state.groups.map((group) => group.id)) + 1;
+      const group: TabGroup = {
+        id,
+        title: action.title?.trim() ?? "",
+        color: action.color ?? nextGroupColor(state.groups),
+      };
+      const ids = new Set(members.map((tab) => tab.id));
+      const tabs = gather(state.tabs, ids, (tab) => ({ ...tab, pinned: false, groupId: id }));
+      return pruneOrphans({ ...state, tabs, groups: [...state.groups, group] });
+    }
+
+    case "group/add": {
+      const tab = state.tabs.find((item) => item.id === action.id);
+      const members = state.tabs.filter((item) => item.groupId === action.groupId);
+      if (!tab || !members.length || tab.groupId === action.groupId) return state;
+      // Vai para o fim do grupo, no workspace dele.
+      const last = members[members.length - 1]!;
+      const moved = inWorkspace(
+        { ...tab, pinned: false, groupId: action.groupId },
+        workspaceOf(last),
+      );
+      const rest = state.tabs.filter((item) => item.id !== tab.id);
+      const next = pruneOrphans({ ...state, tabs: insertAfter(rest, last.id, moved) });
+      return tab.id === state.activeId ? activate(next, moved) : next;
+    }
+
+    case "group/leave": {
+      const tab = state.tabs.find((item) => item.id === action.id);
+      if (!tab || tab.groupId === undefined) return state;
+      const members = state.tabs.filter(
+        (item) => item.groupId === tab.groupId && item.id !== tab.id,
+      );
+      const rest = state.tabs.filter((item) => item.id !== tab.id);
+      const last = members[members.length - 1];
+      const tabs = last
+        ? insertAfter(rest, last.id, withoutGroup(tab))
+        : state.tabs.map((item) => (item.id === tab.id ? withoutGroup(item) : item));
+      return pruneOrphans({ ...state, tabs });
+    }
+
+    case "group/update": {
+      const group = state.groups.find((item) => item.id === action.groupId);
+      if (!group) return state;
+      const next: TabGroup = {
+        ...group,
+        ...(action.title !== undefined ? { title: action.title.trim() } : {}),
+        ...(action.color ? { color: action.color } : {}),
+        ...(action.collapsed !== undefined ? { collapsed: action.collapsed } : {}),
+      };
+      let result: BrowserState = {
+        ...state,
+        groups: state.groups.map((item) => (item.id === group.id ? next : item)),
+      };
+      // Recolher o grupo da guia ativa: a ativa passa para a primeira guia fora dele.
+      const active = state.tabs.find((tab) => tab.id === state.activeId);
+      if (next.collapsed && active?.groupId === group.id) {
+        const outside = workspaceTabs(state).find((tab) => tab.groupId !== group.id);
+        if (!outside) return state;
+        result = activate(result, outside);
+      }
+      return result;
+    }
+
+    case "group/ungroup": {
+      if (!state.groups.some((group) => group.id === action.groupId)) return state;
+      const tabs = state.tabs.map((tab) =>
+        tab.groupId === action.groupId ? withoutGroup(tab) : tab,
+      );
+      return pruneOrphans({ ...state, tabs });
+    }
+
+    case "group/close":
+      return removeTabs(
+        state,
+        state.tabs.filter((tab) => tab.groupId === action.groupId),
+      );
+
+    // --- Workspaces ---
+
+    case "workspace/create": {
+      const name = action.name.trim();
+      if (!name) return state;
+      const id = Math.max(0, ...state.workspaces.map((item) => item.id)) + 1;
+      const workspace: Workspace = { id, name: name.slice(0, 40), icon: action.icon || "🗂️" };
+      const tab = inWorkspace(homeTab(state.nextId), id);
+      return activate(
+        {
+          ...state,
+          workspaces: [...state.workspaces, workspace],
+          tabs: [...state.tabs, tab],
+          nextId: state.nextId + 1,
+        },
+        tab,
+      );
+    }
+
+    case "workspace/switch": {
+      if (action.id === state.activeWorkspaceId) return state;
+      if (!state.workspaces.some((item) => item.id === action.id)) return state;
+      const own = workspaceTabs(state, action.id);
+      const remembered = own.find((tab) => tab.id === state.workspaceActive[action.id]);
+      const target = remembered ?? own[0];
+      if (target) return activate({ ...state, switcher: null }, target);
+      const tab = inWorkspace(homeTab(state.nextId), action.id);
+      return activate(
+        { ...state, tabs: [...state.tabs, tab], nextId: state.nextId + 1, switcher: null },
+        tab,
+      );
+    }
+
+    case "workspace/update": {
+      const workspaces = state.workspaces.map((item) =>
+        item.id !== action.id
+          ? item
+          : {
+              ...item,
+              ...(action.name?.trim() ? { name: action.name.trim().slice(0, 40) } : {}),
+              ...(action.icon ? { icon: action.icon } : {}),
+            },
+      );
+      return { ...state, workspaces };
+    }
+
+    case "workspace/remove": {
+      if (action.id === DEFAULT_WORKSPACE_ID) return state;
+      if (!state.workspaces.some((item) => item.id === action.id)) return state;
+      const doomed = state.tabs.filter((tab) => workspaceOf(tab) === action.id);
+      let next: BrowserState = {
+        ...state,
+        workspaces: state.workspaces.filter((item) => item.id !== action.id),
+      };
+      // Apagando o workspace atual: vai para o padrão antes de fechar as guias.
+      if (state.activeWorkspaceId === action.id) {
+        next = browserReducer(next, { type: "workspace/switch", id: DEFAULT_WORKSPACE_ID });
+      }
+      const remembered = { ...next.workspaceActive };
+      delete remembered[action.id];
+      return removeTabs({ ...next, workspaceActive: remembered }, doomed);
+    }
+
+    case "tab/move-to-workspace": {
+      const tab = state.tabs.find((item) => item.id === action.id);
+      if (!tab || workspaceOf(tab) === action.workspaceId) return state;
+      if (!state.workspaces.some((item) => item.id === action.workspaceId)) return state;
+      const moved = inWorkspace(withoutGroup({ ...tab, pinned: false }), action.workspaceId);
+      // Vai para o fim do workspace de destino.
+      const tabs = [...state.tabs.filter((item) => item.id !== tab.id), moved];
+      let next = pruneOrphans({ ...state, tabs });
+      if (tab.id === state.activeId) {
+        // A guia ativa saiu daqui: a vizinha assume (ou uma guia nova, se ficou vazio).
+        const own = workspaceTabs(state);
+        const index = own.findIndex((item) => item.id === tab.id);
+        const left = workspaceTabs(next, state.activeWorkspaceId);
+        const fallback = left[Math.max(0, index - 1)] ?? left[0];
+        if (fallback) next = activate(next, fallback);
+        else {
+          const home = inWorkspace(homeTab(next.nextId), state.activeWorkspaceId);
+          next = activate({ ...next, tabs: [...next.tabs, home], nextId: next.nextId + 1 }, home);
+        }
+      }
+      return next;
+    }
+
+    // --- Tela dividida ---
+
+    case "split/open": {
+      const active = state.tabs.find((tab) => tab.id === state.activeId);
+      if (!active) return state;
+      if (action.id !== undefined) {
+        const other = state.tabs.find((tab) => tab.id === action.id);
+        if (!other || other.id === active.id) return state;
+        // A outra guia vem para o workspace da ativa e fica ao lado dela.
+        const moved = inWorkspace(other, workspaceOf(active));
+        const tabs = insertAfter(
+          state.tabs.filter((tab) => tab.id !== other.id),
+          active.id,
+          moved,
+        );
+        return pruneOrphans({
+          ...state,
+          tabs,
+          split: { ids: [active.id, other.id], ratio: 0.5 },
+        });
+      }
+      const tab = inWorkspace(homeTab(state.nextId), workspaceOf(active));
+      const next = {
+        ...state,
+        tabs: insertAfter(state.tabs, active.id, tab),
+        nextId: state.nextId + 1,
+        split: { ids: [active.id, tab.id] as [number, number], ratio: 0.5 },
+      };
+      return activate(next, tab);
+    }
+
+    case "split/close":
+      return state.split ? { ...state, split: null } : state;
+
+    case "split/ratio": {
+      if (!state.split) return state;
+      const ratio = Math.min(0.8, Math.max(0.2, action.ratio));
+      return ratio === state.split.ratio ? state : { ...state, split: { ...state.split, ratio } };
+    }
+
+    case "split/swap":
+      if (!state.split) return state;
+      return {
+        ...state,
+        split: {
+          ids: [state.split.ids[1], state.split.ids[0]],
+          ratio: 1 - state.split.ratio,
+        },
+      };
   }
 }
 

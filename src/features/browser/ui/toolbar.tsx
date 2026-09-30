@@ -3,17 +3,27 @@ import {
   ArrowRight,
   Download,
   KeyRound,
+  Check,
+  Link2,
   LockKeyhole,
   Moon,
   PictureInPicture2,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Sun,
   VenetianMask,
 } from "lucide-react";
-import { forwardRef, type CSSProperties, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -56,6 +66,11 @@ export type ToolbarProps = {
   omnibox: Omit<OmniboxFieldProps, "value" | "onChange" | "onSubmit" | "privateTab">;
   /** Cadeado: informações e permissões do site. */
   siteInfo: { available: boolean; open: boolean; onToggle: () => void };
+  /** Endereço da página para o botão de copiar link (null: nada para copiar). */
+  shareUrl: string | null;
+  onCopyLink: (url: string) => Promise<void> | void;
+  /** Clique direito na barra (fora do campo de texto): o mesmo menu da barra de guias. */
+  onBarMenu?: (event: MouseEvent) => void;
   /** Atualização baixada e pronta: botão "Atualizar". */
   updateReady: string | null;
   onInstallUpdate: () => void;
@@ -63,8 +78,25 @@ export type ToolbarProps = {
 
 export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
   function Toolbar(props, inputRef) {
+    const [copied, setCopied] = useState(false);
+    useEffect(() => {
+      if (!copied) return;
+      const timer = window.setTimeout(() => setCopied(false), 1400);
+      return () => window.clearTimeout(timer);
+    }, [copied]);
+    const copyLink = () => {
+      if (!props.shareUrl) return;
+      void Promise.resolve(props.onCopyLink(props.shareUrl)).then(() => setCopied(true));
+    };
     return (
-      <div className="toolbar">
+      <div
+        className="toolbar"
+        onContextMenu={(event) => {
+          // No campo de endereço vale o menu de texto (copiar/colar).
+          if ((event.target as HTMLElement).closest("input")) return;
+          props.onBarMenu?.(event);
+        }}
+      >
         <div className="nav-actions">
           <Button
             variant="ghost"
@@ -138,19 +170,56 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               {Math.round(props.zoom * 100)}%
             </button>
           )}
-          <button
-            type="button"
-            className={cn("fav-button", props.favorite && "on")}
-            onClick={props.onToggleFavorite}
-            title={
-              props.favorite ? "Editar favorito (Ctrl/⌘ D)" : "Adicionar aos favoritos (Ctrl/⌘ D)"
-            }
-            aria-label="Favoritar página"
-            aria-pressed={props.favorite}
-          >
-            <Star />
-          </button>
-          <kbd>{props.isMac ? "⌘ K" : "Ctrl K"}</kbd>
+          {/* Como no Comet: o link fica à mão; o resto aparece ao pausar o mouse na barra. */}
+          <div className="omnibox-actions">
+            <div className="omnibox-more">
+              <button
+                type="button"
+                className={cn("fav-button", props.favorite && "on")}
+                onClick={props.onToggleFavorite}
+                title={
+                  props.favorite
+                    ? "Editar favorito (Ctrl/⌘ D)"
+                    : "Adicionar aos favoritos (Ctrl/⌘ D)"
+                }
+                aria-label="Favoritar página"
+                aria-pressed={props.favorite}
+              >
+                <Star />
+              </button>
+              {props.siteInfo.available && (
+                <button
+                  type="button"
+                  className={cn("omnibox-action", props.siteInfo.open && "on")}
+                  onClick={props.siteInfo.onToggle}
+                  title="Configurações do site (permissões, zoom)"
+                  aria-label="Configurações do site"
+                >
+                  <SlidersHorizontal />
+                </button>
+              )}
+              <button
+                type="button"
+                className="omnibox-action"
+                onClick={props.onTogglePrivacy}
+                title={`Proteção: ${props.blockedCount} bloqueados nesta página`}
+                aria-label="Proteção de privacidade"
+              >
+                <ShieldCheck />
+              </button>
+            </div>
+            {props.shareUrl && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "copy-link", copied && "on")}
+                onClick={copyLink}
+                title={copied ? "Link copiado" : "Copiar link"}
+                aria-label={copied ? "Link copiado" : "Copiar link"}
+              >
+                {copied ? <Check /> : <Link2 />}
+              </button>
+            )}
+          </div>
         </form>
         <div className="toolbar-actions">
           {props.updateReady && (

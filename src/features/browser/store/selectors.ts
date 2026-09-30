@@ -1,5 +1,5 @@
 import type { Entry, Tab } from "../types";
-import { homeEntry, type BrowserState } from "./state";
+import { DEFAULT_WORKSPACE_ID, homeEntry, type BrowserState } from "./state";
 
 export function entryOf(tab: Tab): Entry {
   return tab.history[tab.index] ?? homeEntry;
@@ -26,6 +26,24 @@ export function normalizeUrlKey(url: string): string {
 /** Ordem exibida: fixadas primeiro, o resto na ordem de abertura. */
 export function orderTabs(tabs: Tab[]): Tab[] {
   return [...tabs].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
+}
+
+/** Workspace da guia (sem valor: o padrão). */
+export function workspaceOf(tab: Tab): number {
+  return tab.workspaceId ?? DEFAULT_WORKSPACE_ID;
+}
+
+/** Guias do workspace ativo, na ordem exibida (o que a barra mostra). */
+export function workspaceTabs(
+  state: Pick<BrowserState, "tabs" | "activeWorkspaceId">,
+  workspaceId = state.activeWorkspaceId,
+): Tab[] {
+  return orderTabs(state.tabs.filter((tab) => workspaceOf(tab) === workspaceId));
+}
+
+/** A tela dividida está à vista (a guia ativa é uma das duas). */
+export function splitShown(state: Pick<BrowserState, "split" | "activeId">) {
+  return state.split !== null && state.split.ids.includes(state.activeId) ? state.split : null;
 }
 
 export function activeTabOf(state: BrowserState): Tab {

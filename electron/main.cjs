@@ -446,6 +446,7 @@ function ownerCtx(contents) {
     contexts.get(contents.id) ??
     tabOfContents.get(contents.id)?.ctx ??
     popupOwner.get(contents) ??
+    sidePanelOwner.get(contents.id) ??
     lastFocused
   );
 }
@@ -466,10 +467,22 @@ function fullRect(ctx) {
   return { x: 0, y: 0, width, height };
 }
 
+/** Guias à vista na janela: a ativa, ou as duas da tela dividida (2.0). */
+function paneIds(ctx) {
+  if (ctx.split && ctx.split.includes(ctx.activeTabId)) return ctx.split;
+  return ctx.activeTabId === null ? [] : [ctx.activeTabId];
+}
+
+/** Área da guia na janela: a do pane dela na tela dividida, senão a da guia ativa. */
+function rectOf(ctx, id) {
+  if (ctx.split && ctx.split.includes(ctx.activeTabId)) return ctx.paneRects.get(id) ?? null;
+  return ctx.lastRect;
+}
+
 /** A guia aparece por cima da casca (sem painel, tela de erro, crash ou login recusado). */
 function isShown(ctx, id) {
   return (
-    id === ctx.activeTabId &&
+    paneIds(ctx).includes(id) &&
     !ctx.panelOpen &&
     !ctx.crashed.has(id) &&
     !ctx.rejected.has(id) &&
@@ -478,15 +491,28 @@ function isShown(ctx, id) {
 }
 
 function applyLayout(ctx) {
+  layoutSidePanels(ctx);
   if (ctx.fullscreenActive || ctx.window.isDestroyed()) return;
   const now = Date.now();
+  const panes = paneIds(ctx);
   for (const [id, entry] of ctx.views) {
-    const shown = isShown(ctx, id);
-    entry.view.setBounds(shown && ctx.lastRect ? ctx.lastRect : HIDDEN_RECT);
-    // Hibernação conta o tempo desde que a guia deixou de ser a ativa.
-    if (id === ctx.activeTabId) entry.hiddenSince = null;
+    const rect = isShown(ctx, id) ? rectOf(ctx, id) : null;
+    entry.view.setBounds(rect ?? HIDDEN_RECT);
+    // Hibernação conta o tempo desde que a guia deixou de estar à vista.
+    if (panes.includes(id)) entry.hiddenSince = null;
     else entry.hiddenSince ??= now;
   }
+}
+
+/** Guia à vista cujo pane contém o ponto (coordenadas da janela). */
+function paneAt(ctx, point) {
+  for (const id of paneIds(ctx)) {
+    if (!isShown(ctx, id)) continue;
+    const contents = tabContents(ctx, id);
+    const inside = contents && pagePoint(rectOf(ctx, id), point);
+    if (inside) return { id, contents, point: inside };
+  }
+  return null;
 }
 
 function notifyTabState(contents) {
@@ -628,9 +654,17 @@ function buildPageContextMenu(contents, params) {
   return Menu.buildFromTemplate(template);
 }
 
+/** Texto vindo da casca para um item de menu (nome de grupo/workspace). */
+function menuText(value, fallback) {
+  const text = typeof value === "string" ? value.trim().slice(0, 40) : "";
+  return text || fallback;
+}
+
 function buildTabContextMenu(ctx, context) {
   const { kind, tabId, pinned, muted, audio, hasClosed, orientation, url, tabCount, active } =
     context;
+  const groups = Array.isArray(context.groups) ? context.groups.slice(0, 30) : [];
+  const workspaces = Array.isArray(context.workspaces) ? context.workspaces.slice(0, 30) : [];
   const action = (id, label, options = {}) => ({
     label,
     ...options,
@@ -646,6 +680,14 @@ function buildTabContextMenu(ctx, context) {
         accelerator: "CmdOrCtrl+Shift+T",
         enabled: Boolean(hasClosed),
       }),
+      { type: "separator" },
+      action("palette.open", "Buscar comandos", { accelerator: "CmdOrCtrl+K" }),
+      action("split.new", "Dividir tela (nova guia ao lado)", {
+        accelerator: "CmdOrCtrl+Alt+Shift+S",
+      }),
+      action("workspaces.open", "Workspaces…"),
+      action("workspace.new", "Novo workspace…"),
+      action("sidepanels.toggle", "Mostrar/ocultar painéis laterais"),
       { type: "separator" },
       orientation === "vertical"
         ? action("tabs.horizontal", "Mostrar guias horizontalmente")
@@ -663,9 +705,49 @@ function buildTabContextMenu(ctx, context) {
     action("tab.duplicate", "Duplicar"),
     action("tab.move-to-window", "Mover para nova janela", { enabled: (tabCount ?? 1) > 1 }),
     { type: "separator" },
+    // 2.0: grupos, tela dividida e workspaces.
+    action("group.new", "Adicionar guia a novo grupo", { accelerator: "CmdOrCtrl+Shift+G" }),
+  ];
+  const otherGroups = groups.filter((group) => group?.id !== context.groupId);
+  if (otherGroups.length) {
+    items.push({
+      label: "Adicionar ao grupo",
+      submenu: otherGroups.map((group) =>
+        action(`group.add:${Number(group.id)}`, menuText(group.title, "Grupo sem nome")),
+      ),
+    });
+  }
+  if (Number.isSafeInteger(context.groupId)) {
+    items.push(action("group.leave", "Remover do grupo"));
+  }
+  items.push({ type: "separator" });
+  if (context.inSplit) {
+    items.push(action("split.swap", "Trocar os lados da tela dividida"));
+    items.push(action("split.close", "Desfazer tela dividida"));
+  } else if (!active) {
+    items.push(action("split.with-tab", "Abrir em tela dividida com a guia atual"));
+  } else {
+    items.push(action("split.new", "Dividir tela (nova guia ao lado)"));
+  }
+  const otherWorkspaces = workspaces.filter((item) => item?.id !== context.workspaceId);
+  items.push({
+    label: "Mover para workspace",
+    submenu: [
+      ...otherWorkspaces.map((item) =>
+        action(
+          `workspace.move:${Number(item.id)}`,
+          `${menuText(item.icon, "").slice(0, 4)} ${menuText(item.name, "Workspace")}`.trim(),
+        ),
+      ),
+      ...(otherWorkspaces.length ? [{ type: "separator" }] : []),
+      action("workspace.new", "Novo workspace…"),
+    ],
+  });
+  items.push(
+    { type: "separator" },
     action("tab.toggle-pin", pinned ? "Desfixar" : "Fixar"),
     action("tab.hibernate", "Hibernar guia", { enabled: Boolean(loaded && !active) }),
-  ];
+  );
   if (audio || muted) {
     items.push(action("tab.toggle-mute", muted ? "Ativar som do site" : "Desativar som do site"));
   }
@@ -855,6 +937,10 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+9",
   "mod+[",
   "mod+]",
+  "mod+shift+g",
+  "mod+alt+shift+s",
+  "mod+alt+arrowup",
+  "mod+alt+arrowdown",
   "alt+arrowleft",
   "alt+arrowright",
   "mod+=",
@@ -1020,7 +1106,7 @@ function isVisible(contents) {
   const where = tabOfContents.get(contents.id);
   if (!where || contents.isDestroyed()) return false;
   const { ctx, id } = where;
-  return isShown(ctx, id) && !ctx.fullscreenActive && ctx.lastRect !== null;
+  return isShown(ctx, id) && !ctx.fullscreenActive && rectOf(ctx, id) !== null;
 }
 
 /** `leaving`: a aba está saindo de cena; o pedido sai antes de ela ser escondida. */
@@ -1292,6 +1378,12 @@ function wireView(view) {
     if (details.isMainFrame) ensureScriptlets(contents, details.url, "early");
   });
   contents.on("did-finish-load", () => ensureScriptlets(contents, contents.getURL(), "settled"));
+  // Tela dividida (2.0): clicar na página do outro pane faz dela a guia ativa.
+  contents.on("focus", () => {
+    const where = tabOfContents.get(contents.id);
+    if (!where || where.id === where.ctx.activeTabId) return;
+    if (where.ctx.split?.includes(where.id)) emitTab(contents, { type: "focused" });
+  });
   contents.on("dom-ready", () => void applyCosmetics(contents, true));
   contents.on("did-finish-load", () => void applyCosmetics(contents, false));
   contents.on("found-in-page", (_event, result) => {
@@ -1341,6 +1433,7 @@ function wireView(view) {
     if (!ctx) return;
     ctx.fullscreenActive = true;
     closePanelLayer(ctx, { notify: true, refocus: false });
+    layoutSidePanels(ctx);
     view.setBounds(fullRect(ctx));
     send(ctx, "agzos:fullscreen", { active: true });
   });
@@ -1460,6 +1553,13 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     views: new Map(),
     activeTabId: null,
     lastRect: null,
+    // Tela dividida (2.0): as duas guias e a área de cada pane.
+    split: null,
+    paneRects: new Map(),
+    // Painéis laterais (2.0): app → { view }, o aberto e a área dele.
+    sidePanels: new Map(),
+    sidePanel: null,
+    sidePanelRect: null,
     panelOpen: false,
     fullscreenActive: false,
     crashed: new Set(),
@@ -1537,6 +1637,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) {
       ctx.overlay.view.webContents.close();
     }
+    for (const app of [...ctx.sidePanels.keys()]) unloadSidePanel(ctx, app);
     for (const [id, pending] of pendingOverlayCalls) {
       if (pending.ctx !== ctx) continue;
       pendingOverlayCalls.delete(id);
@@ -1646,12 +1747,12 @@ async function hasEditedForm(contents) {
  */
 async function hibernateTab(ctx, id, { force = false } = {}) {
   const entry = ctx.views.get(id);
-  if (!entry || id === ctx.activeTabId) return false;
+  if (!entry || paneIds(ctx).includes(id)) return false;
   const contents = entry.view.webContents;
   if (contents.isDestroyed()) return false;
   if (!force && (await hasEditedForm(contents))) return false;
   // A guia pode ter sido ativada, fechada ou movida enquanto a página respondia.
-  if (ctx.views.get(id) !== entry || id === ctx.activeTabId || contents.isDestroyed()) {
+  if (ctx.views.get(id) !== entry || paneIds(ctx).includes(id) || contents.isDestroyed()) {
     return false;
   }
   let history = null;
@@ -1679,7 +1780,7 @@ async function checkHibernation() {
         const contents = entry.view.webContents;
         if (contents.isDestroyed()) continue;
         const candidate = {
-          visible: id === ctx.activeTabId,
+          visible: paneIds(ctx).includes(id),
           hiddenSince: entry.hiddenSince,
           audible: contents.isCurrentlyAudible(),
           loading: contents.isLoading(),
@@ -2116,18 +2217,65 @@ function clickTarget(ctx, payload) {
   const x = Number(payload?.x);
   const y = Number(payload?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const id = ctx.activeTabId;
-  const tab = id !== null && isShown(ctx, id) ? tabContents(ctx, id) : null;
-  const inPage = tab ? pagePoint(ctx.lastRect, { x, y }) : null;
-  const target = inPage ? tab : ctx.window.webContents;
-  const point = inPage ?? { x: Math.round(x), y: Math.round(y) };
-  return { target, point, where: inPage ? "page" : "shell" };
+  const pane = paneAt(ctx, { x, y });
+  const target = pane ? pane.contents : ctx.window.webContents;
+  const point = pane?.point ?? { x: Math.round(x), y: Math.round(y) };
+  return { target, point, where: pane ? "page" : "shell" };
 }
 
 function clickThrough({ target, point }, button) {
   if (target.isDestroyed()) return;
   target.focus();
   for (const input of clickEvents(point, button)) target.sendInputEvent(input);
+}
+
+// --- Painéis laterais (2.0): WhatsApp, Telegram… cada um no seu WebContentsView. ---
+
+// webContents do painel → janela dona (links abrem guias nela, permissões perguntam nela).
+const sidePanelOwner = new Map();
+
+function sidePanelView(ctx, app, url) {
+  const known = ctx.sidePanels.get(app);
+  if (known && !known.view.webContents.isDestroyed()) return known;
+  // Mesma sessão das guias (login compartilhado), isolado e sem preload.
+  const view = new WebContentsView({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  view.setBackgroundColor("#FFFFFF");
+  view.setBounds(HIDDEN_RECT);
+  const contents = view.webContents;
+  const id = contents.id;
+  sidePanelOwner.set(id, ctx);
+  contents.once("destroyed", () => sidePanelOwner.delete(id));
+  // Links e janelas novas viram guias da janela (popups de login seguem como popup).
+  wirePopups(contents);
+  wireShortcuts(contents);
+  contents.on("render-process-gone", (_event, details) => {
+    if (details.reason !== "clean-exit" && !contents.isDestroyed()) contents.reload();
+  });
+  ctx.window.contentView.addChildView(view);
+  raisePanelLayer(ctx);
+  void contents.loadURL(url).catch(() => {});
+  const entry = { view, url };
+  ctx.sidePanels.set(app, entry);
+  return entry;
+}
+
+function layoutSidePanels(ctx) {
+  if (ctx.window.isDestroyed()) return;
+  for (const [app, entry] of ctx.sidePanels) {
+    const shown =
+      ctx.sidePanel === app && ctx.sidePanelRect && !ctx.panelOpen && !ctx.fullscreenActive;
+    entry.view.setBounds(shown ? ctx.sidePanelRect : HIDDEN_RECT);
+  }
+}
+
+function unloadSidePanel(ctx, app) {
+  const entry = ctx.sidePanels.get(app);
+  if (!entry) return;
+  ctx.sidePanels.delete(app);
+  if (!ctx.window.isDestroyed()) ctx.window.contentView.removeChildView(entry.view);
+  if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 }
 
 /** Guia nova por cima da camada: a camada volta ao topo. */
@@ -2171,6 +2319,8 @@ function registerIpc() {
     tabOfContents.set(view.webContents.id, { ctx, id });
     ctx.window.contentView.addChildView(view);
     raisePanelLayer(ctx);
+    // Guia nova já na posição dela (na tela dividida o outro pane não passa por activate).
+    applyLayout(ctx);
     wirePermissions(view.webContents.session);
     wireView(view);
     const history = ctx.hibernated.get(id);
@@ -2219,10 +2369,73 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("tab:bounds", (event, rect) => {
+  // Área da página na janela. Com `id` (2.0), a do pane daquela guia na tela dividida.
+  ipcMain.handle("tab:bounds", (event, rect, id) => {
     const ctx = ctxOfEvent(event);
     if (!ctx || ctx.fullscreenActive) return;
-    if (rect && rect.width > 0 && rect.height > 0) ctx.lastRect = rect;
+    if (rect && rect.width > 0 && rect.height > 0) {
+      if (Number.isSafeInteger(id)) ctx.paneRects.set(id, rect);
+      // Fora da tela dividida vale a área de sempre (a guia pode estar virando a ativa).
+      if (!Number.isSafeInteger(id) || !ctx.split || id === ctx.activeTabId) ctx.lastRect = rect;
+    }
+    applyLayout(ctx);
+  });
+
+  // Painéis laterais (2.0).
+  ipcMain.handle("sidepanel:show", (event, { app, url } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || typeof app !== "string" || !/^[a-z0-9-]{1,30}$/.test(app)) return;
+    if (typeof url !== "string" || !/^https:\/\//.test(url)) return;
+    // Testes: uma página local no lugar do app (sem depender da internet).
+    sidePanelView(ctx, app, process.env.AGZOS_SIDE_PANEL_URL || url);
+    ctx.sidePanel = app;
+    layoutSidePanels(ctx);
+  });
+
+  ipcMain.handle("sidepanel:hide", (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    // O painel sai de cena mas continua carregado (as mensagens seguem chegando).
+    const entry = ctx.sidePanels.get(ctx.sidePanel);
+    const hadFocus =
+      entry && !entry.view.webContents.isDestroyed() && entry.view.webContents.isFocused();
+    ctx.sidePanel = null;
+    layoutSidePanels(ctx);
+    if (hadFocus && !ctx.window.isDestroyed()) ctx.window.webContents.focus();
+  });
+
+  ipcMain.handle("sidepanel:bounds", (event, rect) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    const valid = rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite);
+    ctx.sidePanelRect = valid && rect.width > 0 && rect.height > 0 ? rect : null;
+    layoutSidePanels(ctx);
+  });
+
+  ipcMain.handle("sidepanel:reload", (event, { app } = {}) => {
+    const entry = ctxOfEvent(event)?.sidePanels.get(app);
+    if (!entry || entry.view.webContents.isDestroyed()) return;
+    void entry.view.webContents.loadURL(entry.url).catch(() => {});
+  });
+
+  ipcMain.handle("sidepanel:unload", (event, { app } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) unloadSidePanel(ctx, app);
+  });
+
+  // Tela dividida (2.0): as duas guias à vista, ou null.
+  ipcMain.handle("tab:split", (event, ids) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    const valid =
+      Array.isArray(ids) &&
+      ids.length === 2 &&
+      ids.every(Number.isSafeInteger) &&
+      ids[0] !== ids[1];
+    ctx.split = valid ? [ids[0], ids[1]] : null;
+    for (const key of [...ctx.paneRects.keys()]) {
+      if (!ctx.split?.includes(key)) ctx.paneRects.delete(key);
+    }
     applyLayout(ctx);
   });
 
@@ -2502,10 +2715,11 @@ function registerIpc() {
   // Rolagem fora do painel: vai para a página por baixo.
   ipcMain.on("overlay:wheel", (event, payload) => {
     const ctx = overlayOfEvent(event);
-    if (!ctx || ctx.activeTabId === null || !isShown(ctx, ctx.activeTabId)) return;
-    const contents = tabContents(ctx, ctx.activeTabId);
-    const input = contents && wheelEvent(ctx.lastRect, payload);
-    if (input) contents.sendInputEvent(input);
+    if (!ctx) return;
+    const pane = paneAt(ctx, payload ?? {});
+    if (!pane) return;
+    const input = wheelEvent(rectOf(ctx, pane.id), payload);
+    if (input) pane.contents.sendInputEvent(input);
   });
 
   ipcMain.handle("switcher:state", (event, { open }) => {

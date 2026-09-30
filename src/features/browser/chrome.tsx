@@ -2,6 +2,7 @@ import { MoreHorizontal } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -38,6 +39,10 @@ import {
 import { useDesktopSync } from "./desktop-sync";
 import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
+import { WorkspaceButton } from "./ui/workspace-panel";
+import { SIDE_PANEL_APPS, sidePanelApp } from "./side-panels";
+import { SideBar, SidePanel } from "./ui/side-bar";
+import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
@@ -51,7 +56,8 @@ import {
   entryOf,
   hostOf,
   navState,
-  orderTabs,
+  splitShown,
+  workspaceTabs,
 } from "./store/selectors";
 import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, initialState, type Prefs } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
@@ -70,7 +76,16 @@ import { WhatsNew } from "./ui/whats-new";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
 
-type Panel = "key" | "privacy" | "menu" | "downloads" | "bookmark" | "site";
+type Panel =
+  | "key"
+  | "privacy"
+  | "menu"
+  | "downloads"
+  | "bookmark"
+  | "site"
+  | "palette"
+  | "workspaces"
+  | "group";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -130,7 +145,26 @@ export function AgzosBrowser() {
   const activeTab = activeTabOf(state);
   const current = entryOf(activeTab);
   const nav = navState(state, desktop !== null);
-  const orderedTabs = useMemo(() => orderTabs(state.tabs), [state.tabs]);
+  // A barra mostra só as guias do workspace ativo.
+  const orderedTabs = useMemo(
+    () => workspaceTabs({ tabs: state.tabs, activeWorkspaceId: state.activeWorkspaceId }),
+    [state.tabs, state.activeWorkspaceId],
+  );
+  const activeWorkspace =
+    state.workspaces.find((item) => item.id === state.activeWorkspaceId) ?? state.workspaces[0]!;
+  // Grupo em edição (balão ao lado do chip) e o formulário de workspace novo.
+  const [groupEdit, setGroupEdit] = useState<{
+    groupId: number;
+    anchor: { x: number; y: number } | null;
+  } | null>(null);
+  const [workspaceCreate, setWorkspaceCreate] = useState(false);
+  // Painel lateral aberto nesta janela (2.0).
+  const [sidePanel, setSidePanel] = useState<string | null>(null);
+  const sideApps = useMemo(
+    () => prefs.sidePanels.flatMap((id) => sidePanelApp(id) ?? []),
+    [prefs.sidePanels],
+  );
+  const openSideApp = sideApps.find((app) => app.id === sidePanel) ?? null;
   // "Mudar para esta guia" na omnibox: as outras abas normais.
   const switchableTabs = useMemo(
     () => state.tabs.filter((tab) => tab.id !== state.activeId && !tab.private),
@@ -264,7 +298,7 @@ export function AgzosBrowser() {
 
   const bookmarkAllTabs = useCallback(() => {
     const now = Date.now();
-    const pages = orderTabs(stateRef.current.tabs).filter(
+    const pages = workspaceTabs(stateRef.current).filter(
       (tab) => !tab.private && entryOf(tab).kind === "page",
     );
     if (!pages.length) return;
@@ -318,6 +352,36 @@ export function AgzosBrowser() {
     },
     [flash],
   );
+
+  // "+" (ou clique direito) na barra lateral: quais painéis aparecem.
+  const manageSidePanels = (event: MouseEvent) => {
+    event.preventDefault();
+    const enabled = new Set(prefs.sidePanels);
+    const items: NativeMenuItem[] = [
+      ...SIDE_PANEL_APPS.map((app) => ({
+        id: `toggle:${app.id}`,
+        label: `${enabled.has(app.id) ? "✓  " : "     "}${app.name}`,
+      })),
+      { separator: true },
+      { id: "hide", label: "Ocultar barra lateral" },
+    ];
+    void showMenu(event.clientX, event.clientY, items).then((choice) => {
+      if (choice === "hide") {
+        setPrefs({ sidebar: false });
+        setSidePanel(null);
+        return;
+      }
+      const id = choice?.startsWith("toggle:") ? choice.slice("toggle:".length) : null;
+      if (!id) return;
+      if (enabled.has(id)) {
+        setPrefs({ sidePanels: prefs.sidePanels.filter((item) => item !== id) });
+        if (sidePanel === id) setSidePanel(null);
+        void desktop?.sidePanelUnload(id);
+      } else {
+        setPrefs({ sidePanels: [...prefs.sidePanels, id] });
+      }
+    });
+  };
 
   const openInternal = useCallback((url: string, title: string) => {
     dispatch({ type: "nav/open-internal", entry: { title, url, kind: "internal" } });
@@ -538,12 +602,36 @@ export function AgzosBrowser() {
       showWhatsNew: () => {
         if (appVersion) setWhatsNew({ from: null, to: appVersion, celebrate: false });
       },
+      openPalette: () => setPanel("palette"),
+      editGroup: (groupId) => {
+        setGroupEdit({ groupId, anchor: null });
+        setPanel("group");
+      },
+      openWorkspaces: (create = false) => {
+        setWorkspaceCreate(create);
+        setPanel("workspaces");
+      },
+      toggleSidebar: () => {
+        if (prefs.sidebar) setSidePanel(null);
+        setPrefs({ sidebar: !prefs.sidebar });
+      },
     },
   };
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
 
   const runCommandRef = useRef((id: string, tabId: number | null) => {
+    // Ações com parâmetro do menu da guia (2.0): "group.add:3", "workspace.move:2".
+    const [name, value] = id.split(":");
+    const target = tabId ?? ctxRef.current.state.activeId;
+    if (name === "group.add" && value) {
+      dispatch({ type: "group/add", id: target, groupId: Number(value) });
+      return;
+    }
+    if (name === "workspace.move" && value) {
+      dispatch({ type: "tab/move-to-workspace", id: target, workspaceId: Number(value) });
+      return;
+    }
     runCommand(ctxRef.current, id, tabId);
   });
   // Ctrl+Tab com o foco na página: seletor na camada do main, acima da página, que continua
@@ -716,6 +804,11 @@ export function AgzosBrowser() {
         url: entryOf(tab).url,
         tabCount: state.tabs.length,
         active: tab.id === state.activeId,
+        groupId: tab.groupId ?? null,
+        groups: state.groups.map((group) => ({ id: group.id, title: group.title })),
+        workspaceId: tab.workspaceId ?? 1,
+        workspaces: state.workspaces,
+        inSplit: splitShown(state)?.ids.includes(tab.id) ?? false,
       });
       return;
     }
@@ -804,7 +897,35 @@ export function AgzosBrowser() {
     onNewPrivateTab: () => dispatch({ type: "tab/new", private: true }),
     onStripMenu: openStripMenu,
     onMoveTab: (id: number, index: number) => dispatch({ type: "tab/move", id, index }),
+    groups: state.groups,
+    splitIds: state.split?.ids ?? null,
+    onGroupToggle: (groupId: number) => {
+      const group = state.groups.find((item) => item.id === groupId);
+      if (group) dispatch({ type: "group/update", groupId, collapsed: !group.collapsed });
+    },
+    onGroupMenu: (_event: MouseEvent, group: { id: number }) => ctx.ui.editGroup(group.id),
+    leading: (
+      <WorkspaceButton
+        workspace={activeWorkspace}
+        open={panel === "workspaces"}
+        compact={prefs.orientation === "horizontal" && state.workspaces.length < 2}
+        onClick={() => togglePanel("workspaces")}
+      />
+    ),
   };
+
+  // Balão do grupo: ao lado do chip (que pode ter acabado de nascer).
+  useLayoutEffect(() => {
+    if (panel !== "group" || !groupEdit || groupEdit.anchor) return;
+    const chip = document.querySelector(`[data-group-id="${groupEdit.groupId}"]`);
+    if (!chip) return;
+    const rect = chip.getBoundingClientRect();
+    const anchor =
+      prefs.orientation === "vertical"
+        ? { x: Math.round(rect.right + 8), y: Math.round(rect.top) }
+        : { x: Math.round(rect.left), y: Math.round(rect.bottom + 6) };
+    setGroupEdit({ groupId: groupEdit.groupId, anchor });
+  }, [panel, groupEdit, state.groups, prefs.orientation]);
 
   // Esc fecha o painel aberto (rota de saída de qualquer painel).
   useEffect(() => {
@@ -866,6 +987,24 @@ export function AgzosBrowser() {
   };
 
   const closePanel = () => setPanel(null);
+  const editedGroup = groupEdit
+    ? state.groups.find((group) => group.id === groupEdit.groupId)
+    : undefined;
+  // Item escolhido na busca de comandos (Ctrl+K).
+  const runPaletteItem = (id: string) => {
+    const [kind, ...rest] = id.split(":");
+    const value = rest.join(":");
+    if (kind === "tab") dispatch({ type: "tab/activate", id: Number(value) });
+    else if (kind === "ws") dispatch({ type: "workspace/switch", id: Number(value) });
+    else if (kind === "panel") {
+      setPrefs({ sidebar: true });
+      setSidePanel(value);
+    } else if (kind === "url") openUrl(value, true);
+    else if (kind === "cmd") {
+      // Depois de o painel fechar: comandos que abrem outro painel (downloads) não brigam.
+      window.setTimeout(() => runCommand(ctxRef.current, value, null, "menu"), 0);
+    }
+  };
   const stageClasses = [
     prefs.dark && "dark",
     state.fullscreen && "fs",
@@ -994,20 +1133,77 @@ export function AgzosBrowser() {
                     onClose: closePanel,
                   },
                 }
-              : panel === "key"
+              : panel === "workspaces"
                 ? {
-                    kind: "key",
+                    kind: "workspaces",
+                    key: workspaceCreate ? "create" : "list",
                     props: {
-                      credentials,
-                      copied,
-                      onCopy: (id, value) => void copyText(id, value),
-                      onAdd: (item) => setCredentials((list) => [...list, item]),
-                      onRemove: (domain) =>
-                        setCredentials((list) => list.filter((item) => item.domain !== domain)),
+                      workspaces: state.workspaces,
+                      activeId: state.activeWorkspaceId,
+                      counts: Object.fromEntries(
+                        state.workspaces.map((item) => [
+                          item.id,
+                          workspaceTabs(state, item.id).length,
+                        ]),
+                      ),
+                      startCreating: workspaceCreate,
+                      onSwitch: (id) => dispatch({ type: "workspace/switch", id }),
+                      onCreate: (name, icon) => dispatch({ type: "workspace/create", name, icon }),
+                      onUpdate: (id, name, icon) =>
+                        dispatch({ type: "workspace/update", id, name, icon }),
+                      onRemove: (id) => dispatch({ type: "workspace/remove", id }),
                       onClose: closePanel,
                     },
                   }
-                : null;
+                : panel === "group" && groupEdit?.anchor && editedGroup
+                  ? {
+                      kind: "group",
+                      key: String(editedGroup.id),
+                      props: {
+                        group: editedGroup,
+                        anchor: groupEdit.anchor,
+                        onRename: (title) =>
+                          dispatch({ type: "group/update", groupId: editedGroup.id, title }),
+                        onColor: (color) =>
+                          dispatch({ type: "group/update", groupId: editedGroup.id, color }),
+                        onNewTab: () => {
+                          const last = [...state.tabs]
+                            .reverse()
+                            .find((tab) => tab.groupId === editedGroup.id);
+                          if (last) dispatch({ type: "tab/new", rightOf: last.id });
+                        },
+                        onUngroup: () =>
+                          dispatch({ type: "group/ungroup", groupId: editedGroup.id }),
+                        onCloseGroup: () =>
+                          dispatch({ type: "group/close", groupId: editedGroup.id }),
+                        onClose: closePanel,
+                      },
+                    }
+                  : panel === "palette"
+                    ? {
+                        kind: "palette",
+                        props: {
+                          items: paletteItems(ctx, { mac: isMac }),
+                          onRun: runPaletteItem,
+                          onClose: closePanel,
+                        },
+                      }
+                    : panel === "key"
+                      ? {
+                          kind: "key",
+                          props: {
+                            credentials,
+                            copied,
+                            onCopy: (id, value) => void copyText(id, value),
+                            onAdd: (item) => setCredentials((list) => [...list, item]),
+                            onRemove: (domain) =>
+                              setCredentials((list) =>
+                                list.filter((item) => item.domain !== domain),
+                              ),
+                            onClose: closePanel,
+                          },
+                        }
+                      : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1130,6 +1326,9 @@ export function AgzosBrowser() {
             open: panel === "site",
             onToggle: () => togglePanel("site"),
           }}
+          shareUrl={current.kind === "page" ? current.url : null}
+          onBarMenu={openStripMenu}
+          onCopyLink={(url) => writeClipboard(url)}
           updateReady={update?.status === "ready" ? update.version : null}
           onInstallUpdate={() => void desktop?.updateInstall()}
         />
@@ -1187,6 +1386,25 @@ export function AgzosBrowser() {
         )}
 
         <div className="browser-body">
+          {prefs.sidebar && !state.fullscreen && (
+            <SideBar
+              apps={sideApps}
+              open={sidePanel}
+              onToggle={(id) => setSidePanel((open) => (open === id ? null : id))}
+              onManage={manageSidePanels}
+            />
+          )}
+          {openSideApp && prefs.sidebar && !state.fullscreen && (
+            <SidePanel
+              key={openSideApp.id}
+              app={openSideApp}
+              width={prefs.sidePanelWidth}
+              desktop={desktop}
+              onClose={() => setSidePanel(null)}
+              onOpenInTab={(url) => openUrl(url, true)}
+              onResize={(width) => setPrefs({ sidePanelWidth: width })}
+            />
+          )}
           {prefs.orientation === "vertical" && (
             <TabRail
               {...listProps}
@@ -1205,16 +1423,16 @@ export function AgzosBrowser() {
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
-              internal={
-                current.url === HISTORY_URL ? (
+              internal={(pageUrl) =>
+                pageUrl === HISTORY_URL ? (
                   <HistoryPage store={historyStore} onOpen={openUrl} />
-                ) : current.url === BOOKMARKS_URL ? (
+                ) : pageUrl === BOOKMARKS_URL ? (
                   <BookmarksManager
                     nodes={state.bookmarks}
                     actions={bookmarkActions}
                     onOpen={openUrl}
                   />
-                ) : current.url === SETTINGS_URL ? (
+                ) : pageUrl === SETTINGS_URL ? (
                   <SettingsPage
                     prefs={prefs}
                     setPrefs={setPrefs}
@@ -1246,6 +1464,9 @@ export function AgzosBrowser() {
                 ) : null
               }
               errors={errorActions}
+              onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
+              onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
+              onCloseSplit={() => dispatch({ type: "split/close" })}
               onRecover={(id) => {
                 dispatch({ type: "view/recovered", id });
                 void desktop?.reload(id);

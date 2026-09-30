@@ -2,7 +2,7 @@ import { useEffect, useRef, type Dispatch, type MutableRefObject } from "react";
 
 import type { DesktopBridge, DesktopPermissionRequest } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
-import { hostOf } from "./store/selectors";
+import { hostOf, splitShown } from "./store/selectors";
 import type { BrowserState } from "./store/state";
 
 type Options = {
@@ -99,6 +99,9 @@ export function useDesktopSync({
           case "thumbnail":
             dispatch({ type: "view/thumbnail", id: event.id, dataUrl: event.dataUrl });
             return;
+          case "focused":
+            dispatch({ type: "tab/activate", id: event.id });
+            return;
           case "download-navigation":
             dispatch({ type: "view/download-navigation", id: event.id, urls: event.urls });
             return;
@@ -175,6 +178,15 @@ export function useDesktopSync({
   useEffect(() => {
     if (desktop) void desktop.activateTab(state.activeId);
   }, [desktop, state.activeId]);
+
+  // Tela dividida à vista (2.0): o main mostra as duas guias.
+  const split = splitShown(state);
+  const splitKey = split ? split.ids.join(",") : "";
+  useEffect(() => {
+    if (!desktop) return;
+    const ids = splitKey ? (splitKey.split(",").map(Number) as [number, number]) : null;
+    void desktop.setSplit(ids);
+  }, [desktop, splitKey]);
 
   useEffect(() => {
     if (desktop) void desktop.setPanelOpen(panelOpen);

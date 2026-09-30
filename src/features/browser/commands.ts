@@ -2,7 +2,7 @@ import type { Dispatch } from "react";
 
 import type { DesktopBridge } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
-import { activeTabOf, entryOf } from "./store/selectors";
+import { activeTabOf, entryOf, splitShown } from "./store/selectors";
 import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, type BrowserState } from "./store/state";
 
 /**
@@ -52,6 +52,18 @@ export type CommandId =
   | "zoom.out"
   | "zoom.reset"
   | "omnibox.focus"
+  | "palette.open"
+  | "group.new"
+  | "group.leave"
+  | "split.new"
+  | "split.with-tab"
+  | "split.close"
+  | "split.swap"
+  | "workspaces.open"
+  | "workspace.new"
+  | "workspace.next"
+  | "workspace.previous"
+  | "sidepanels.toggle"
   | "history.open"
   | "bookmarks.manager"
   | "bookmarks.toggle-bar";
@@ -85,6 +97,14 @@ export type CommandContext = {
     pictureInPicture: (tabId: number) => void;
     /** Aviso com as novidades da versão atual (sem confetes). */
     showWhatsNew: () => void;
+    /** Busca de comandos (Ctrl+K). */
+    openPalette: () => void;
+    /** Abre a edição do grupo (nome e cor), ao lado do chip dele. */
+    editGroup: (groupId: number) => void;
+    /** Painel de workspaces; `create` já abre o formulário de um novo. */
+    openWorkspaces: (create?: boolean) => void;
+    /** Mostra ou esconde a barra lateral dos painéis (WhatsApp, Telegram…). */
+    toggleSidebar: () => void;
   };
 };
 
@@ -445,10 +465,101 @@ export const commands: Command[] = [
   {
     id: "omnibox.focus",
     label: "Ir para a barra de endereço",
-    shortcuts: [{ key: "l" }, { key: "k" }],
+    shortcuts: [{ key: "l" }],
     run: ({ ui }) => ui.focusOmnibox(),
   },
+  {
+    id: "palette.open",
+    label: "Buscar comandos",
+    shortcuts: [{ key: "k" }],
+    run: ({ ui }) => ui.openPalette(),
+  },
+  // --- Grupos de guias (2.0) ---
+  {
+    id: "group.new",
+    label: "Adicionar guia a novo grupo",
+    shortcuts: [{ key: "g", shift: true }],
+    enabled: (ctx, tabId) => !tabById(ctx, tabId)?.private,
+    run: ({ state, dispatch, ui }, tabId) => {
+      dispatch({ type: "group/create", ids: [tabId] });
+      // O grupo novo recebe o próximo id: a edição abre depois do render.
+      ui.editGroup(Math.max(0, ...state.groups.map((group) => group.id)) + 1);
+    },
+  },
+  {
+    id: "group.leave",
+    label: "Remover do grupo",
+    visible: (ctx, tabId) => tabById(ctx, tabId)?.groupId !== undefined,
+    run: ({ dispatch }, tabId) => dispatch({ type: "group/leave", id: tabId }),
+  },
+  // --- Tela dividida (2.0) ---
+  {
+    id: "split.new",
+    label: "Dividir tela (nova guia ao lado)",
+    shortcuts: [{ key: "s", shift: true, alt: true }],
+    run: ({ dispatch }) => dispatch({ type: "split/open" }),
+  },
+  {
+    id: "split.with-tab",
+    label: "Abrir em tela dividida com a guia atual",
+    visible: ({ state }, tabId) => tabId !== state.activeId,
+    run: ({ dispatch }, tabId) => dispatch({ type: "split/open", id: tabId }),
+  },
+  {
+    id: "split.swap",
+    label: "Trocar os lados da tela dividida",
+    visible: ({ state }) => splitShown(state) !== null,
+    enabled: ({ state }) => splitShown(state) !== null,
+    run: ({ dispatch }) => dispatch({ type: "split/swap" }),
+  },
+  {
+    id: "split.close",
+    label: "Desfazer tela dividida",
+    visible: ({ state }) => splitShown(state) !== null,
+    enabled: ({ state }) => splitShown(state) !== null,
+    run: ({ dispatch }) => dispatch({ type: "split/close" }),
+  },
+  // --- Workspaces (2.0) ---
+  {
+    id: "workspaces.open",
+    label: "Workspaces",
+    run: ({ ui }) => ui.openWorkspaces(),
+  },
+  {
+    id: "workspace.new",
+    label: "Novo workspace…",
+    run: ({ ui }) => ui.openWorkspaces(true),
+  },
+  {
+    id: "workspace.next",
+    label: "Próximo workspace",
+    shortcuts: [{ key: "arrowdown", alt: true }],
+    enabled: ({ state }) => state.workspaces.length > 1,
+    run: ({ state, dispatch }) =>
+      dispatch({ type: "workspace/switch", id: stepWorkspace(state, 1) }),
+  },
+  {
+    id: "sidepanels.toggle",
+    label: ({ state }) =>
+      state.prefs.sidebar ? "Ocultar painéis laterais" : "Mostrar painéis laterais",
+    run: ({ ui }) => ui.toggleSidebar(),
+  },
+  {
+    id: "workspace.previous",
+    label: "Workspace anterior",
+    shortcuts: [{ key: "arrowup", alt: true }],
+    enabled: ({ state }) => state.workspaces.length > 1,
+    run: ({ state, dispatch }) =>
+      dispatch({ type: "workspace/switch", id: stepWorkspace(state, -1) }),
+  },
 ];
+
+/** Workspace vizinho do ativo, dando a volta. */
+function stepWorkspace(state: BrowserState, delta: 1 | -1) {
+  const list = state.workspaces;
+  const index = list.findIndex((item) => item.id === state.activeWorkspaceId);
+  return list[(index + delta + list.length) % list.length]!.id;
+}
 
 const byId = new Map(commands.map((command) => [command.id, command]));
 
@@ -503,6 +614,8 @@ const KEY_LABELS: Record<string, string> = {
   pageup: "PgUp",
   arrowleft: "←",
   arrowright: "→",
+  arrowup: "↑",
+  arrowdown: "↓",
 };
 
 export function shortcutLabel(command: Command, mac: boolean): string | undefined {

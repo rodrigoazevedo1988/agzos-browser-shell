@@ -228,6 +228,15 @@ export const OmniboxField = forwardRef<HTMLInputElement, OmniboxFieldProps>(
           value={props.value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onMouseDown={(event) => {
+            // 1º clique seleciona o endereço todo (como no Chrome/Comet); com o campo já
+            // focado, o clique posiciona o cursor normalmente.
+            const input = event.currentTarget;
+            if (document.activeElement === input || event.button !== 0) return;
+            event.preventDefault();
+            input.focus();
+            input.select();
+          }}
           onBlur={close}
           aria-label="Pesquisar ou digitar endereço"
           placeholder="Pesquisar ou digitar endereço"

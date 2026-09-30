@@ -90,7 +90,17 @@ describe("chrome-overlay.cjs", () => {
       classes: ["dark", "vertical-tabs"],
     });
     expect([...overlay.OVERLAY_KINDS].sort()).toEqual(
-      ["bookmark", "downloads", "key", "menu", "privacy", "site"].sort(),
+      [
+        "bookmark",
+        "downloads",
+        "key",
+        "menu",
+        "privacy",
+        "site",
+        "palette",
+        "workspaces",
+        "group",
+      ].sort(),
     );
   });
 

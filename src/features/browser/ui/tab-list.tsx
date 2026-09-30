@@ -3,15 +3,18 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import type { Tab } from "../types";
+import type { Tab, TabGroup } from "../types";
+import { GROUP_COLORS } from "./group-colors";
 import { TabItem, type TabHandlers } from "./tab-item";
 
 type ListProps = {
@@ -27,6 +30,14 @@ type ListProps = {
   onStripMenu: (event: MouseEvent) => void;
   /** Guia arrastada para `index` da ordem exibida (contada sem ela). */
   onMoveTab: (id: number, index: number) => void;
+  /** Grupos de guias (2.0): o chip do grupo aparece antes das guias dele. */
+  groups?: TabGroup[];
+  /** Guias da tela dividida (marcadas na barra). */
+  splitIds?: readonly number[] | null;
+  onGroupToggle?: (groupId: number) => void;
+  onGroupMenu?: (event: MouseEvent, group: TabGroup) => void;
+  /** Botão do workspace, no começo da barra. */
+  leading?: ReactNode;
 };
 
 const DRAG_THRESHOLD = 6;
@@ -155,29 +166,74 @@ function tabsKeyDown(
 }
 
 function renderTabs(
-  { tabs, activeId, audioPlaying, hibernated = [], confirmingClose, handlers }: ListProps,
+  {
+    tabs,
+    activeId,
+    audioPlaying,
+    hibernated = [],
+    confirmingClose,
+    handlers,
+    groups = [],
+    splitIds = null,
+    onGroupToggle,
+    onGroupMenu,
+  }: ListProps,
   drop: Drop | null,
 ) {
-  return tabs.map((tab) => (
-    <TabItem
-      key={tab.id}
-      tab={tab}
-      active={tab.id === activeId}
-      playing={audioPlaying.includes(tab.id)}
-      hibernated={hibernated.includes(tab.id)}
-      confirmingClose={confirmingClose === tab.id}
-      handlers={handlers}
-      dropMark={
-        !drop || drop.id === tab.id
-          ? null
-          : drop.before === tab.id
-            ? "before"
-            : drop.before === null && tab === lastOther(tabs, drop.id)
-              ? "after"
-              : null
-      }
-    />
-  ));
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const items: ReactNode[] = [];
+  let previous: number | undefined;
+  for (const tab of tabs) {
+    const group = tab.groupId !== undefined ? byId.get(tab.groupId) : undefined;
+    if (group && group.id !== previous) {
+      items.push(
+        <button
+          key={`group-${group.id}`}
+          type="button"
+          className={cn("tab-group-chip", group.collapsed && "collapsed", !group.title && "dot")}
+          style={{ "--group-color": GROUP_COLORS[group.color] } as CSSProperties}
+          data-group-id={group.id}
+          aria-expanded={!group.collapsed}
+          aria-label={`Grupo ${group.title || "sem nome"}${group.collapsed ? ", recolhido" : ""}`}
+          title={`${group.title || "Grupo"}: clique para ${group.collapsed ? "abrir" : "recolher"}, botão direito para editar`}
+          onClick={() => onGroupToggle?.(group.id)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onGroupMenu?.(event, group);
+          }}
+        >
+          {group.title && <span>{group.title}</span>}
+        </button>,
+      );
+    }
+    previous = group?.id;
+    // Grupo recolhido: só o chip (a guia ativa continua à vista).
+    if (group?.collapsed && tab.id !== activeId) continue;
+    items.push(
+      <TabItem
+        key={tab.id}
+        tab={tab}
+        active={tab.id === activeId}
+        playing={audioPlaying.includes(tab.id)}
+        hibernated={hibernated.includes(tab.id)}
+        confirmingClose={confirmingClose === tab.id}
+        handlers={handlers}
+        groupColor={group ? GROUP_COLORS[group.color] : null}
+        inSplit={splitIds?.includes(tab.id) ?? false}
+        dropMark={
+          !drop || drop.id === tab.id
+            ? null
+            : drop.before === tab.id
+              ? "before"
+              : drop.before === null && tab === lastOther(tabs, drop.id)
+                ? "after"
+                : null
+        }
+      />,
+    );
+  }
+  return items;
 }
 
 function lastOther(tabs: Tab[], id: number) {
@@ -200,6 +256,7 @@ export function TabStrip(props: ListProps) {
         if (event.target === event.currentTarget) props.onNewTab();
       }}
     >
+      {props.leading}
       {renderTabs(props, drop)}
       <Button
         variant="ghost"
@@ -269,7 +326,7 @@ export function TabRail({
         </Button>
         {expanded && (
           <>
-            <span className="rail-title">Guias</span>
+            {props.leading ?? <span className="rail-title">Guias</span>}
             <div className="rail-actions">
               <Button
                 variant="ghost"

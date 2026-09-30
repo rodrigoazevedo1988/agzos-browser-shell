@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.0",
+    date: "2026-10-05",
+    items: [
+      "Workspaces: separe as guias por assunto (Pessoal, Trabalho, Estudos…) e troque com um clique no começo da barra de guias.",
+      "Grupos de guias com nome e cor: clique direito na guia → Adicionar guia a novo grupo (Ctrl+Shift+G); clique no grupo para recolher.",
+      "Tela dividida: duas páginas lado a lado (Ctrl+Alt+Shift+S ou clique direito na guia); arraste a divisória para ajustar.",
+      "Painéis laterais com WhatsApp, Telegram, Messenger e Instagram ao lado da página (escolha outros no +).",
+      "Busca de comandos (Ctrl+K): ache qualquer comando, guia, workspace ou favorito digitando.",
+      "Barra de endereço: o primeiro clique seleciona o endereço todo; o ícone de link copia o endereço, e favorito, ajustes do site e proteção aparecem ao pausar o mouse.",
+    ],
+  },
+  {
     version: "1.5.5",
     date: "2026-10-04",
     items: [

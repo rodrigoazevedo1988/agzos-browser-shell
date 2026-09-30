@@ -48,10 +48,24 @@ export function usePersistence(
   }, [dispatch, store]);
 
   const { hydrated, tabs, activeId, prefs, links, closedTabs, bookmarks } = state;
+  const { groups, workspaces, split } = state;
   // Só as partes persistidas disparam gravação; antes do load nada é gravado.
   const snapshot = useMemo(
-    () => (hydrated ? snapshotOf({ tabs, activeId, prefs, links, closedTabs, bookmarks }) : null),
-    [hydrated, tabs, activeId, prefs, links, closedTabs, bookmarks],
+    () =>
+      hydrated
+        ? snapshotOf({
+            tabs,
+            activeId,
+            prefs,
+            links,
+            closedTabs,
+            bookmarks,
+            groups,
+            workspaces,
+            split,
+          })
+        : null,
+    [hydrated, tabs, activeId, prefs, links, closedTabs, bookmarks, groups, workspaces, split],
   );
 
   useEffect(() => {
