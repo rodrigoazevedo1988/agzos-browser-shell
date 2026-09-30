@@ -57,10 +57,11 @@ export function OverlayHost({ bridge }: { bridge: OverlayBridge }) {
   const spec = { kind: model.kind, key: model.key, props } as PanelSpec;
 
   const onPointerDown = (event: PointerEvent) => {
-    // Como nos menus do Chrome: o clique fora fecha e não chega à página.
+    // Como no Comet: o clique fora fecha o painel e vale para o que está embaixo (a
+    // página, uma guia, outro botão da barra). O main repassa o clique.
     if (isBackdrop(event.target)) {
       event.preventDefault();
-      bridge.dismiss();
+      bridge.dismiss({ x: event.clientX, y: event.clientY, button: event.button });
     }
   };
   const onWheel = (event: WheelEvent) => {
@@ -79,6 +80,7 @@ export function OverlayHost({ bridge }: { bridge: OverlayBridge }) {
       className={cn("browser-stage overlay-stage", ...model.classes)}
       data-overlay-kind={model.kind}
       onPointerDown={onPointerDown}
+      onContextMenu={(event) => event.preventDefault()}
       onWheel={onWheel}
     >
       <section className="browser-window">

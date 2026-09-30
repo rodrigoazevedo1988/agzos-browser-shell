@@ -44,7 +44,9 @@ const { SWITCHER_HTML, switcherChoice, switcherBounds } = require("./switcher-la
 const {
   createLayerView,
   sanitizeOverlay,
+  pagePoint,
   wheelEvent,
+  clickEvents,
   overlayDebugger,
 } = require("./chrome-overlay.cjs");
 const {
@@ -2081,17 +2083,21 @@ async function openPanelLayer(ctx, model) {
   return { ok: true };
 }
 
-/** Esconde a camada. `notify`: quem fechou foi o main/camada (a casca limpa o painel). */
-function closePanelLayer(ctx, { notify = false, refocus = true } = {}) {
+/**
+ * Esconde a camada. `notify`: quem fechou foi o main/camada (a casca limpa o painel);
+ * `click`: fechou por um clique fora, que segue para o que está embaixo.
+ */
+function closePanelLayer(ctx, { notify = false, refocus = true, click = false } = {}) {
   const layer = ctx.overlay;
   if (!layer?.model) return;
+  const { kind } = layer.model;
   layer.model = null;
   const contents = layer.view.webContents;
   const hadFocus = !contents.isDestroyed() && contents.isFocused();
   layer.view.setVisible(false);
   layer.view.setBounds(HIDDEN_RECT);
   if (!contents.isDestroyed()) contents.send("agzos:overlay-render", null);
-  if (notify) send(ctx, "agzos:overlay-dismissed", {});
+  if (notify) send(ctx, "agzos:overlay-dismissed", { kind, click });
   // Camada escondida não fica com o foco: volta para onde estava (a casca, em geral).
   if (refocus && hadFocus && !ctx.window.isDestroyed()) {
     const back = layer.returnFocus;
@@ -2099,6 +2105,29 @@ function closePanelLayer(ctx, { notify = false, refocus = true } = {}) {
     else ctx.window.webContents.focus();
   }
   layer.returnFocus = null;
+}
+
+/**
+ * O clique fora do painel vale para o que está embaixo: a página (em coordenadas dela) ou
+ * a casca (guias, barra de endereço, botões). O alvo recebe o foco, como num clique real.
+ */
+function clickTarget(ctx, payload) {
+  if (ctx.window.isDestroyed()) return null;
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const id = ctx.activeTabId;
+  const tab = id !== null && isShown(ctx, id) ? tabContents(ctx, id) : null;
+  const inPage = tab ? pagePoint(ctx.lastRect, { x, y }) : null;
+  const target = inPage ? tab : ctx.window.webContents;
+  const point = inPage ?? { x: Math.round(x), y: Math.round(y) };
+  return { target, point, where: inPage ? "page" : "shell" };
+}
+
+function clickThrough({ target, point }, button) {
+  if (target.isDestroyed()) return;
+  target.focus();
+  for (const input of clickEvents(point, button)) target.sendInputEvent(input);
 }
 
 /** Guia nova por cima da camada: a camada volta ao topo. */
@@ -2459,10 +2488,15 @@ function registerIpc() {
     });
   });
 
-  // Clique fora do painel ou Esc.
-  ipcMain.on("overlay:dismiss", (event) => {
+  // Esc, ou clique fora do painel (payload com o ponto): fecha e o clique segue adiante.
+  ipcMain.on("overlay:dismiss", (event, payload) => {
     const ctx = overlayOfEvent(event);
-    if (ctx) closePanelLayer(ctx, { notify: true });
+    if (!ctx?.overlay?.model) return;
+    const hit = payload && typeof payload === "object" ? clickTarget(ctx, payload) : null;
+    // `click: "shell"`: o clique vai para a casca (se for o botão do próprio painel, ela
+    // não o reabre).
+    closePanelLayer(ctx, { notify: true, refocus: !hit, click: hit?.where ?? false });
+    if (hit) clickThrough(hit, payload.button);
   });
 
   // Rolagem fora do painel: vai para a página por baixo.

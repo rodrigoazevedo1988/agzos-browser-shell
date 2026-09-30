@@ -199,6 +199,38 @@ export function AgzosBrowser() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // Clique fora que fechou o painel e seguiu para a casca: se o clique cair no botão do
+  // próprio painel (⋯, downloads, estrela…), ele não reabre. Vale uma vez, logo em seguida.
+  const dismissedRef = useRef<{ kind: Panel; at: number; downs: number } | null>(null);
+  useEffect(() => {
+    // O 1º clique depois do aviso é o repassado; do 2º em diante o usuário clicou de novo.
+    const onDown = () => {
+      const dismissed = dismissedRef.current;
+      if (dismissed && ++dismissed.downs > 1) dismissedRef.current = null;
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, []);
+  const justDismissed = useCallback((target: Panel) => {
+    const dismissed = dismissedRef.current;
+    dismissedRef.current = null;
+    return dismissed?.kind === target && Date.now() - dismissed.at < 400;
+  }, []);
+  // Painel mais recente (inclusive o que ainda vai renderizar): o aviso da camada e o
+  // clique repassado chegam em qualquer ordem e decidem por ele, não por um setState adiado.
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
+  const onOverlayDismissed = useCallback(
+    ({ kind, click }: { kind?: Panel; click?: "shell" | "page" | false }) => {
+      // O clique repassado já foi tratado (trocou de painel ou fechou este): nada a fazer.
+      if (kind && panelRef.current !== kind) return;
+      if (kind && click === "shell") dismissedRef.current = { kind, at: Date.now(), downs: 0 };
+      panelRef.current = null;
+      setPanel((open) => (kind && open !== kind ? open : null));
+    },
+    [],
+  );
+
   const editBookmark = useCallback((id: string, added = false) => {
     setEditing({ id, added });
     setPanel("bookmark");
@@ -210,6 +242,8 @@ export function AgzosBrowser() {
     const tab = activeTabOf(current);
     const entry = entryOf(tab);
     if (tab.private || entry.kind !== "page") return;
+    // Estrela clicada com o editor aberto: só fecha (o clique fora já fechou).
+    if (justDismissed("bookmark")) return;
     const existing = currentBookmark(current);
     if (existing) {
       editBookmark(existing.id);
@@ -226,7 +260,7 @@ export function AgzosBrowser() {
     };
     dispatch({ type: "bookmarks/add", nodes: [node] });
     editBookmark(node.id, true);
-  }, [editBookmark]);
+  }, [editBookmark, justDismissed]);
 
   const bookmarkAllTabs = useCallback(() => {
     const now = Date.now();
@@ -784,7 +818,14 @@ export function AgzosBrowser() {
 
   const closeWhatsNew = useCallback(() => setWhatsNew(null), []);
 
-  const togglePanel = (target: Panel) => setPanel((open) => (open === target ? null : target));
+  // Clique fora fecha o painel e segue para o que está embaixo. Se era o próprio botão do
+  // painel (⋯, downloads…), ele só fecha: o clique repassado não reabre.
+  const togglePanel = (target: Panel) => {
+    if (justDismissed(target)) return;
+    const next = panelRef.current === target ? null : target;
+    panelRef.current = next;
+    setPanel(next);
+  };
 
   const settingsButton = (
     <Button
@@ -968,7 +1009,7 @@ export function AgzosBrowser() {
                   }
                 : null;
 
-  const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, closePanel);
+  const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
 
   // O WebContentsView fica por cima da casca: com seletor, omnibox ou aviso aberto (ou um

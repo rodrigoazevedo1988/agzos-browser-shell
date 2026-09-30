@@ -99,6 +99,8 @@ const PAGES: Record<string, string> = {
   "/video-vivo": `<!doctype html><title>Vídeo vivo</title>
     <canvas id="c" width="320" height="180" hidden></canvas>
     <video id="v" autoplay loop muted playsinline width="320" height="180"></video>
+    <button id="b" style="position: fixed; left: 40px; bottom: 40px; width: 200px; height: 60px"
+      onclick="window.cliques = (window.cliques || 0) + 1">clique</button>
     <div style="height: 4000px">rolar</div>
     <script>const c = document.getElementById("c"), x = c.getContext("2d"); let t = 0;
     setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 40);
@@ -1683,9 +1685,34 @@ test("1.5.4: menus da toolbar abrem na camada e a página (vídeo) segue pintand
     // Downloads e proteção (adblock) também: camada, sem foto.
     await window.getByRole("button", { name: /bloqueados/ }).click();
     await expect(overlay.getByRole("button", { name: "Fechar proteção" })).toBeVisible();
-    // Clique fora fecha (e não chega à página).
-    await overlay.mouse.click(600, 500);
+    // Clique fora (como no Comet): fecha o painel e o clique vale para a página embaixo.
+    const view = await app.evaluate(({ BrowserWindow }, target) => {
+      const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find(
+        (item) => (item as { webContents?: Electron.WebContents }).webContents?.getURL() === target,
+      )!;
+      return child.getBounds();
+    }, url);
+    await overlay.mouse.click(view.x + 140, view.y + view.height - 70);
     await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await expect.poll(() => inTab<number>(app, url, "window.cliques ?? 0")).toBe(1);
+    expect(
+      await app.evaluate(({ webContents }) => webContents.getFocusedWebContents()?.getURL()),
+    ).toBe(url);
+
+    // Clique fora num botão da barra: o outro painel abre direto.
+    const menuButton = window.getByRole("button", { name: "Menu do Agzos" });
+    await window.getByRole("button", { name: /bloqueados/ }).click();
+    await expect(overlay.getByRole("button", { name: "Fechar proteção" })).toBeVisible();
+    const menuBox = (await menuButton.boundingBox())!;
+    await overlay.mouse.click(menuBox.x + menuBox.width / 2, menuBox.y + menuBox.height / 2);
+    await expect(overlay.getByRole("menu", { name: "Menu do Agzos" })).toBeVisible();
+    await expect(overlay.getByRole("button", { name: "Fechar proteção" })).toHaveCount(0);
+    await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    // O próprio ⋯ com o menu aberto: só fecha (o clique repassado não reabre).
+    await overlay.mouse.click(menuBox.x + menuBox.width / 2, menuBox.y + menuBox.height / 2);
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await window.waitForTimeout(300);
+    await expect(menuButton).toHaveAttribute("aria-expanded", "false");
 
     // Menu aberto + Ctrl+T: guia nova e o menu fecha.
     await window.getByRole("button", { name: "Menu do Agzos" }).click();
@@ -1708,9 +1735,17 @@ test("1.5.4: menus da toolbar abrem na camada e a página (vídeo) segue pintand
     await expect(tabs(window)).toHaveCount(3);
     await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
 
+    // Clique fora numa guia: fecha o menu e troca de guia.
+    await window.getByRole("button", { name: "Menu do Agzos" }).click();
+    await expect(menu).toBeVisible();
+    const tabBox = (await tabs(window).first().boundingBox())!;
+    await overlay.mouse.click(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
+    await expect(window.locator(".browser-tab.active")).toContainText("Vídeo vivo");
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+
     const counts = (await layersOf(app, url)).counts!;
     expect(counts["snapshot-fallback"]).toBe(0);
-    expect(counts["live-overlay"]).toBe(4);
+    expect(counts["live-overlay"]).toBe(7);
 
     // A camada caiu: a próxima abertura cria outra (sem cair na foto).
     await app.evaluate(({ webContents }) => {

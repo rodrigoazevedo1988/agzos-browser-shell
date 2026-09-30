@@ -9,6 +9,6 @@ contextBridge.exposeInMainWorld("agzosOverlay", {
     return () => ipcRenderer.removeListener("agzos:overlay-render", listener);
   },
   call: (name, args) => ipcRenderer.invoke("overlay:call", { name, args }),
-  dismiss: () => ipcRenderer.send("overlay:dismiss"),
+  dismiss: (click) => ipcRenderer.send("overlay:dismiss", click ?? null),
   wheel: (payload) => ipcRenderer.send("overlay:wheel", payload),
 });

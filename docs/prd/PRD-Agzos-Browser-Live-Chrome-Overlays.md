@@ -429,7 +429,7 @@ contextIsolation, ELECTRON_FILES, regras de hibernação.
 
 | Caso | Decisão |
 |---|---|
-| Clique fora do cartão | Fecha e **come** o clique, que não chega à página (fase 1 do PRD). Comparar com o Comet fica para o teste manual. |
+| Clique fora do cartão | 1.5.4 comia o clique. **1.5.5**, como no Comet (conferido pelo dono do produto): fecha **e o clique vale** para o que está embaixo. A camada manda o ponto; o main repassa `mouseMove`/`mouseDown`/`mouseUp` (`sendInputEvent`) para a página, em coordenadas dela, ou para a casca (guias, omnibox, botões), e dá o foco ao alvo. Clicar no botão do próprio painel (⋯, downloads, estrela…) só fecha: a casca não reabre com o clique repassado (vale uma vez, decidido de forma síncrona por `panelRef`, porque o aviso e o clique chegam em qualquer ordem). |
 | Rolagem fora do cartão | A página rola: `sendInputEvent` `mouseWheel` na guia ativa, com as coordenadas convertidas da janela para a página. |
 | Esc | Fecha, pela camada ou pelo próprio componente. |
 | Atalho do app com o foco no painel (Ctrl+T, Ctrl+Tab, Ctrl+J…) | O painel fecha e o atalho segue pelo `forwardAppShortcut`, o mesmo caminho da página, com o Ctrl sintético. |
@@ -455,7 +455,10 @@ contextIsolation, ELECTRON_FILES, regras de hibernação.
     - com o menu aberto, `currentTime` avança pelo menos 0,8 s e a página pinta quadros novos;
     - a guia mantém os bounds, a camada fica no topo, `live-overlay=1` e `snapshot-fallback=0`;
     - a rolagem rola a página, Esc fecha e o foco sai da camada;
-    - o clique fora fecha a proteção; Ctrl+T abre a guia e fecha o menu;
+    - clique fora: num botão da página fecha a proteção e o botão recebe o clique (com o foco);
+      no ⋯ com a proteção aberta, abre o menu direto; no ⋯ com o menu aberto, só fecha;
+      numa guia, fecha o menu e troca de guia;
+    - Ctrl+T abre a guia e fecha o menu;
     - o item "Nova guia anônima" dispara o comando.
   - `1.5.4: várias janelas…`: o painel abre só na janela clicada, com uma camada por janela.
   - O antigo "painel mostra a foto" virou "sugestões da omnibox mostram a foto", que ainda
