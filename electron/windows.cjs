@@ -29,6 +29,10 @@ function validSession(session) {
   return {
     tabs: session.tabs,
     activeId: Number.isSafeInteger(session.activeId) ? session.activeId : null,
+    // 2.0: a casca valida o conteúdo (persistence/snapshot.ts); aqui só a forma.
+    ...(Array.isArray(session.groups) ? { groups: session.groups } : {}),
+    ...(Array.isArray(session.workspaces) ? { workspaces: session.workspaces } : {}),
+    ...(isObject(session.split) ? { split: session.split } : {}),
   };
 }
 
@@ -88,7 +92,12 @@ function safeSession(session) {
   if (!valid || !valid.tabs.length) return valid;
   const ids = valid.tabs.map((tab) => (Number.isSafeInteger(tab?.id) ? tab.id : 0));
   const id = Math.max(0, ...ids) + 1;
-  return { tabs: [...valid.tabs, { id, history: [HOME_ENTRY], index: 0 }], activeId: id };
+  return {
+    ...valid,
+    tabs: [...valid.tabs, { id, history: [HOME_ENTRY], index: 0 }],
+    activeId: id,
+    split: null,
+  };
 }
 
 function tabCount(records) {

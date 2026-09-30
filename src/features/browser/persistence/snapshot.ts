@@ -10,7 +10,17 @@ import {
   type BrowserState,
   type Prefs,
 } from "../store/state";
-import type { BookmarkNode, ClosedTab, Entry, QuickLink, Tab } from "../types";
+import {
+  TAB_GROUP_COLORS,
+  type BookmarkNode,
+  type ClosedTab,
+  type Entry,
+  type QuickLink,
+  type SplitView,
+  type Tab,
+  type TabGroup,
+  type Workspace,
+} from "../types";
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -18,7 +28,14 @@ export const SNAPSHOT_VERSION = 1;
 export type Snapshot = {
   version: typeof SNAPSHOT_VERSION;
   prefs: Prefs;
-  session: { tabs: Tab[]; activeId: number | null };
+  session: {
+    tabs: Tab[];
+    activeId: number | null;
+    /** 2.0: grupos, workspaces e tela dividida desta janela. */
+    groups?: TabGroup[];
+    workspaces?: Workspace[];
+    split?: SplitView | null;
+  };
   /** null = usar os atalhos padrão. */
   links: QuickLink[] | null;
   closedTabs: ClosedTab[];
@@ -70,6 +87,10 @@ function parseTab(value: unknown): Tab | null {
     index: Math.min(Math.max(rawIndex, 0), history.length - 1),
   };
   if (value["pinned"] === true) tab.pinned = true;
+  if (Number.isSafeInteger(value["groupId"])) tab.groupId = value["groupId"] as number;
+  if (Number.isSafeInteger(value["workspaceId"])) {
+    tab.workspaceId = value["workspaceId"] as number;
+  }
   if (value["muted"] === true) tab.muted = true;
   if (isString(value["favicon"]) && /^(https?:|data:image\/)/.test(value["favicon"])) {
     tab.favicon = value["favicon"];
@@ -91,6 +112,55 @@ export function parseTabs(value: unknown): Tab[] {
     }
   }
   return tabs;
+}
+
+export function parseGroups(value: unknown): TabGroup[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const groups: TabGroup[] = [];
+  for (const item of value) {
+    if (!isObject(item) || !Number.isSafeInteger(item["id"]) || seen.has(item["id"] as number)) {
+      continue;
+    }
+    const color = (TAB_GROUP_COLORS as readonly unknown[]).includes(item["color"])
+      ? (item["color"] as TabGroup["color"])
+      : "grey";
+    seen.add(item["id"] as number);
+    groups.push({
+      id: item["id"] as number,
+      title: isString(item["title"]) ? item["title"].slice(0, 60) : "",
+      color,
+      ...(item["collapsed"] === true ? { collapsed: true } : {}),
+    });
+  }
+  return groups;
+}
+
+export function parseWorkspaces(value: unknown): Workspace[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const workspaces: Workspace[] = [];
+  for (const item of value) {
+    if (!isObject(item) || !Number.isSafeInteger(item["id"]) || seen.has(item["id"] as number)) {
+      continue;
+    }
+    if (!isString(item["name"]) || !item["name"].trim()) continue;
+    seen.add(item["id"] as number);
+    workspaces.push({
+      id: item["id"] as number,
+      name: item["name"].trim().slice(0, 40),
+      icon: isString(item["icon"]) && item["icon"] ? item["icon"].slice(0, 8) : "🗂️",
+    });
+  }
+  return workspaces;
+}
+
+export function parseSplit(value: unknown): SplitView | null {
+  if (!isObject(value) || !Array.isArray(value["ids"]) || value["ids"].length !== 2) return null;
+  const [a, b] = value["ids"];
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a === b) return null;
+  const ratio = typeof value["ratio"] === "number" ? value["ratio"] : 0.5;
+  return { ids: [a as number, b as number], ratio: Math.min(0.8, Math.max(0.2, ratio)) };
 }
 
 export function parseLinks(value: unknown): QuickLink[] | null {
@@ -145,7 +215,13 @@ export function parseSnapshot(value: unknown): Snapshot | null {
   return {
     version: SNAPSHOT_VERSION,
     prefs: parsePrefs(value["prefs"]),
-    session: { tabs: parseTabs(session["tabs"]), activeId },
+    session: {
+      tabs: parseTabs(session["tabs"]),
+      activeId,
+      groups: parseGroups(session["groups"]),
+      workspaces: parseWorkspaces(session["workspaces"]),
+      split: parseSplit(session["split"]),
+    },
     links: parseLinks(value["links"]),
     closedTabs: parseClosedTabs(value["closedTabs"]),
     bookmarks: parseBookmarks(value["bookmarks"]),
@@ -155,7 +231,8 @@ export function parseSnapshot(value: unknown): Snapshot | null {
 export type PersistedSlice = Pick<
   BrowserState,
   "tabs" | "activeId" | "prefs" | "links" | "closedTabs" | "bookmarks"
->;
+> &
+  Partial<Pick<BrowserState, "groups" | "workspaces" | "split">>;
 
 export function snapshotOf(state: PersistedSlice): Snapshot {
   const tabs = state.tabs.filter((tab) => !tab.private).map(({ private: _private, ...tab }) => tab);
@@ -165,6 +242,12 @@ export function snapshotOf(state: PersistedSlice): Snapshot {
     session: {
       tabs,
       activeId: tabs.some((tab) => tab.id === state.activeId) ? state.activeId : null,
+      groups: state.groups ?? [],
+      workspaces: state.workspaces ?? [],
+      split:
+        state.split && state.split.ids.every((id) => tabs.some((tab) => tab.id === id))
+          ? state.split
+          : null,
     },
     links: state.links,
     closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
@@ -181,6 +264,9 @@ export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | nu
     links: snapshot.links,
     closedTabs: snapshot.closedTabs,
     bookmarks: snapshot.bookmarks,
+    groups: snapshot.session.groups ?? [],
+    workspaces: snapshot.session.workspaces ?? [],
+    split: snapshot.session.split ?? null,
   };
 }
 
@@ -223,7 +309,7 @@ export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
       pausedHosts: readJson(storage, "agzos-paused-hosts"),
     }),
     // A 1.3 abria sempre na primeira aba.
-    session: { tabs, activeId: tabs[0]?.id ?? null },
+    session: { tabs, activeId: tabs[0]?.id ?? null, groups: [], workspaces: [], split: null },
     links: parseLinks(readJson(storage, "agzos-links")),
     // A 1.3 empilhava no fim e reabria o último.
     closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),

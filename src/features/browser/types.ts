@@ -8,7 +8,35 @@ export type Tab = {
   private?: boolean | undefined;
   muted?: boolean | undefined;
   favicon?: string | undefined;
+  /** Grupo de guias (2.0). */
+  groupId?: number | undefined;
+  /** Workspace da guia (2.0); sem valor = o workspace padrão. */
+  workspaceId?: number | undefined;
 };
+
+export const TAB_GROUP_COLORS = [
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+  "orange",
+] as const;
+export type TabGroupColor = (typeof TAB_GROUP_COLORS)[number];
+/** Grupo de guias, como no Chrome: nome, cor e recolhido. As guias apontam para ele. */
+export type TabGroup = {
+  id: number;
+  title: string;
+  color: TabGroupColor;
+  collapsed?: boolean | undefined;
+};
+/** Workspace (como no Opera/Vivaldi): um conjunto de guias com nome e ícone. */
+export type Workspace = { id: number; name: string; icon: string };
+/** Tela dividida: duas guias lado a lado; `ratio` é a largura da primeira (0–1). */
+export type SplitView = { ids: [number, number]; ratio: number };
 export type ClosedTab = { title: string; url: string };
 export type TabOrientation = "horizontal" | "vertical";
 export type Credential = { domain: string; user: string; password: string };

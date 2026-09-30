@@ -11,8 +11,11 @@ import type {
   EngineId,
   Entry,
   QuickLink,
+  SplitView,
   Tab,
+  TabGroup,
   TabOrientation,
+  Workspace,
 } from "../types";
 
 export const HOME_URL = "agzos://inicio";
@@ -21,6 +24,11 @@ export const BOOKMARKS_URL = "agzos://favoritos";
 export const SETTINGS_URL = "agzos://configuracoes";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
+/** Workspace de toda guia sem `workspaceId` (o primeiro, que não pode ser apagado). */
+export const DEFAULT_WORKSPACE_ID = 1;
+export const defaultWorkspaces: Workspace[] = [
+  { id: DEFAULT_WORKSPACE_ID, name: "Pessoal", icon: "🏠" },
+];
 
 export const defaultLinks: QuickLink[] = [
   { name: "GitHub", url: "github.com" },
@@ -72,6 +80,13 @@ export type BrowserState = {
   // Persistido (ver persistence/snapshot.ts).
   tabs: Tab[];
   activeId: number;
+  /** Grupos de guias (2.0). */
+  groups: TabGroup[];
+  /** Workspaces (2.0): a barra mostra só as guias do ativo. */
+  workspaces: Workspace[];
+  activeWorkspaceId: number;
+  /** Tela dividida (2.0): aparece quando a guia ativa é uma das duas. */
+  split: SplitView | null;
   closedTabs: ClosedTab[];
   links: QuickLink[];
   bookmarks: BookmarkNode[];
@@ -111,11 +126,17 @@ export type BrowserState = {
   switcher: { ids: number[]; index: number } | null;
   /** Miniatura (data URL) da última vez que cada aba esteve visível (desktop). */
   thumbnails: Record<number, string>;
+  /** Última guia ativa de cada workspace (voltar a ele reabre nela). */
+  workspaceActive: Record<number, number>;
 };
 
 export const initialState: BrowserState = {
   tabs: [{ id: 1, history: [homeEntry], index: 0 }],
   activeId: 1,
+  groups: [],
+  workspaces: defaultWorkspaces,
+  activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+  split: null,
   closedTabs: [],
   links: defaultLinks,
   bookmarks: [],
@@ -143,4 +164,5 @@ export const initialState: BrowserState = {
   recent: [1],
   switcher: null,
   thumbnails: {},
+  workspaceActive: {},
 };

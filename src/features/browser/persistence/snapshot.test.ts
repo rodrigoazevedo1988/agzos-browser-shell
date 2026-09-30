@@ -89,6 +89,9 @@ describe("snapshot", () => {
           { id: 7, history: [{ title: "f", url: "https://f.com", kind: "page" }], index: 0 },
         ],
         activeId: null,
+        groups: [],
+        workspaces: [],
+        split: null,
       },
       links: null,
       closedTabs: [{ title: "a", url: "https://a.com" }],
@@ -111,7 +114,45 @@ describe("snapshot", () => {
       links: null,
       closedTabs: [],
       bookmarks: null,
+      groups: [],
+      workspaces: [],
+      split: null,
     });
+  });
+
+  it("2.0: grupos, workspaces e tela dividida vão e voltam; lixo é descartado", () => {
+    const parsed = parseSnapshot({
+      version: 1,
+      session: {
+        tabs: [
+          {
+            id: 1,
+            history: [{ title: "a", url: "https://a.com", kind: "page" }],
+            index: 0,
+            groupId: 3,
+            workspaceId: 2,
+          },
+        ],
+        activeId: 1,
+        groups: [
+          { id: 3, title: "Trabalho", color: "blue" },
+          { id: "x" },
+          { id: 4, color: "neon" },
+        ],
+        workspaces: [
+          { id: 2, name: "Estudos", icon: "📚" },
+          { id: 5, name: "  " },
+        ],
+        split: { ids: [1, 1], ratio: 0.5 },
+      },
+    })!;
+    expect(parsed.session.tabs[0]).toMatchObject({ groupId: 3, workspaceId: 2 });
+    expect(parsed.session.groups).toEqual([
+      { id: 3, title: "Trabalho", color: "blue" },
+      { id: 4, title: "", color: "grey" },
+    ]);
+    expect(parsed.session.workspaces).toEqual([{ id: 2, name: "Estudos", icon: "📚" }]);
+    expect(parsed.session.split).toBeNull();
   });
 });
 
@@ -147,7 +188,13 @@ describe("migração da 1.3", () => {
         hibernate: true,
         hibernateMinutes: 30,
       },
-      session: { tabs: legacyTabs, activeId: 1727000000000 },
+      session: {
+        tabs: legacyTabs,
+        activeId: 1727000000000,
+        groups: [],
+        workspaces: [],
+        split: null,
+      },
       links: [{ name: "Meu", url: "meu.dev" }],
       closedTabs: [{ title: "Velha", url: "https://velha.com" }],
       bookmarks: null,
