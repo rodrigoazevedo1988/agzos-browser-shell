@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 import { TAB_GROUP_COLORS, type TabGroup, type TabGroupColor } from "../types";
-import { GROUP_COLORS } from "./tab-list";
+import { GROUP_COLORS } from "./group-colors";
 
 const COLOR_NAMES: Record<TabGroupColor, string> = {
   grey: "Cinza",

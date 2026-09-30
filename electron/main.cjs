@@ -466,10 +466,22 @@ function fullRect(ctx) {
   return { x: 0, y: 0, width, height };
 }
 
+/** Guias à vista na janela: a ativa, ou as duas da tela dividida (2.0). */
+function paneIds(ctx) {
+  if (ctx.split && ctx.split.includes(ctx.activeTabId)) return ctx.split;
+  return ctx.activeTabId === null ? [] : [ctx.activeTabId];
+}
+
+/** Área da guia na janela: a do pane dela na tela dividida, senão a da guia ativa. */
+function rectOf(ctx, id) {
+  if (ctx.split && ctx.split.includes(ctx.activeTabId)) return ctx.paneRects.get(id) ?? null;
+  return ctx.lastRect;
+}
+
 /** A guia aparece por cima da casca (sem painel, tela de erro, crash ou login recusado). */
 function isShown(ctx, id) {
   return (
-    id === ctx.activeTabId &&
+    paneIds(ctx).includes(id) &&
     !ctx.panelOpen &&
     !ctx.crashed.has(id) &&
     !ctx.rejected.has(id) &&
@@ -480,13 +492,25 @@ function isShown(ctx, id) {
 function applyLayout(ctx) {
   if (ctx.fullscreenActive || ctx.window.isDestroyed()) return;
   const now = Date.now();
+  const panes = paneIds(ctx);
   for (const [id, entry] of ctx.views) {
-    const shown = isShown(ctx, id);
-    entry.view.setBounds(shown && ctx.lastRect ? ctx.lastRect : HIDDEN_RECT);
-    // Hibernação conta o tempo desde que a guia deixou de ser a ativa.
-    if (id === ctx.activeTabId) entry.hiddenSince = null;
+    const rect = isShown(ctx, id) ? rectOf(ctx, id) : null;
+    entry.view.setBounds(rect ?? HIDDEN_RECT);
+    // Hibernação conta o tempo desde que a guia deixou de estar à vista.
+    if (panes.includes(id)) entry.hiddenSince = null;
     else entry.hiddenSince ??= now;
   }
+}
+
+/** Guia à vista cujo pane contém o ponto (coordenadas da janela). */
+function paneAt(ctx, point) {
+  for (const id of paneIds(ctx)) {
+    if (!isShown(ctx, id)) continue;
+    const contents = tabContents(ctx, id);
+    const inside = contents && pagePoint(rectOf(ctx, id), point);
+    if (inside) return { id, contents, point: inside };
+  }
+  return null;
 }
 
 function notifyTabState(contents) {
@@ -1080,7 +1104,7 @@ function isVisible(contents) {
   const where = tabOfContents.get(contents.id);
   if (!where || contents.isDestroyed()) return false;
   const { ctx, id } = where;
-  return isShown(ctx, id) && !ctx.fullscreenActive && ctx.lastRect !== null;
+  return isShown(ctx, id) && !ctx.fullscreenActive && rectOf(ctx, id) !== null;
 }
 
 /** `leaving`: a aba está saindo de cena; o pedido sai antes de ela ser escondida. */
@@ -1352,6 +1376,12 @@ function wireView(view) {
     if (details.isMainFrame) ensureScriptlets(contents, details.url, "early");
   });
   contents.on("did-finish-load", () => ensureScriptlets(contents, contents.getURL(), "settled"));
+  // Tela dividida (2.0): clicar na página do outro pane faz dela a guia ativa.
+  contents.on("focus", () => {
+    const where = tabOfContents.get(contents.id);
+    if (!where || where.id === where.ctx.activeTabId) return;
+    if (where.ctx.split?.includes(where.id)) emitTab(contents, { type: "focused" });
+  });
   contents.on("dom-ready", () => void applyCosmetics(contents, true));
   contents.on("did-finish-load", () => void applyCosmetics(contents, false));
   contents.on("found-in-page", (_event, result) => {
@@ -1520,6 +1550,9 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     views: new Map(),
     activeTabId: null,
     lastRect: null,
+    // Tela dividida (2.0): as duas guias e a área de cada pane.
+    split: null,
+    paneRects: new Map(),
     panelOpen: false,
     fullscreenActive: false,
     crashed: new Set(),
@@ -1706,12 +1739,12 @@ async function hasEditedForm(contents) {
  */
 async function hibernateTab(ctx, id, { force = false } = {}) {
   const entry = ctx.views.get(id);
-  if (!entry || id === ctx.activeTabId) return false;
+  if (!entry || paneIds(ctx).includes(id)) return false;
   const contents = entry.view.webContents;
   if (contents.isDestroyed()) return false;
   if (!force && (await hasEditedForm(contents))) return false;
   // A guia pode ter sido ativada, fechada ou movida enquanto a página respondia.
-  if (ctx.views.get(id) !== entry || id === ctx.activeTabId || contents.isDestroyed()) {
+  if (ctx.views.get(id) !== entry || paneIds(ctx).includes(id) || contents.isDestroyed()) {
     return false;
   }
   let history = null;
@@ -1739,7 +1772,7 @@ async function checkHibernation() {
         const contents = entry.view.webContents;
         if (contents.isDestroyed()) continue;
         const candidate = {
-          visible: id === ctx.activeTabId,
+          visible: paneIds(ctx).includes(id),
           hiddenSince: entry.hiddenSince,
           audible: contents.isCurrentlyAudible(),
           loading: contents.isLoading(),
@@ -2176,12 +2209,10 @@ function clickTarget(ctx, payload) {
   const x = Number(payload?.x);
   const y = Number(payload?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const id = ctx.activeTabId;
-  const tab = id !== null && isShown(ctx, id) ? tabContents(ctx, id) : null;
-  const inPage = tab ? pagePoint(ctx.lastRect, { x, y }) : null;
-  const target = inPage ? tab : ctx.window.webContents;
-  const point = inPage ?? { x: Math.round(x), y: Math.round(y) };
-  return { target, point, where: inPage ? "page" : "shell" };
+  const pane = paneAt(ctx, { x, y });
+  const target = pane ? pane.contents : ctx.window.webContents;
+  const point = pane?.point ?? { x: Math.round(x), y: Math.round(y) };
+  return { target, point, where: pane ? "page" : "shell" };
 }
 
 function clickThrough({ target, point }, button) {
@@ -2231,6 +2262,8 @@ function registerIpc() {
     tabOfContents.set(view.webContents.id, { ctx, id });
     ctx.window.contentView.addChildView(view);
     raisePanelLayer(ctx);
+    // Guia nova já na posição dela (na tela dividida o outro pane não passa por activate).
+    applyLayout(ctx);
     wirePermissions(view.webContents.session);
     wireView(view);
     const history = ctx.hibernated.get(id);
@@ -2279,10 +2312,31 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("tab:bounds", (event, rect) => {
+  // Área da página na janela. Com `id` (2.0), a do pane daquela guia na tela dividida.
+  ipcMain.handle("tab:bounds", (event, rect, id) => {
     const ctx = ctxOfEvent(event);
     if (!ctx || ctx.fullscreenActive) return;
-    if (rect && rect.width > 0 && rect.height > 0) ctx.lastRect = rect;
+    if (rect && rect.width > 0 && rect.height > 0) {
+      if (Number.isSafeInteger(id)) ctx.paneRects.set(id, rect);
+      // Fora da tela dividida vale a área de sempre (a guia pode estar virando a ativa).
+      if (!Number.isSafeInteger(id) || !ctx.split || id === ctx.activeTabId) ctx.lastRect = rect;
+    }
+    applyLayout(ctx);
+  });
+
+  // Tela dividida (2.0): as duas guias à vista, ou null.
+  ipcMain.handle("tab:split", (event, ids) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    const valid =
+      Array.isArray(ids) &&
+      ids.length === 2 &&
+      ids.every(Number.isSafeInteger) &&
+      ids[0] !== ids[1];
+    ctx.split = valid ? [ids[0], ids[1]] : null;
+    for (const key of [...ctx.paneRects.keys()]) {
+      if (!ctx.split?.includes(key)) ctx.paneRects.delete(key);
+    }
     applyLayout(ctx);
   });
 
@@ -2562,10 +2616,11 @@ function registerIpc() {
   // Rolagem fora do painel: vai para a página por baixo.
   ipcMain.on("overlay:wheel", (event, payload) => {
     const ctx = overlayOfEvent(event);
-    if (!ctx || ctx.activeTabId === null || !isShown(ctx, ctx.activeTabId)) return;
-    const contents = tabContents(ctx, ctx.activeTabId);
-    const input = contents && wheelEvent(ctx.lastRect, payload);
-    if (input) contents.sendInputEvent(input);
+    if (!ctx) return;
+    const pane = paneAt(ctx, payload ?? {});
+    if (!pane) return;
+    const input = wheelEvent(rectOf(ctx, pane.id), payload);
+    if (input) pane.contents.sendInputEvent(input);
   });
 
   ipcMain.handle("switcher:state", (event, { open }) => {

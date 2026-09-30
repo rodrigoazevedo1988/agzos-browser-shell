@@ -3908,3 +3908,48 @@ button.download-name:hover {
 .group-actions button.danger {
   color: var(--primary);
 }
+
+/* Tela dividida (2.0): dois panes lado a lado e a divisória arrastável entre eles. */
+.split-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+}
+.split-pane {
+  position: relative;
+  flex-basis: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 2px solid transparent;
+}
+.split-pane.active {
+  border-top-color: var(--primary);
+}
+.split-pane > * {
+  flex: 1;
+  min-height: 0;
+}
+.split-divider {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  background: var(--secondary);
+  position: relative;
+  touch-action: none;
+}
+.split-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--border);
+  transform: translate(-50%, -50%);
+}
+.split-divider:hover::after {
+  background: var(--primary);
+}

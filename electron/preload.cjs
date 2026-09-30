@@ -11,7 +11,8 @@ function subscribe(channel) {
 contextBridge.exposeInMainWorld("agzosDesktop", {
   attachTab: (id, url, options) => ipcRenderer.invoke("tab:attach", { id, url, options }),
   activateTab: (id) => ipcRenderer.invoke("tab:activate", { id }),
-  setBounds: (rect) => ipcRenderer.invoke("tab:bounds", rect),
+  setBounds: (rect, id) => ipcRenderer.invoke("tab:bounds", rect, id),
+  setSplit: (ids) => ipcRenderer.invoke("tab:split", ids),
   navigate: (id, url) => ipcRenderer.invoke("tab:navigate", { id, url }),
   goBack: (id) => ipcRenderer.invoke("tab:back", { id }),
   goForward: (id) => ipcRenderer.invoke("tab:forward", { id }),

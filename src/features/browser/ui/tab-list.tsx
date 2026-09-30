@@ -13,7 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import type { Tab, TabGroup, TabGroupColor } from "../types";
+import type { Tab, TabGroup } from "../types";
+import { GROUP_COLORS } from "./group-colors";
 import { TabItem, type TabHandlers } from "./tab-item";
 
 type ListProps = {
@@ -37,19 +38,6 @@ type ListProps = {
   onGroupMenu?: (event: MouseEvent, group: TabGroup) => void;
   /** Botão do workspace, no começo da barra. */
   leading?: ReactNode;
-};
-
-/** Cores dos grupos (as mesmas nomes do Chrome). */
-export const GROUP_COLORS: Record<TabGroupColor, string> = {
-  grey: "#8a8f98",
-  blue: "#3b82f6",
-  red: "#ef4444",
-  yellow: "#eab308",
-  green: "#22c55e",
-  pink: "#ec4899",
-  purple: "#a855f7",
-  cyan: "#06b6d4",
-  orange: "#f97316",
 };
 
 const DRAG_THRESHOLD = 6;

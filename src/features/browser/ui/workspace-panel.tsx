@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import type { Workspace } from "../types";
 
 /** Ícones sugeridos para um workspace novo (qualquer emoji serve). */
-export const WORKSPACE_ICONS = ["🏠", "💼", "📚", "🎮", "🛒", "🎵", "✈️", "💡", "🧪", "❤️"];
+const WORKSPACE_ICONS = ["🏠", "💼", "📚", "🎮", "🛒", "🎵", "✈️", "💡", "🧪", "❤️"];
 
 /** Botão do workspace atual, no começo da barra de guias. */
 export function WorkspaceButton({

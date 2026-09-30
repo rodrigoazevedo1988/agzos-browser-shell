@@ -1358,16 +1358,16 @@ export function AgzosBrowser() {
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
-              internal={
-                current.url === HISTORY_URL ? (
+              internal={(pageUrl) =>
+                pageUrl === HISTORY_URL ? (
                   <HistoryPage store={historyStore} onOpen={openUrl} />
-                ) : current.url === BOOKMARKS_URL ? (
+                ) : pageUrl === BOOKMARKS_URL ? (
                   <BookmarksManager
                     nodes={state.bookmarks}
                     actions={bookmarkActions}
                     onOpen={openUrl}
                   />
-                ) : current.url === SETTINGS_URL ? (
+                ) : pageUrl === SETTINGS_URL ? (
                   <SettingsPage
                     prefs={prefs}
                     setPrefs={setPrefs}
@@ -1399,6 +1399,9 @@ export function AgzosBrowser() {
                 ) : null
               }
               errors={errorActions}
+              onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
+              onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
+              onCloseSplit={() => dispatch({ type: "split/close" })}
               onRecover={(id) => {
                 dispatch({ type: "view/recovered", id });
                 void desktop?.reload(id);

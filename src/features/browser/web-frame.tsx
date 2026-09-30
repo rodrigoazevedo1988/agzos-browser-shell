@@ -37,6 +37,8 @@ function NativeView({
   dark,
   privateTab,
   muted,
+  active,
+  pane,
 }: {
   tabId: number;
   url: string;
@@ -44,6 +46,9 @@ function NativeView({
   dark: boolean;
   privateTab: boolean;
   muted: boolean;
+  active: boolean;
+  /** Um dos lados da tela dividida: a área vai com o id da guia. */
+  pane: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const lastRequestedRef = useRef<string | null>(requestedUrl ?? url);
@@ -51,7 +56,8 @@ function NativeView({
 
   useEffect(() => {
     void bridge?.attachTab(tabId, url, { dark, private: privateTab });
-    void bridge?.activateTab(tabId);
+    // Na tela dividida, o outro lado aparece sem virar a guia ativa.
+    if (active) void bridge?.activateTab(tabId);
     void bridge?.muteTab(tabId, muted);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
@@ -72,12 +78,13 @@ function NativeView({
     if (!host || !bridge) return;
     const report = () => {
       const rect = host.getBoundingClientRect();
-      void bridge.setBounds({
+      const bounds = {
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
-      });
+      };
+      void (pane ? bridge.setBounds(bounds, tabId) : bridge.setBounds(bounds));
     };
     report();
     const observer = new ResizeObserver(report);
@@ -87,7 +94,7 @@ function NativeView({
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [bridge]);
+  }, [bridge, pane, tabId]);
 
   return <div ref={hostRef} className="web-frame native-view" />;
 }
@@ -100,6 +107,8 @@ export function WebFrame({
   dark,
   privateTab,
   muted,
+  active = true,
+  pane = false,
 }: {
   tabId: number;
   title: string;
@@ -108,6 +117,10 @@ export function WebFrame({
   dark: boolean;
   privateTab: boolean;
   muted: boolean;
+  /** Guia ativa (na tela dividida, só um dos lados). */
+  active?: boolean;
+  /** Um dos lados da tela dividida. */
+  pane?: boolean;
 }) {
   const [forced, setForced] = useState(false);
   const native = desktopBridge();
@@ -122,6 +135,8 @@ export function WebFrame({
         dark={dark}
         privateTab={privateTab}
         muted={muted}
+        active={active}
+        pane={pane}
       />
     );
   }
