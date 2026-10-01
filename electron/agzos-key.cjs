@@ -75,7 +75,14 @@ function aesGcmEncrypt(keyRaw, plaintext) {
 function deriveKey(password, meta) {
   // kdf argon2id não é suportado localmente; pbkdf2 cobre a maioria dos cofres.
   const key = pbkdf2Key(password, meta.salt);
-  const check = aesGcmDecrypt(key, meta.authCheckIv, meta.authCheckData);
+  // Senha errada quebra a autenticação do GCM (lança um erro cru do OpenSSL) OU, no
+  // limite, decifra para algo != AUTH_STRING. Nos dois casos é "senha mestra incorreta".
+  let check;
+  try {
+    check = aesGcmDecrypt(key, meta.authCheckIv, meta.authCheckData);
+  } catch {
+    throw new Error("invalid_master_password");
+  }
   if (check !== AUTH_STRING) throw new Error("invalid_master_password");
   return key;
 }
@@ -222,20 +229,32 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     };
   }
 
-  // Garante um authMeta atual (muda se o usuário trocar a senha mestra).
+  // Garante um authMeta atual (muda se o usuário trocar a senha mestra OU se outra conta
+  // estiver pareada agora). Sempre vem do servidor pelo token atual: é a fonte da verdade
+  // da conta pareada. Nunca reaproveita um authMeta velho — era isso que fazia a senha
+  // mestra certa de outra conta ser recusada (validada contra o auth-check da conta anterior).
   async function refreshStatus() {
     const token = store.loadToken();
     if (!token) throw new Error("not_paired");
     const res = await api("/api/integration/vault/status", undefined, token);
-    authMeta = res.authMeta ?? authMeta;
-    store.setMeta({ accountEmail: res.accountEmail ?? null });
-    return { hasVault: Boolean(res.hasVault), accountEmail: res.accountEmail ?? null };
+    const previousEmail = store.accountEmail();
+    const nextEmail = res.accountEmail ?? null;
+    // Trocou a conta pareada: descarta a chave/estado em memória da conta anterior.
+    if (previousEmail && nextEmail && previousEmail !== nextEmail) {
+      aesKey = null;
+      store.setSince(0);
+    }
+    authMeta = res.authMeta ?? null;
+    store.setMeta({ accountEmail: nextEmail });
+    return { hasVault: Boolean(res.hasVault), accountEmail: nextEmail };
   }
 
   // Desbloqueia com a senha mestra; valida pelo auth-check e deriva a chave AES.
+  // SEMPRE busca o auth-check atual do servidor antes de validar, para nunca checar a
+  // senha de uma conta contra o auth-check de outra que ficou em memória.
   async function unlock(masterPassword) {
     if (!store.loadToken()) throw new Error("not_paired");
-    if (!authMeta) await refreshStatus();
+    await refreshStatus();
     if (!authMeta) throw new Error("no_vault");
     aesKey = deriveKey(masterPassword, authMeta); // lança invalid_master_password
     return { unlocked: true };
