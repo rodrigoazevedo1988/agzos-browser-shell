@@ -24,6 +24,13 @@ type Options = {
     }) => void
   >;
   onPermission: (request: DesktopPermissionRequest) => void;
+  /** Login enviado numa página: a casca oferece salvar no Agzos Key. */
+  onLoginDetected: (payload: {
+    id: number;
+    url: string;
+    username: string;
+    password: string;
+  }) => void;
 };
 
 /**
@@ -39,9 +46,12 @@ export function useDesktopSync({
   runCommandRef,
   runHotkeyRef,
   onPermission,
+  onLoginDetected,
 }: Options) {
   const permissionRef = useRef(onPermission);
   permissionRef.current = onPermission;
+  const loginRef = useRef(onLoginDetected);
+  loginRef.current = onLoginDetected;
 
   useEffect(() => {
     if (!desktop) return;
@@ -110,6 +120,14 @@ export function useDesktopSync({
               type: "view/login-rejected",
               id: event.id,
               continueUrl: event.rejected ? event.continueUrl : null,
+            });
+            return;
+          case "login-detected":
+            loginRef.current({
+              id: event.id,
+              url: event.url,
+              username: event.username,
+              password: event.password,
             });
             return;
         }

@@ -2,26 +2,55 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DesktopBridge, KeyResult } from "../desktop";
 import type { KeyState, VaultEntry } from "../types";
-import { defaultCredentials } from "./use-credentials";
+import { defaultCredentials, defaultVaultEntries } from "./use-credentials";
 
 const WEB_KEY = "agzos-credentials";
+const WEB_ENTRIES_KEY = "agzos-vault-entries";
 
 /** Credencial mocada da web -> VaultEntry (o painel trabalha só com VaultEntry). */
 function credentialToEntry(domain: string, user: string, password: string): VaultEntry {
   return {
     id: `web-${domain}`,
+    type: "login",
     title: domain,
     url: `https://${domain}`,
     username: user,
     password,
-    category: "Login",
+    category: "Pessoal",
     updatedAt: Date.now(),
   };
 }
 
+/** Entrada que ao menos tem id e título (defende contra JSON corrompido). */
+function isVaultEntry(value: unknown): value is VaultEntry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { title?: unknown }).title === "string"
+  );
+}
+
 function readWebEntries(): VaultEntry[] {
+  // Formato novo (2.2): VaultEntry completo (categoria, TOTP, pasta…).
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(WEB_KEY) ?? "null") as unknown;
+    const parsed = JSON.parse(window.localStorage.getItem(WEB_ENTRIES_KEY) ?? "null") as unknown;
+    if (Array.isArray(parsed)) {
+      const entries = parsed.filter(isVaultEntry).map((entry) => ({
+        ...entry,
+        category: entry.category || "Pessoal",
+      }));
+      if (entries.length > 0) return entries;
+    }
+  } catch {
+    /* cai no formato antigo abaixo */
+  }
+  // Formato antigo (lista domain/user/password) ou os mocados de demonstração.
+  try {
+    const legacy = window.localStorage.getItem(WEB_KEY);
+    // Primeiríssimo uso (sem nada salvo): entradas ricas (categorias + MFA de exemplo).
+    if (legacy === null) return defaultVaultEntries;
+    const parsed = JSON.parse(legacy ?? "null") as unknown;
     const list = Array.isArray(parsed) ? parsed : defaultCredentials;
     return list
       .filter(
@@ -32,17 +61,19 @@ function readWebEntries(): VaultEntry[] {
       )
       .map((item) => credentialToEntry(item.domain, item.user, item.password));
   } catch {
-    return defaultCredentials.map((c) => credentialToEntry(c.domain, c.user, c.password));
+    return defaultVaultEntries;
   }
 }
 
 function writeWebEntries(entries: VaultEntry[]) {
-  const list = entries.map((entry) => ({
+  // Guarda o VaultEntry completo e mantém a chave legada para retrocompatibilidade.
+  window.localStorage.setItem(WEB_ENTRIES_KEY, JSON.stringify(entries));
+  const legacy = entries.map((entry) => ({
     domain: entry.title || entry.url || "",
     user: entry.username ?? "",
     password: entry.password ?? "",
   }));
-  window.localStorage.setItem(WEB_KEY, JSON.stringify(list));
+  window.localStorage.setItem(WEB_KEY, JSON.stringify(legacy));
 }
 
 export type VaultController = {

@@ -19,6 +19,8 @@ import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
+import { AutofillPopup } from "@/features/key/autofill-popup";
+import { SavePrompt, type SaveCandidate } from "@/features/key/save-prompt";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { type AppMenuAction } from "@/features/settings/menu";
 import { SettingsPage } from "@/features/settings/page";
@@ -50,6 +52,7 @@ import { defaultHistoryStore } from "./persistence/history-store";
 import { useVault } from "./persistence/use-vault";
 import { usePersistence } from "./persistence/use-persistence";
 import { browserReducer } from "./store/reducer";
+import { matchesForUrl } from "./vault";
 import {
   activeTabOf,
   currentBookmark,
@@ -124,6 +127,10 @@ export function AgzosBrowser() {
   const [loading, setLoading] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState<number | null>(null);
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
+  // Faixa "salvar no Agzos Key?" (login detectado numa página) e popup de autofill.
+  const [saveCandidate, setSaveCandidate] = useState<SaveCandidate | null>(null);
+  const [autofillOpen, setAutofillOpen] = useState(false);
+  const [autofillDismissed, setAutofillDismissed] = useState<string | null>(null);
   const [findFocus, setFindFocus] = useState(0);
   // O seletor só aparece se o Ctrl continuar pressionado: toque rápido troca sem piscar.
   const [switcherVisible, setSwitcherVisible] = useState(false);
@@ -201,6 +208,75 @@ export function AgzosBrowser() {
   const blockedCount = protectedNow ? (pageBlocked?.count ?? 0) : 0;
   const blockedToday = prefs.shield ? (state.adblock?.today ?? 0) : null;
   const downloadBatch = useMemo(() => batchProgress(state.downloads), [state.downloads]);
+
+  // Chave do site atual (host), para resetar o popup de autofill ao trocar de página.
+  const currentHostKey = hostOf(current.url) ?? current.url;
+
+  // Credenciais do cofre que servem para o site aberto (base do popup de autofill).
+  const vaultMatches = useMemo(
+    () =>
+      current.kind === "page" && vault.state.unlocked
+        ? matchesForUrl(vault.entries, current.url)
+        : [],
+    [current.kind, current.url, vault.entries, vault.state.unlocked],
+  );
+  // O popup some ao trocar de site e volta a poder aparecer no site novo.
+  useEffect(() => {
+    setAutofillOpen(false);
+  }, [currentHostKey]);
+  const canAutofill = vaultMatches.length > 0 && autofillDismissed !== currentHostKey;
+  // Mostra o popup uma vez quando o site aberto tem credencial (como o ícone de chave).
+  useEffect(() => {
+    if (vaultMatches.length > 0 && autofillDismissed !== currentHostKey) setAutofillOpen(true);
+  }, [currentHostKey, vaultMatches.length, autofillDismissed]);
+
+  // Login detectado numa página: oferecer salvar/atualizar no cofre (só se mudou algo).
+  const onLoginDetected = useCallback(
+    (payload: { id: number; url: string; username: string; password: string }) => {
+      if (!vault.state.unlocked) return;
+      const existing = matchesForUrl(vault.entries, payload.url).find(
+        (entry) => !payload.username || entry.username === payload.username,
+      );
+      if (existing && existing.password === payload.password) return; // nada mudou
+      setSaveCandidate({
+        url: payload.url,
+        username: payload.username,
+        password: payload.password,
+        update: Boolean(existing),
+      });
+    },
+    [vault.entries, vault.state.unlocked],
+  );
+
+  const saveDetectedCredential = useCallback(() => {
+    const candidate = saveCandidate;
+    if (!candidate) return;
+    const host = hostOf(candidate.url) ?? candidate.url;
+    const existing = matchesForUrl(vault.entries, candidate.url).find(
+      (entry) => !candidate.username || entry.username === candidate.username,
+    );
+    void vault.add({
+      ...existing,
+      id: existing?.id ?? crypto.randomUUID(),
+      type: "login",
+      title: existing?.title ?? host,
+      url: existing?.url ?? `https://${host}`,
+      username: candidate.username || existing?.username || "",
+      password: candidate.password,
+      category: existing?.category ?? "Pessoal",
+      passwordUpdatedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    setSaveCandidate(null);
+  }, [saveCandidate, vault]);
+
+  const fillCredential = useCallback(
+    (entry: { username?: string; password?: string }) => {
+      if (desktop) void desktop.autofill(activeTab.id, entry.username ?? "", entry.password ?? "");
+      setAutofillOpen(false);
+    },
+    [desktop, activeTab.id],
+  );
 
   const setPrefs = useCallback(
     (patch: Partial<Prefs>) => dispatch({ type: "prefs/set", patch }),
@@ -1284,6 +1360,7 @@ export function AgzosBrowser() {
     runCommandRef,
     runHotkeyRef,
     onPermission: setPermission,
+    onLoginDetected,
   });
 
   return (
@@ -1384,6 +1461,30 @@ export function AgzosBrowser() {
         )}
 
         {/* Faixa abaixo da barra de endereço (a página nativa cobriria algo flutuando). */}
+        {saveCandidate && (
+          <SavePrompt
+            candidate={saveCandidate}
+            onSave={saveDetectedCredential}
+            onDismiss={() => setSaveCandidate(null)}
+          />
+        )}
+        {canAutofill && autofillOpen && (
+          <AutofillPopup
+            entries={vaultMatches}
+            copied={copied}
+            canFill={desktop !== null}
+            onCopy={(id, value) => void copyText(id, value)}
+            onFill={fillCredential}
+            onOpenVault={() => {
+              setAutofillOpen(false);
+              setPanel("key");
+            }}
+            onClose={() => {
+              setAutofillOpen(false);
+              setAutofillDismissed(currentHostKey);
+            }}
+          />
+        )}
         {permission && (
           <PermissionBar
             key={permission.id}
@@ -1460,6 +1561,15 @@ export function AgzosBrowser() {
               blockedToday={blockedToday}
               snapshot={viewHidden ? snapshot : null}
               desktop={desktop}
+              layoutSignature={[
+                prefs.bookmarksBar ? "b" : "",
+                permission ? "p" : "",
+                saveCandidate ? "sv" : "",
+                state.find && state.find.id === activeTab.id ? "f" : "",
+                startupInfo ? "s" : "",
+                state.unresponsive.includes(activeTab.id) ? "u" : "",
+                prefs.orientation,
+              ].join("|")}
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}

@@ -2081,6 +2081,7 @@ function hidePreview(ctx) {
 
 const logOverlay = overlayDebugger();
 const OVERLAY_PAGE = path.join(__dirname, "..", "dist", "overlay.html");
+const PAGE_PRELOAD = path.join(__dirname, "page-preload.cjs");
 const OVERLAY_LOAD_TIMEOUT_MS = 10_000;
 const pendingOverlayCalls = new Map();
 let overlayCallSeq = 0;
@@ -2304,6 +2305,57 @@ function certificateKey(url, fingerprint) {
 const MAX_SESSION_BYTES = 2 * 1024 * 1024;
 
 function registerIpc() {
+  // Login enviado numa página (detectado pelo page-preload.cjs): acha a janela/guia dona
+  // pela webContents que mandou e repassa para a casca oferecer salvar no Agzos Key.
+  ipcMain.on("agzos:page-login", (event, payload) => {
+    const where = tabOfContents.get(event.sender.id);
+    if (!where || !payload || typeof payload.password !== "string" || !payload.password) return;
+    const { ctx, id } = where;
+    send(ctx, "agzos:tab-event", {
+      type: "login-detected",
+      id,
+      url: typeof payload.url === "string" ? payload.url : "",
+      username: typeof payload.username === "string" ? payload.username : "",
+      password: payload.password,
+    });
+  });
+
+  // Autofill: a casca pede para preencher usuário/senha na guia; o main injeta nos campos.
+  ipcMain.handle("tab:autofill", (event, { id, username, password } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed()) return { ok: false };
+    const payload = JSON.stringify({ username: username ?? "", password: password ?? "" });
+    // Preenche o 1º campo de senha e o melhor palpite de usuário, disparando os eventos
+    // que os frameworks (React/Vue) escutam. Nenhuma credencial fica na página além disso.
+    const script = `(() => {
+      const data = ${payload};
+      const forms = Array.from(document.querySelectorAll('form'));
+      const pass = document.querySelector('input[type=password]');
+      const form = (pass && pass.form) || forms[0] || document;
+      const set = (el, value) => {
+        if (!el) return;
+        const proto = Object.getPrototypeOf(el);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (setter && setter.set) setter.set.call(el, value); else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      if (data.password && pass) set(pass, data.password);
+      if (data.username) {
+        const inputs = Array.from(form.querySelectorAll('input'));
+        const user = inputs.find((i) => i.type === 'email')
+          || inputs.find((i) => /email|user|login|usuario/i.test((i.name||'')+(i.id||'')+(i.autocomplete||'')))
+          || inputs.find((i) => i.type === 'text');
+        set(user, data.username);
+      }
+      return true;
+    })()`;
+    return contents
+      .executeJavaScript(script, true)
+      .then(() => ({ ok: true }))
+      .catch(() => ({ ok: false }));
+  });
+
   ipcMain.handle("tab:attach", (event, { id, url, options }) => {
     const ctx = ctxOfEvent(event);
     if (!ctx || ctx.views.has(id)) return;
@@ -2311,6 +2363,7 @@ function registerIpc() {
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
+        preload: PAGE_PRELOAD,
         partition: options?.private ? PRIVATE_PARTITION : undefined,
       },
     });

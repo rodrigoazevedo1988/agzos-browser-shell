@@ -349,7 +349,7 @@ test("migra as chaves da 1.3 no primeiro load", async ({ page }) => {
   await expect(page.locator(".tabs-rail")).toBeVisible();
   await expect(page.locator(".tabs-rail .browser-tab").first()).toContainText("github.com");
   const keys = await page.evaluate(() => Object.keys(window.localStorage).sort());
-  expect(keys).toEqual(["agzos-credentials", "agzos-state"]);
+  expect(keys).toEqual(["agzos-credentials", "agzos-state", "agzos-vault-entries"]);
 });
 
 test("1.5: Ctrl+Tab alterna pela ordem de uso; Ctrl+PgDn/1/9 pela barra", async ({ page }) => {

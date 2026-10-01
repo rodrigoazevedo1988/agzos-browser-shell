@@ -31,6 +31,7 @@ export function Viewport({
   blockedToday,
   snapshot,
   desktop,
+  layoutSignature = "",
   onOpen,
   onAddLink,
   onRemoveLink,
@@ -51,6 +52,8 @@ export function Viewport({
   /** Foto da página enquanto o WebContentsView está escondido (painel aberto). */
   snapshot: string | null;
   desktop: DesktopBridge | null;
+  /** Muda quando as faixas acima da página (favoritos, permissão, aviso) entram/saem. */
+  layoutSignature?: string;
   onOpen: (value: string) => void;
   onAddLink: (link: QuickLink) => void;
   onRemoveLink: (url: string) => void;
@@ -137,6 +140,7 @@ export function Viewport({
         muted={Boolean(paneTab.muted)}
         active={active}
         pane={pane}
+        layout={layoutSignature}
       />
     );
   };

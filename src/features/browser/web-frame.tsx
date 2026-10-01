@@ -39,6 +39,7 @@ function NativeView({
   muted,
   active,
   pane,
+  layout,
 }: {
   tabId: number;
   url: string;
@@ -49,6 +50,12 @@ function NativeView({
   active: boolean;
   /** Um dos lados da tela dividida: a área vai com o id da guia. */
   pane: boolean;
+  /**
+   * Muda quando algo acima da página (barra de favoritos, faixas de aviso) entra ou sai:
+   * o host se move na vertical sem mudar de tamanho, então o ResizeObserver não dispara e
+   * a view nativa cobriria a barra. Remedir ao mudar resolve a posição da casca inteira.
+   */
+  layout: string;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const lastRequestedRef = useRef<string | null>(requestedUrl ?? url);
@@ -94,7 +101,7 @@ function NativeView({
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [bridge, pane, tabId]);
+  }, [bridge, pane, tabId, layout]);
 
   return <div ref={hostRef} className="web-frame native-view" />;
 }
@@ -109,6 +116,7 @@ export function WebFrame({
   muted,
   active = true,
   pane = false,
+  layout = "",
 }: {
   tabId: number;
   title: string;
@@ -121,6 +129,8 @@ export function WebFrame({
   active?: boolean;
   /** Um dos lados da tela dividida. */
   pane?: boolean;
+  /** Assinatura do layout da casca (barra de favoritos, faixas); remede a view ao mudar. */
+  layout?: string;
 }) {
   const [forced, setForced] = useState(false);
   const native = desktopBridge();
@@ -137,6 +147,7 @@ export function WebFrame({
         muted={muted}
         active={active}
         pane={pane}
+        layout={layout}
       />
     );
   }

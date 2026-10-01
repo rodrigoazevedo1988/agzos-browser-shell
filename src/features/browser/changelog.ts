@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.0",
+    date: "2026-10-01",
+    items: [
+      "Senhas como nos navegadores principais: ao digitar um login e senha num site, o navegador pergunta se quer salvar no Agzos Key e sincroniza com o seu cofre cifrado.",
+      "Autofill: quando o site aberto tem uma credencial no cofre, sobe um popup para copiar e-mail e senha ou preencher e entrar com um clique.",
+      "MFA no navegador: as credenciais com verificação em duas etapas mostram o código TOTP atual (com contagem regressiva) e copiam na hora, igual ao Agzos Key.",
+      "Cofre organizado por categorias (Pessoal, Trabalho, Finanças…): crie as suas, filtre por categoria e recolha os grupos; cada credencial agora tem favorito, categoria e chave MFA no cadastro.",
+      "Barra de favoritos sempre acima da página: antes ela sumia atrás do site quando você saía da aba inicial — corrigido na web e no app.",
+    ],
+  },
+  {
     version: "2.1.0",
     date: "2026-10-01",
     items: [

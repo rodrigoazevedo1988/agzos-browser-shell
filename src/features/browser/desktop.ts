@@ -62,6 +62,8 @@ export type DesktopTabEvent =
   | { type: "download-navigation"; id: number; urls: string[] }
   | { type: "thumbnail"; id: number; dataUrl: string }
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
+  /** Login enviado numa página (page-preload): oferecer salvar no Agzos Key. */
+  | { type: "login-detected"; id: number; url: string; username: string; password: string }
   /** Tela dividida: o usuário clicou na página do outro pane. */
   | { type: "focused"; id: number };
 
@@ -210,6 +212,8 @@ export type DesktopBridge = {
   agzosKeySave(entry: VaultEntry): Promise<KeyResult<{ ok: boolean; id: string }>>;
   agzosKeyRemove(id: string): Promise<KeyResult<{ ok: boolean }>>;
   agzosKeyUnpair(): Promise<KeyResult<{ ok: boolean }>>;
+  /** Preenche usuário/senha nos campos de login da guia (autofill do cofre). */
+  autofill(id: number, username: string, password: string): Promise<{ ok: boolean }>;
   openExternal(url: string): Promise<void>;
   permissionsList(): Promise<SitePermission[]>;
   /** value null volta para "perguntar". */

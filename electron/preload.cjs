@@ -62,6 +62,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   agzosKeySave: (entry) => ipcRenderer.invoke("agzosKey:save", entry),
   agzosKeyRemove: (id) => ipcRenderer.invoke("agzosKey:remove", { id }),
   agzosKeyUnpair: () => ipcRenderer.invoke("agzosKey:unpair"),
+  autofill: (id, username, password) =>
+    ipcRenderer.invoke("tab:autofill", { id, username, password }),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   permissionsList: () => ipcRenderer.invoke("permissions:list"),
   permissionsSet: (origin, type, value) =>
