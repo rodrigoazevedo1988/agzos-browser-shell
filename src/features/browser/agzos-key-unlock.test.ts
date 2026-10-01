@@ -21,6 +21,7 @@ const keyModule = require(path.join(electronDir, "agzos-key.cjs")) as {
   };
   _internals: {
     pbkdf2Key: (p: string, s: string, iters?: number, hash?: string) => Buffer;
+    argon2idKey: (p: string, meta: Record<string, unknown>) => Buffer;
     aesGcmEncrypt: (key: Buffer, text: string) => { iv: string; data: string };
   };
 };
@@ -44,6 +45,20 @@ function authCheck(password: string, iterations?: number) {
   return { meta, key };
 }
 
+/** Auth-check de uma conta com KDF Argon2id (parâmetros pequenos para o teste ser rápido). */
+function authCheckArgon(password: string) {
+  const salt = crypto.randomBytes(16).toString("base64");
+  const meta: Record<string, unknown> = { kdf: "argon2id", salt, t: 2, m: 256, p: 1 };
+  const key = _internals.argon2idKey(password, meta);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const enc = Buffer.concat([cipher.update(AUTH_STRING, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  meta["authCheckIv"] = iv.toString("base64");
+  meta["authCheckData"] = Buffer.concat([enc, tag]).toString("base64");
+  return { meta, key };
+}
+
 /** Entrada cifrada para o servidor devolver no sync (igual ao formato do cofre). */
 function encEntry(key: Buffer, entry: Record<string, unknown>) {
   const { iv, data } = _internals.aesGcmEncrypt(key, JSON.stringify(entry));
@@ -61,6 +76,7 @@ type Account = {
 const voceAuth = authCheck("senha-da-voce");
 const arnaldoAuth = authCheck("senha-do-arnaldo");
 const novaAuth = authCheck("senha-nova", 310_000); // conta com iterações diferentes
+const argonAuth = authCheckArgon("senha-argon"); // conta com KDF Argon2id
 
 // Cada conta tem sua senha, seu auth-check e suas credenciais cifradas.
 const ACCOUNTS: Record<string, Account> = {
@@ -111,12 +127,29 @@ const ACCOUNTS: Record<string, Account> = {
     key: novaAuth.key,
     entries: [],
   },
+  "token-argon": {
+    email: "argon@agzos.com",
+    password: "senha-argon",
+    authMeta: argonAuth.meta,
+    key: argonAuth.key,
+    entries: [
+      {
+        id: "g1",
+        title: "proton.me",
+        username: "argon",
+        password: "z1",
+        category: "Pessoal",
+        updatedAt: 1,
+      },
+    ],
+  },
 };
 
 const TOKEN_OF: Record<string, string> = {
   VOCE: "token-voce",
   ARNALDO: "token-arnaldo",
   NOVA: "token-nova",
+  ARGON: "token-argon",
 };
 
 let server: http.Server;
@@ -224,6 +257,20 @@ describe("Agzos Key — desbloqueio por conta", () => {
     const client = freshClient();
     await client.pair("NOVA");
     await expect(client.unlock("senha-nova")).resolves.toEqual({ unlocked: true });
+  });
+
+  it("desbloqueia e lê o cofre de uma conta com KDF Argon2id", async () => {
+    const client = freshClient();
+    await client.pair("ARGON");
+    await expect(client.unlock("senha-argon")).resolves.toEqual({ unlocked: true });
+    const vault = await client.list();
+    expect(vault.entries.map((e) => e.id)).toEqual(["g1"]);
+  });
+
+  it("recusa a senha errada numa conta Argon2id", async () => {
+    const client = freshClient();
+    await client.pair("ARGON");
+    await expect(client.unlock("errada")).rejects.toThrow("invalid_master_password");
   });
 });
 

@@ -3,8 +3,9 @@ set -e
 
 VERSION="2.2.2"
 # Arquivos do processo principal que vão para resources/app/electron.
-# adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs)
+# adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
+# (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -123,4 +124,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Correções no Agzos Key: as credenciais sincronizadas não somem mais depois de entrar (o cofre inteiro é recarregado a cada abertura) e o desbloqueio respeita a proteção de cada conta, então a senha mestra correta não é mais recusada."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Correções no Agzos Key: as credenciais sincronizadas não somem mais depois de entrar (o cofre inteiro é recarregado a cada abertura) e o desbloqueio respeita a proteção de cada conta (PBKDF2 ou Argon2id, com os parâmetros do próprio cofre), então a senha mestra correta não é mais recusada."
