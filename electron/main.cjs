@@ -31,6 +31,7 @@ const {
   AUTO_ALLOWED,
 } = require("./permissions.cjs");
 const { fetchSuggestions } = require("./suggest.cjs");
+const { createAgzosKey } = require("./agzos-key.cjs");
 const { createUpdater, compareVersions, DEFAULT_FEED } = require("./updater.cjs");
 const {
   createWindowStore,
@@ -2895,6 +2896,33 @@ function registerIpc() {
   ipcMain.handle("shell:openExternal", (_event, url) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
+
+  // --- Agzos Key: integração com o cofre de senhas (pareamento, unlock, sync) ---
+  let agzosKey = null;
+  const key = () => {
+    if (!agzosKey) agzosKey = createAgzosKey({ userDataDir: app.getPath("userData"), safeStorage });
+    return agzosKey;
+  };
+  // Envolve as chamadas: devolve { ok, error } em vez de rejeitar o IPC, para o renderer
+  // tratar o erro (ex.: senha mestra errada) sem derrubar nada.
+  const keyCall = (fn) =>
+    Promise.resolve()
+      .then(fn)
+      .then((data) => ({ ok: true, data: data ?? null }))
+      .catch((err) => ({ ok: false, error: err?.message || "key_error" }));
+
+  ipcMain.handle("agzosKey:state", () => keyCall(() => key().state()));
+  ipcMain.handle("agzosKey:pair", (_event, payload) =>
+    keyCall(() => key().pair(payload?.pairingCode, payload?.deviceName)),
+  );
+  ipcMain.handle("agzosKey:unlock", (_event, payload) =>
+    keyCall(() => key().unlock(payload?.masterPassword)),
+  );
+  ipcMain.handle("agzosKey:lock", () => keyCall(() => key().lock()));
+  ipcMain.handle("agzosKey:list", () => keyCall(() => key().list()));
+  ipcMain.handle("agzosKey:save", (_event, entry) => keyCall(() => key().save(entry)));
+  ipcMain.handle("agzosKey:remove", (_event, payload) => keyCall(() => key().remove(payload?.id)));
+  ipcMain.handle("agzosKey:unpair", () => keyCall(() => key().unpair()));
 }
 
 app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");

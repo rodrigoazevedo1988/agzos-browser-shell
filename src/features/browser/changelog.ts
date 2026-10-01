@@ -7,11 +7,19 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "2.0.1",
+    version: "2.1.0",
     date: "2026-10-01",
     items: [
-      "Melhorias visuais e de estabilidade (transparência, cores de destaque e atalhos).",
+      "Agzos Key conectado de verdade: pareie o navegador com o seu cofre por um código, desbloqueie com a senha mestra e veja suas credenciais sincronizadas e cifradas de ponta a ponta (a senha mestra e as chaves nunca saem do seu dispositivo).",
+      "Modo escuro com vidro de verdade: os menus e painéis translúcidos agora respeitam o tema escuro, sem mais fundo branco.",
+      "Escolha a cor de destaque da interface na roda de cores (Configurações > Personalização), e ela vale também nos menus.",
+      "Menu de favoritos corrigido: o clique direito numa pasta abre o menu de editar/renomear sem conflitar com a lista da pasta.",
     ],
+  },
+  {
+    version: "2.0.1",
+    date: "2026-10-01",
+    items: ["Melhorias visuais e de estabilidade (transparência, cores de destaque e atalhos)."],
   },
   {
     version: "2.0.0",

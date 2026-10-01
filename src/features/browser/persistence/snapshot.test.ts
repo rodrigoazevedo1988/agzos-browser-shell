@@ -190,6 +190,11 @@ describe("migração da 1.3", () => {
         sidebar: true,
         sidePanels: ["whatsapp", "telegram", "messenger", "instagram"],
         sidePanelWidth: 400,
+        accentColor: "#D43420",
+        backgroundImage: "",
+        backgroundBlur: 0,
+        backgroundOpacity: 100,
+        uiBlur: true,
       },
       session: {
         tabs: legacyTabs,

@@ -47,7 +47,7 @@ import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
 import { defaultHistoryStore } from "./persistence/history-store";
-import { useCredentials } from "./persistence/use-credentials";
+import { useVault } from "./persistence/use-vault";
 import { usePersistence } from "./persistence/use-persistence";
 import { browserReducer } from "./store/reducer";
 import {
@@ -127,7 +127,7 @@ export function AgzosBrowser() {
   const [findFocus, setFindFocus] = useState(0);
   // O seletor só aparece se o Ctrl continuar pressionado: toque rápido troca sem piscar.
   const [switcherVisible, setSwitcherVisible] = useState(false);
-  const [credentials, setCredentials] = useCredentials(desktop);
+  const vault = useVault(desktop);
   const omniboxRef = useRef<HTMLInputElement | null>(null);
   const tabMenu = useContextMenu();
   const historyStore = useMemo(() => defaultHistoryStore(), []);
@@ -149,6 +149,21 @@ export function AgzosBrowser() {
   usePersistence(state, dispatch);
 
   const { prefs } = state;
+
+  // Tema, cor de acento e glassmorphism também no <html>: os menus do Radix (favoritos,
+  // dropdowns) são renderizados em portais no document.body, fora de .browser-stage, e
+  // sem isto herdariam o tema claro (fundo branco no modo escuro) e a cor padrão.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("dark", prefs.dark);
+    root.classList.toggle("ui-glass", prefs.uiBlur);
+    if (prefs.accentColor && prefs.accentColor !== defaultPrefs.accentColor) {
+      root.style.setProperty("--primary", prefs.accentColor);
+    } else {
+      root.style.removeProperty("--primary");
+    }
+  }, [prefs.dark, prefs.uiBlur, prefs.accentColor]);
+
   const activeTab = activeTabOf(state);
   const current = entryOf(activeTab);
   const nav = navState(state, desktop !== null);
@@ -1205,15 +1220,20 @@ export function AgzosBrowser() {
                       ? {
                           kind: "key",
                           props: {
-                            credentials,
+                            state: vault.state,
+                            entries: vault.entries,
+                            loading: vault.loading,
+                            error: vault.error,
                             copied,
                             onCopy: (id, value) => void copyText(id, value),
-                            onAdd: (item) => setCredentials((list) => [...list, item]),
-                            onRemove: (domain) =>
-                              setCredentials((list) =>
-                                list.filter((item) => item.domain !== domain),
-                              ),
+                            onPair: (code) => void vault.pair(code),
+                            onUnlock: (password) => void vault.unlock(password),
+                            onLock: vault.lock,
+                            onUnpair: () => void vault.unpair(),
+                            onAdd: (entry) => void vault.add(entry),
+                            onRemove: (id) => void vault.remove(id),
                             onClose: closePanel,
+                            onClearError: vault.clearError,
                           },
                         }
                       : null;

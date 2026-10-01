@@ -5,17 +5,21 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Link2,
+  Lock,
+  LockOpen,
   Plus,
   Search,
   ShieldCheck,
   Trash2,
+  Unlink,
   Wand2,
   X,
 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { Credential } from "@/features/browser/types";
+import type { KeyState, VaultEntry } from "@/features/browser/types";
 
 function generatePassword() {
   const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
@@ -24,42 +28,37 @@ function generatePassword() {
   return Array.from(values, (value) => chars[value % chars.length]).join("");
 }
 
-export function KeyPanel({
-  credentials,
-  copied,
-  onCopy,
-  onAdd,
-  onRemove,
-  onClose,
-}: {
-  credentials: Credential[];
+/** Rótulo do item (título, ou domínio da URL, ou usuário). */
+function labelOf(entry: VaultEntry): string {
+  return entry.title || entry.url?.replace(/^https?:\/\//, "") || entry.username || "Credencial";
+}
+
+export type KeyPanelProps = {
+  state: KeyState;
+  entries: VaultEntry[];
+  loading: boolean;
+  error: string | null;
   copied: string | null;
   onCopy: (id: string, value: string) => void;
-  onAdd: (item: Credential) => void;
-  onRemove: (domain: string) => void;
+  onPair: (code: string) => void;
+  onUnlock: (password: string) => void;
+  onLock: () => void;
+  onUnpair: () => void;
+  onAdd: (entry: VaultEntry) => void;
+  onRemove: (id: string) => void;
   onClose: () => void;
+  onClearError: () => void;
+};
+
+function PanelFrame({
+  children,
+  onClose,
+  subtitle,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  subtitle: string;
 }) {
-  const [query, setQuery] = useState("");
-  const [visible, setVisible] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [domain, setDomain] = useState("");
-  const [user, setUser] = useState("");
-  const [password, setPassword] = useState("");
-
-  const filtered = credentials.filter((item) =>
-    `${item.domain} ${item.user}`.toLowerCase().includes(query.toLowerCase()),
-  );
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!domain.trim() || !password.trim()) return;
-    onAdd({ domain: domain.trim().replace(/^https?:\/\//, ""), user: user.trim(), password });
-    setDomain("");
-    setUser("");
-    setPassword("");
-    setAdding(false);
-  }
-
   return (
     <aside className="key-panel" aria-label="Agzos Key">
       <div className="panel-heading">
@@ -69,13 +68,178 @@ export function KeyPanel({
           </span>
           <div>
             <strong>Agzos Key</strong>
-            <small>Cofre local</small>
+            <small>{subtitle}</small>
           </div>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar cofre">
           <X />
         </Button>
       </div>
+      {children}
+    </aside>
+  );
+}
+
+export function KeyPanel(props: KeyPanelProps) {
+  const { state, entries, loading, error, copied } = props;
+
+  // 1) Não pareado: pedir o código de pareamento (gerado na sessão do Agzos Key).
+  if (!state.paired) {
+    return (
+      <PanelFrame onClose={props.onClose} subtitle="Conectar ao cofre">
+        <PairForm loading={loading} error={error} onPair={props.onPair} />
+      </PanelFrame>
+    );
+  }
+
+  // 2) Pareado mas bloqueado: pedir a senha mestra.
+  if (!state.unlocked) {
+    return (
+      <PanelFrame onClose={props.onClose} subtitle={state.accountEmail ?? "Cofre bloqueado"}>
+        <UnlockForm
+          loading={loading}
+          error={error}
+          onUnlock={props.onUnlock}
+          onUnpair={props.onUnpair}
+        />
+      </PanelFrame>
+    );
+  }
+
+  // 3) Desbloqueado: lista das credenciais.
+  return (
+    <PanelFrame onClose={props.onClose} subtitle={state.accountEmail ?? "Cofre sincronizado"}>
+      <Vault {...props} entries={entries} copied={copied} />
+    </PanelFrame>
+  );
+}
+
+function PairForm({
+  loading,
+  error,
+  onPair,
+}: {
+  loading: boolean;
+  error: string | null;
+  onPair: (code: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (code.trim()) onPair(code.trim());
+  }
+  return (
+    <form className="key-form key-connect" onSubmit={submit}>
+      <p className="key-hint">
+        Abra o Agzos Key, gere um código de pareamento e cole aqui para conectar este navegador ao
+        seu cofre.
+      </p>
+      <label>
+        <span>Código de pareamento</span>
+        <input
+          value={code}
+          onChange={(event) => setCode(event.target.value.toUpperCase())}
+          placeholder="XXXX-XXXX"
+          aria-label="Código de pareamento"
+          autoFocus
+        />
+      </label>
+      {error && (
+        <small className="form-error" role="alert">
+          Não foi possível parear. Verifique o código e tente de novo.
+        </small>
+      )}
+      <Button size="sm" type="submit" disabled={loading || !code.trim()}>
+        <Link2 /> {loading ? "Conectando…" : "Conectar"}
+      </Button>
+    </form>
+  );
+}
+
+function UnlockForm({
+  loading,
+  error,
+  onUnlock,
+  onUnpair,
+}: {
+  loading: boolean;
+  error: string | null;
+  onUnlock: (password: string) => void;
+  onUnpair: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (password) onUnlock(password);
+  }
+  return (
+    <form className="key-form key-unlock" onSubmit={submit}>
+      <p className="key-hint">
+        Digite sua senha mestra para desbloquear o cofre neste dispositivo.
+      </p>
+      <label>
+        <span>Senha mestra</span>
+        <input
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="••••••••"
+          aria-label="Senha mestra"
+          autoFocus
+        />
+      </label>
+      {error && (
+        <small className="form-error" role="alert">
+          Senha mestra incorreta.
+        </small>
+      )}
+      <div className="key-form-actions">
+        <Button size="sm" type="submit" disabled={loading || !password}>
+          <LockOpen /> {loading ? "Abrindo…" : "Desbloquear"}
+        </Button>
+        <Button size="sm" variant="ghost" type="button" onClick={onUnpair}>
+          <Unlink /> Desconectar
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function Vault(props: KeyPanelProps) {
+  const { entries, copied } = props;
+  const [query, setQuery] = useState("");
+  const [visible, setVisible] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+
+  const filtered = entries.filter((item) =>
+    `${labelOf(item)} ${item.username ?? ""}`.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!title.trim() || !password.trim()) return;
+    const clean = title.trim().replace(/^https?:\/\//, "");
+    const entry: VaultEntry = {
+      id: crypto.randomUUID(),
+      title: clean,
+      username: user.trim(),
+      password,
+      category: "Login",
+      updatedAt: Date.now(),
+    };
+    if (/\./.test(clean)) entry.url = `https://${clean}`;
+    props.onAdd(entry);
+    setTitle("");
+    setUser("");
+    setPassword("");
+    setAdding(false);
+  }
+
+  return (
+    <>
       <div className="key-search">
         <Search />
         <input
@@ -92,36 +256,36 @@ export function KeyPanel({
       <div className="credential-list">
         {filtered.length === 0 && <p className="key-empty">Nenhuma credencial encontrada.</p>}
         {filtered.map((item) => (
-          <div className="credential" key={item.domain}>
-            <div className="domain-icon">{item.domain.charAt(0).toUpperCase()}</div>
+          <div className="credential" key={item.id}>
+            <div className="domain-icon">{labelOf(item).charAt(0).toUpperCase()}</div>
             <div className="credential-copy">
-              <strong>{item.domain}</strong>
-              <span>{visible === item.domain ? item.password : item.user}</span>
+              <strong>{labelOf(item)}</strong>
+              <span>{visible === item.id ? (item.password ?? "") : (item.username ?? "")}</span>
             </div>
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setVisible((value) => (value === item.domain ? null : item.domain))}
+              onClick={() => setVisible((value) => (value === item.id ? null : item.id))}
               title="Mostrar senha"
-              aria-label={`Mostrar senha de ${item.domain}`}
+              aria-label={`Mostrar senha de ${labelOf(item)}`}
             >
-              {visible === item.domain ? <EyeOff /> : <Eye />}
+              {visible === item.id ? <EyeOff /> : <Eye />}
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onCopy(item.domain, item.password)}
-              title={`Copiar senha de ${item.domain}`}
-              aria-label={`Copiar senha de ${item.domain}`}
+              onClick={() => props.onCopy(item.id, item.password ?? "")}
+              title={`Copiar senha de ${labelOf(item)}`}
+              aria-label={`Copiar senha de ${labelOf(item)}`}
             >
-              {copied === item.domain ? <Check /> : <Copy />}
+              {copied === item.id ? <Check /> : <Copy />}
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onRemove(item.domain)}
+              onClick={() => props.onRemove(item.id)}
               title="Excluir"
-              aria-label={`Excluir credencial de ${item.domain}`}
+              aria-label={`Excluir credencial de ${labelOf(item)}`}
             >
               <Trash2 />
             </Button>
@@ -131,10 +295,10 @@ export function KeyPanel({
       {adding ? (
         <form className="key-form" onSubmit={submit}>
           <input
-            value={domain}
-            onChange={(event) => setDomain(event.target.value)}
-            placeholder="site.com"
-            aria-label="Domínio"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="site.com ou nome"
+            aria-label="Título ou domínio"
           />
           <input
             value={user}
@@ -170,16 +334,19 @@ export function KeyPanel({
           </div>
         </form>
       ) : (
-        <div className="settings-actions">
+        <div className="settings-actions key-actions">
           <Button variant="outline" size="sm" className="text-xs" onClick={() => setAdding(true)}>
             <Plus /> Nova credencial
+          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={props.onLock}>
+            <Lock /> Bloquear
           </Button>
         </div>
       )}
       <div className="key-footer">
         <ShieldCheck />
-        <span>Criptografado neste dispositivo</span>
+        <span>Sincronizado e cifrado de ponta a ponta</span>
       </div>
-    </aside>
+    </>
   );
 }

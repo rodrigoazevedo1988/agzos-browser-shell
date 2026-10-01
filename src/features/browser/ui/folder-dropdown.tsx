@@ -48,7 +48,7 @@ function RecursiveFolderItems({
                 <span className="flex-1 truncate">{node.title}</span>
               </DropdownMenuSubTrigger>
               <DropdownMenuPortal>
-                <DropdownMenuSubContent className="glass-panel min-w-[200px] border-white/10 shadow-xl rounded-xl p-1 animate-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:zoom-out-95 duration-200">
+                <DropdownMenuSubContent className="glass-panel min-w-[200px] border-border/60 shadow-xl rounded-xl p-1 animate-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:zoom-out-95 duration-200">
                   <RecursiveFolderItems
                     nodes={nodes}
                     folderId={node.id}
@@ -108,10 +108,14 @@ export function FolderDropdown({
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      {/* O menu de contexto (botão direito) do próprio favorito deve passar reto: fechamos
+          o dropdown e deixamos o onContextMenu do botão abrir o menu de edição. */}
+      <DropdownMenuTrigger asChild onContextMenu={() => setOpen(false)}>
+        {children}
+      </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-white/10 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200"
+        className="glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-border/60 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200"
       >
         <RecursiveFolderItems nodes={nodes} folderId={folderId} depth={0} onOpen={onOpen} />
       </DropdownMenuContent>

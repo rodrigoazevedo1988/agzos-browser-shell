@@ -1,11 +1,14 @@
 import type { OverlayPayload } from "./overlay/bridge";
 import type { PanelKind } from "./overlay/panels";
 import type { TabCard } from "./tab-preview";
-import type { Credential, HistoryUrl, HistoryVisit, Tab } from "./types";
+import type { Credential, HistoryUrl, HistoryVisit, KeyState, Tab, VaultEntry } from "./types";
 
 export type PermissionType =
   "camera" | "microphone" | "notifications" | "geolocation" | "clipboard-read" | "midi";
 export type PermissionValue = "allow" | "block";
+
+/** Resultado das chamadas do Agzos Key: erro tratável (ex.: senha mestra errada). */
+export type KeyResult<T> = { ok: true; data: T } | { ok: false; error: string };
 export type SitePermission = { origin: string; type: PermissionType; value: PermissionValue };
 
 export type UpdateStatus =
@@ -195,6 +198,18 @@ export type DesktopBridge = {
   stateSave(sections: Record<string, unknown>): Promise<{ ok: boolean }>;
   keyLoad(): Promise<Credential[] | null>;
   keySave(list: Credential[]): Promise<{ ok: boolean }>;
+  /** Integração do Agzos Key: as chamadas rodam no main (token/crypto nunca no renderer). */
+  agzosKeyState(): Promise<KeyResult<KeyState>>;
+  agzosKeyPair(
+    pairingCode: string,
+    deviceName?: string,
+  ): Promise<KeyResult<{ paired: boolean; hasVault: boolean; accountEmail: string | null }>>;
+  agzosKeyUnlock(masterPassword: string): Promise<KeyResult<{ unlocked: boolean }>>;
+  agzosKeyLock(): Promise<KeyResult<null>>;
+  agzosKeyList(): Promise<KeyResult<{ entries: VaultEntry[]; deletedIds: string[] }>>;
+  agzosKeySave(entry: VaultEntry): Promise<KeyResult<{ ok: boolean; id: string }>>;
+  agzosKeyRemove(id: string): Promise<KeyResult<{ ok: boolean }>>;
+  agzosKeyUnpair(): Promise<KeyResult<{ ok: boolean }>>;
   openExternal(url: string): Promise<void>;
   permissionsList(): Promise<SitePermission[]>;
   /** value null volta para "perguntar". */

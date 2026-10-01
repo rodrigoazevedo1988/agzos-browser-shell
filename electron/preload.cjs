@@ -53,6 +53,15 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   stateSave: (sections) => ipcRenderer.invoke("state:save", sections),
   keyLoad: () => ipcRenderer.invoke("key:load"),
   keySave: (list) => ipcRenderer.invoke("key:save", list),
+  agzosKeyState: () => ipcRenderer.invoke("agzosKey:state"),
+  agzosKeyPair: (pairingCode, deviceName) =>
+    ipcRenderer.invoke("agzosKey:pair", { pairingCode, deviceName }),
+  agzosKeyUnlock: (masterPassword) => ipcRenderer.invoke("agzosKey:unlock", { masterPassword }),
+  agzosKeyLock: () => ipcRenderer.invoke("agzosKey:lock"),
+  agzosKeyList: () => ipcRenderer.invoke("agzosKey:list"),
+  agzosKeySave: (entry) => ipcRenderer.invoke("agzosKey:save", entry),
+  agzosKeyRemove: (id) => ipcRenderer.invoke("agzosKey:remove", { id }),
+  agzosKeyUnpair: () => ipcRenderer.invoke("agzosKey:unpair"),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   permissionsList: () => ipcRenderer.invoke("permissions:list"),
   permissionsSet: (origin, type, value) =>

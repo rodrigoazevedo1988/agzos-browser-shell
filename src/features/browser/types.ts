@@ -40,6 +40,37 @@ export type SplitView = { ids: [number, number]; ratio: number };
 export type ClosedTab = { title: string; url: string };
 export type TabOrientation = "horizontal" | "vertical";
 export type Credential = { domain: string; user: string; password: string };
+
+/**
+ * Entrada do cofre Agzos Key, já decifrada (só existe no renderer em memória). Espelha o
+ * PasswordEntry do Agzos Key — ver docs/integracao-agzos-browser.md.
+ */
+export type VaultEntry = {
+  id: string;
+  type?: "login" | "secure_note" | "card" | "wifi";
+  title: string;
+  username?: string;
+  password?: string;
+  url?: string;
+  notes?: string;
+  category: string;
+  totpSecret?: string;
+  folderId?: string;
+  tags?: string[];
+  favorite?: boolean;
+  passwordUpdatedAt?: number;
+  updatedAt: number;
+  deletedAt?: number | null;
+};
+
+/** Estado do pareamento/desbloqueio do Agzos Key (sem segredos). */
+export type KeyState = {
+  paired: boolean;
+  unlocked: boolean;
+  accountEmail: string | null;
+  deviceId: string;
+};
+
 export type QuickLink = { name: string; url: string };
 export type EngineId = "duckduckgo" | "yandex";
 

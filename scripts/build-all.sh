@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-VERSION="2.0.1"
+VERSION="2.1.0"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
-ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -123,4 +123,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Workspaces, grupos de guias, tela dividida, painéis laterais (WhatsApp, Telegram) e busca de comandos Ctrl+K."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Agzos Key conectado ao cofre (pareamento, senha mestra e sincronização cifrada), tema escuro com vidro de verdade, cor de destaque nos menus e correção do menu de favoritos."
