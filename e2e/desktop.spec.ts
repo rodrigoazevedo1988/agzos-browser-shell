@@ -2134,3 +2134,47 @@ test("2.2.3: conta Argon2id desbloqueia e o popup de autofill fica acima da pág
     await app.close();
   }
 });
+
+test("2.2.3: pasta da barra de favoritos abre menu nativo (acima da página)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/video-vivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    // Menu nativo grampeado: guarda os rótulos e escolhe o item de `__pick`.
+    await app.evaluate(({ Menu }) => {
+      const g = globalThis as { __menus?: string[][]; __pick?: string };
+      g.__menus = [];
+      Menu.prototype.popup = function (options?: Electron.PopupOptions) {
+        g.__menus!.push(this.items.map((item) => item.label));
+        const item = this.items.find((entry) => entry.label === g.__pick);
+        item?.click();
+        options?.callback?.();
+      };
+    });
+    const pick = (label: string) =>
+      app.evaluate((_electron, value) => {
+        (globalThis as { __pick?: string }).__pick = value;
+      }, label);
+    const menus = () => app.evaluate(() => (globalThis as { __menus?: string[][] }).__menus ?? []);
+
+    // Nova pasta pelo menu da barra; o editor abre na camada e fecha com Esc.
+    await pick("Nova pasta");
+    const bar = window.getByRole("navigation", { name: "Barra de favoritos" });
+    const box = (await bar.boundingBox())!;
+    await bar.click({ button: "right", position: { x: box.width - 8, y: box.height / 2 } });
+    const overlay = await overlayPage(app);
+    await expect(overlay.getByLabel("Nome")).toBeVisible();
+    await overlay.keyboard.press("Escape");
+
+    // Clique na pasta: menu nativo (sempre acima da página), nada flutuando na casca.
+    await pick("");
+    const before = (await menus()).length;
+    await bar.getByRole("button", { name: "Nova pasta" }).click();
+    await expect.poll(async () => (await menus()).length).toBe(before + 1);
+    expect((await menus()).at(-1)).toContain("(vazia)");
+    await expect(window.getByRole("menu")).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});

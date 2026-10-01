@@ -172,6 +172,14 @@ async function deriveKey(password, meta) {
   throw new Error("invalid_master_password");
 }
 
+function isFolderId(id) {
+  return typeof id === "string" && id.startsWith("folder_");
+}
+
+function isLogId(id) {
+  return typeof id === "string" && id.startsWith("log_");
+}
+
 function decryptEntry(key, entry) {
   return JSON.parse(aesGcmDecrypt(key, entry.iv, entry.data));
 }
@@ -359,14 +367,29 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     if (!token) throw new Error("not_paired");
     const res = await api("/api/integration/vault/sync", { since: 0, ops: [] }, token);
     if (typeof res.syncedAt === "number") store.setSince(res.syncedAt);
+    // O cofre guarda no mesmo lugar senhas, pastas (folder_*) e histórico (log_*).
+    // Só senhas vão para o painel: pastas viram o nome da categoria e o histórico é
+    // ignorado. Antes as pastas apareciam como "Credencial" vazia e, ao apagá-las aqui,
+    // sumiam do Agzos Key em todos os dispositivos.
     const entries = [];
+    const folderNames = new Map();
     for (const enc of res.entries || []) {
+      if (isLogId(enc.id)) continue;
       try {
         const plain = decryptEntry(aesKey, enc);
-        if (!plain.deletedAt) entries.push(plain);
+        if (plain.deletedAt) continue;
+        if (isFolderId(enc.id)) {
+          if (typeof plain.name === "string" && plain.name.trim()) folderNames.set(enc.id, plain.name.trim());
+        } else {
+          entries.push(plain);
+        }
       } catch {
         // entrada ilegível (chave errada / corrompida): ignora sem derrubar a lista
       }
+    }
+    for (const entry of entries) {
+      const folderName = entry.folderId ? folderNames.get(entry.folderId) : undefined;
+      if (!entry.category && folderName) entry.category = folderName;
     }
     return { entries, deletedIds: res.deletedIds || [] };
   }
@@ -392,6 +415,8 @@ function createAgzosKey({ userDataDir, safeStorage }) {
 
   // Marca a entrada como apagada no servidor.
   async function remove(id) {
+    // Pastas e histórico pertencem ao Agzos Key; o browser só apaga senhas.
+    if (typeof id !== "string" || !id || isFolderId(id) || isLogId(id)) throw new Error("not_a_credential");
     const token = store.loadToken();
     if (!token) throw new Error("not_paired");
     const timestamp = Date.now();

@@ -1485,6 +1485,7 @@ export function AgzosBrowser() {
             onFolder={openFolderMenu}
             onContextMenu={openBookmarkMenu}
             onMove={bookmarkActions.move}
+            nativeFolders={desktop !== null}
           />
         )}
 

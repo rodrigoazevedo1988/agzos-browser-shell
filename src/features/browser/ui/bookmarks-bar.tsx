@@ -16,13 +16,19 @@ export function BookmarksBar({
   onFolder,
   onContextMenu,
   onMove,
+  nativeFolders = false,
 }: {
   nodes: BookmarkNode[];
   onOpen: (node: BookmarkNode, newTab: boolean) => void;
-  /** Clique na pasta: mantido para retrocompatibilidade, mas agora o dropdown shadcn intercepta. */
+  /** Clique na pasta com `nativeFolders` (app): abre o menu nativo da pasta. */
   onFolder: (event: MouseEvent<HTMLElement>, folderId: string) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>, node: BookmarkNode | null) => void;
   onMove: (id: string, parentId: string, index?: number) => void;
+  /**
+   * App: a pasta abre o menu nativo. Um dropdown desenhado na casca ficaria atrás da
+   * página (o WebContentsView cobre tudo que flutua sobre a área da página).
+   */
+  nativeFolders?: boolean;
 }) {
   const items = childrenOf(nodes, BOOKMARK_BAR);
   const others = childrenOf(nodes, BOOKMARK_OTHER);
@@ -82,7 +88,10 @@ export function BookmarksBar({
               event.stopPropagation();
               drop(event, folder ? node.id : BOOKMARK_BAR, folder ? undefined : index);
             }}
-            onClick={(event) => !folder && onOpen(node, event.ctrlKey || event.metaKey)}
+            onClick={(event) => {
+              if (!folder) onOpen(node, event.ctrlKey || event.metaKey);
+              else if (nativeFolders) onFolder(event, node.id);
+            }}
             onMouseDown={(event) => {
               if (event.button === 1) event.preventDefault();
             }}
@@ -100,7 +109,7 @@ export function BookmarksBar({
           </button>
         );
 
-        return folder ? (
+        return folder && !nativeFolders ? (
           <FolderDropdown key={node.id} folderId={node.id} nodes={nodes} onOpen={onOpen}>
             {button}
           </FolderDropdown>
@@ -108,25 +117,34 @@ export function BookmarksBar({
           button
         );
       })}
-      {others.length > 0 && (
-        <FolderDropdown folderId={BOOKMARK_OTHER} nodes={nodes} onOpen={onOpen}>
-          <button
-            type="button"
-            className="bookmark-chip bookmark-others"
-            onDragOver={(event) => {
-              event.stopPropagation();
-              allowDrop(event, BOOKMARK_OTHER);
-            }}
-            onDrop={(event) => {
-              event.stopPropagation();
-              drop(event, BOOKMARK_OTHER);
-            }}
-          >
-            <FolderOpen aria-hidden="true" />
-            <span>Outros favoritos</span>
-          </button>
-        </FolderDropdown>
-      )}
+      {others.length > 0 &&
+        (() => {
+          const othersButton = (
+            <button
+              type="button"
+              className="bookmark-chip bookmark-others"
+              onClick={(event) => nativeFolders && onFolder(event, BOOKMARK_OTHER)}
+              onDragOver={(event) => {
+                event.stopPropagation();
+                allowDrop(event, BOOKMARK_OTHER);
+              }}
+              onDrop={(event) => {
+                event.stopPropagation();
+                drop(event, BOOKMARK_OTHER);
+              }}
+            >
+              <FolderOpen aria-hidden="true" />
+              <span>Outros favoritos</span>
+            </button>
+          );
+          return nativeFolders ? (
+            othersButton
+          ) : (
+            <FolderDropdown folderId={BOOKMARK_OTHER} nodes={nodes} onOpen={onOpen}>
+              {othersButton}
+            </FolderDropdown>
+          );
+        })()}
     </nav>
   );
 }

@@ -16,7 +16,8 @@ const keyModule = require(path.join(electronDir, "agzos-key.cjs")) as {
   createAgzosKey: (opts: { userDataDir: string; safeStorage: unknown }) => {
     pair: (code: string, name?: string) => Promise<unknown>;
     unlock: (password: string) => Promise<unknown>;
-    list: () => Promise<{ entries: { id: string; title: string }[] }>;
+    list: () => Promise<{ entries: { id: string; title: string; category?: string }[] }>;
+    remove: (id: string) => Promise<unknown>;
     state: () => { paired: boolean; unlocked: boolean; accountEmail: string | null };
   };
   _internals: {
@@ -186,7 +187,22 @@ ACCOUNTS["token-rotulo"] = {
   entries: [],
 };
 
+// Cofre real guarda pastas (folder_*) e histórico (log_*) junto com as senhas.
+const pastasAuth = authCheck("senha-pastas");
+ACCOUNTS["token-pastas"] = {
+  email: "pastas@agzos.com",
+  password: "senha-pastas",
+  authMeta: pastasAuth.meta,
+  key: pastasAuth.key,
+  entries: [
+    { id: "folder_banco", name: "Bancos", updatedAt: 1 },
+    { id: "log_1", timestamp: 1, action: "Added entry", updatedAt: 1 },
+    { id: "p1", title: "itau.com.br", username: "eu", password: "b1", folderId: "folder_banco", updatedAt: 2 },
+  ],
+};
+
 const TOKEN_OF: Record<string, string> = {
+  PASTAS: "token-pastas",
   REAL_ARGON: "token-real-argon",
   ROTULO: "token-rotulo",
   VOCE: "token-voce",
@@ -352,5 +368,24 @@ describe("Agzos Key — lista do cofre não some", () => {
 
     const third = await client.list();
     expect(third.entries).toHaveLength(2);
+  });
+});
+
+describe("Agzos Key — pastas do cofre não viram credenciais", () => {
+  it("list() devolve só senhas e usa o nome da pasta como categoria", async () => {
+    const client = freshClient();
+    await client.pair("PASTAS");
+    await client.unlock("senha-pastas");
+    const vault = await client.list();
+    expect(vault.entries.map((e) => e.id)).toEqual(["p1"]);
+    expect(vault.entries[0]!.category).toBe("Bancos");
+  });
+
+  it("remove() recusa apagar pasta ou histórico do Agzos Key", async () => {
+    const client = freshClient();
+    await client.pair("PASTAS");
+    await client.unlock("senha-pastas");
+    await expect(client.remove("folder_banco")).rejects.toThrow("not_a_credential");
+    await expect(client.remove("log_1")).rejects.toThrow("not_a_credential");
   });
 });

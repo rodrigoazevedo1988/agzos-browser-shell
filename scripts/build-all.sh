@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="2.2.3"
+VERSION="2.2.4"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
@@ -124,4 +124,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Correções no Agzos Key: contas protegidas com Argon2id voltam a desbloquear com a senha mestra correta (mesmos parâmetros do Agzos Key, verificados em segundo plano sem travar as janelas) e o popup \"Entrar com o Agzos Key\" não fica mais escondido atrás da página."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Correção: as pastas da barra de favoritos abriam o menu atrás da página do site; agora o menu da pasta aparece sempre por cima."

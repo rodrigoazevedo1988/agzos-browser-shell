@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.4",
+    date: "2026-10-01",
+    items: [
+      'Correção: as pastas da barra de favoritos abriam o menu atrás da página do site. Agora o menu da pasta (com subpastas e "Abrir todos") aparece sempre por cima.',
+    ],
+  },
+  {
     version: "2.2.3",
     date: "2026-10-01",
     items: [
