@@ -197,7 +197,14 @@ ACCOUNTS["token-pastas"] = {
   entries: [
     { id: "folder_banco", name: "Bancos", updatedAt: 1 },
     { id: "log_1", timestamp: 1, action: "Added entry", updatedAt: 1 },
-    { id: "p1", title: "itau.com.br", username: "eu", password: "b1", folderId: "folder_banco", updatedAt: 2 },
+    {
+      id: "p1",
+      title: "itau.com.br",
+      username: "eu",
+      password: "b1",
+      folderId: "folder_banco",
+      updatedAt: 2,
+    },
   ],
 };
 

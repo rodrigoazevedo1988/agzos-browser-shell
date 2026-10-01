@@ -93,6 +93,57 @@ function RecursiveFolderItems({
   );
 }
 
+const CONTENT_CLASS =
+  "glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-border/60 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200";
+
+/**
+ * Menu da pasta no app: o mesmo dropdown (vidro, subpastas, teclado), desenhado na camada
+ * transparente acima da página (overlay), ancorado no retângulo do chip da pasta (`anchor`,
+ * em px da janela). Na casca ele ficaria atrás do WebContentsView da página.
+ */
+export function FolderMenu({
+  folderId,
+  nodes,
+  anchor,
+  onOpen,
+  onClose,
+}: {
+  folderId: string;
+  nodes: BookmarkNode[];
+  anchor: { x: number; y: number; width: number; height: number };
+  onOpen: (node: BookmarkNode, newTab: boolean) => void;
+  onClose: () => void;
+}) {
+  return (
+    <DropdownMenu open modal={false} onOpenChange={(open) => !open && onClose()}>
+      <DropdownMenuTrigger asChild>
+        <span
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            left: anchor.x,
+            top: anchor.y,
+            width: anchor.width,
+            height: anchor.height,
+            pointerEvents: "none",
+          }}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        aria-label="Pasta de favoritos"
+        className={CONTENT_CLASS}
+        // Clique fora: quem fecha é a camada, que repassa o clique para o que está embaixo.
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onFocusOutside={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        <RecursiveFolderItems nodes={nodes} folderId={folderId} depth={0} onOpen={onOpen} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function FolderDropdown({
   folderId,
   nodes,
@@ -113,10 +164,7 @@ export function FolderDropdown({
       <DropdownMenuTrigger asChild onContextMenu={() => setOpen(false)}>
         {children}
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-border/60 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200"
-      >
+      <DropdownMenuContent align="start" className={CONTENT_CLASS}>
         <RecursiveFolderItems nodes={nodes} folderId={folderId} depth={0} onOpen={onOpen} />
       </DropdownMenuContent>
     </DropdownMenu>

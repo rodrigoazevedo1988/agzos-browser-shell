@@ -9,6 +9,7 @@ import { AppMenu } from "@/features/settings/menu";
 import { SitePanel } from "@/features/site/panel";
 
 import { CommandPalette } from "../ui/command-palette";
+import { FolderMenu } from "../ui/folder-dropdown";
 import { GroupEditor } from "../ui/group-editor";
 import { WorkspacePanel } from "../ui/workspace-panel";
 
@@ -23,6 +24,7 @@ export type PanelSpec =
   | { kind: "site"; key?: string; props: ComponentProps<typeof SitePanel> }
   | { kind: "key"; key?: string; props: ComponentProps<typeof KeyPanel> }
   | { kind: "autofill"; key?: string; props: ComponentProps<typeof AutofillPopup> }
+  | { kind: "folder"; key?: string; props: ComponentProps<typeof FolderMenu> }
   | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> }
   | { kind: "palette"; key?: string; props: ComponentProps<typeof CommandPalette> }
   | { kind: "workspaces"; key?: string; props: ComponentProps<typeof WorkspacePanel> }
@@ -43,6 +45,8 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <SitePanel key={key} {...spec.props} />;
     case "key":
       return <KeyPanel key={key} {...spec.props} />;
+    case "folder":
+      return <FolderMenu key={key} {...spec.props} />;
     case "autofill":
       return <AutofillPopup key={key} {...spec.props} />;
     case "bookmark":

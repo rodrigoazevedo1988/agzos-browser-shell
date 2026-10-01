@@ -2135,7 +2135,7 @@ test("2.2.3: conta Argon2id desbloqueia e o popup de autofill fica acima da pág
   }
 });
 
-test("2.2.3: pasta da barra de favoritos abre menu nativo (acima da página)", async () => {
+test("2.2.5: pasta da barra de favoritos abre o menu de vidro na camada, acima da página", async () => {
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/video-vivo`;
   try {
@@ -2167,13 +2167,41 @@ test("2.2.3: pasta da barra de favoritos abre menu nativo (acima da página)", a
     await expect(overlay.getByLabel("Nome")).toBeVisible();
     await overlay.keyboard.press("Escape");
 
-    // Clique na pasta: menu nativo (sempre acima da página), nada flutuando na casca.
-    await pick("");
+    // Clique na pasta: o dropdown de vidro abre na camada, por cima da página; nada
+    // flutuando na casca (ficaria atrás do WebContentsView) e nenhum menu nativo.
     const before = (await menus()).length;
     await bar.getByRole("button", { name: "Nova pasta" }).click();
-    await expect.poll(async () => (await menus()).length).toBe(before + 1);
-    expect((await menus()).at(-1)).toContain("(vazia)");
+    const folder = overlay.getByRole("menu", { name: "Pasta de favoritos" });
+    await expect(folder).toBeVisible();
+    await expect(folder.getByRole("menuitem", { name: "(vazia)" })).toBeVisible();
+    await overlay.keyboard.press("Escape");
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+
+    // Favorita a página dentro da pasta e abre a pasta de novo: o item aparece.
+    await window.getByRole("button", { name: "Favoritar página" }).click();
+    const pasta = overlay.getByLabel("Pasta");
+    const value = await pasta.evaluate(
+      (select: HTMLSelectElement) =>
+        [...select.options].find((option) => option.text.trim() === "Nova pasta")?.value ?? "",
+    );
+    await pasta.selectOption(value);
+    await overlay.getByRole("button", { name: "Concluído" }).click();
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await bar.getByRole("button", { name: "Nova pasta" }).click();
+    await expect(folder.getByRole("menuitem", { name: "Vídeo vivo" })).toBeVisible();
+    await expect(folder).toHaveClass(/glass-panel/);
+    await expect.poll(async () => (await layersOf(app, url)).overlayOnTop).toBe(true);
+    expect((await layersOf(app, url)).overlayVisible).toBe(true);
     await expect(window.getByRole("menu")).toHaveCount(0);
+    expect((await menus()).length).toBe(before);
+    if (process.env.AGZOS_SHOT) {
+      await window.waitForTimeout(600);
+      execFileSync("import", ["-window", "root", process.env.AGZOS_SHOT]);
+    }
+
+    // Clicar no item abre o favorito e fecha a camada.
+    await folder.getByRole("menuitem", { name: "Vídeo vivo" }).click();
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
   } finally {
     await app.close();
   }

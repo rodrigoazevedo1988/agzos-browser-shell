@@ -379,7 +379,8 @@ function createAgzosKey({ userDataDir, safeStorage }) {
         const plain = decryptEntry(aesKey, enc);
         if (plain.deletedAt) continue;
         if (isFolderId(enc.id)) {
-          if (typeof plain.name === "string" && plain.name.trim()) folderNames.set(enc.id, plain.name.trim());
+          if (typeof plain.name === "string" && plain.name.trim())
+            folderNames.set(enc.id, plain.name.trim());
         } else {
           entries.push(plain);
         }
@@ -416,7 +417,8 @@ function createAgzosKey({ userDataDir, safeStorage }) {
   // Marca a entrada como apagada no servidor.
   async function remove(id) {
     // Pastas e histórico pertencem ao Agzos Key; o browser só apaga senhas.
-    if (typeof id !== "string" || !id || isFolderId(id) || isLogId(id)) throw new Error("not_a_credential");
+    if (typeof id !== "string" || !id || isFolderId(id) || isLogId(id))
+      throw new Error("not_a_credential");
     const token = store.loadToken();
     if (!token) throw new Error("not_paired");
     const timestamp = Date.now();

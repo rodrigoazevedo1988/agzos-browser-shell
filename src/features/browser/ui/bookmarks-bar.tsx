@@ -16,19 +16,19 @@ export function BookmarksBar({
   onFolder,
   onContextMenu,
   onMove,
-  nativeFolders = false,
+  folderPanel = false,
 }: {
   nodes: BookmarkNode[];
   onOpen: (node: BookmarkNode, newTab: boolean) => void;
-  /** Clique na pasta com `nativeFolders` (app): abre o menu nativo da pasta. */
+  /** Clique na pasta com `folderPanel` (app): a casca abre o menu da pasta na camada. */
   onFolder: (event: MouseEvent<HTMLElement>, folderId: string) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>, node: BookmarkNode | null) => void;
   onMove: (id: string, parentId: string, index?: number) => void;
   /**
-   * App: a pasta abre o menu nativo. Um dropdown desenhado na casca ficaria atrás da
-   * página (o WebContentsView cobre tudo que flutua sobre a área da página).
+   * App: a pasta abre o menu na camada acima da página (onFolder). Um dropdown desenhado
+   * na casca ficaria atrás dela (o WebContentsView cobre o que flutua sobre a página).
    */
-  nativeFolders?: boolean;
+  folderPanel?: boolean;
 }) {
   const items = childrenOf(nodes, BOOKMARK_BAR);
   const others = childrenOf(nodes, BOOKMARK_OTHER);
@@ -90,7 +90,7 @@ export function BookmarksBar({
             }}
             onClick={(event) => {
               if (!folder) onOpen(node, event.ctrlKey || event.metaKey);
-              else if (nativeFolders) onFolder(event, node.id);
+              else if (folderPanel) onFolder(event, node.id);
             }}
             onMouseDown={(event) => {
               if (event.button === 1) event.preventDefault();
@@ -109,7 +109,7 @@ export function BookmarksBar({
           </button>
         );
 
-        return folder && !nativeFolders ? (
+        return folder && !folderPanel ? (
           <FolderDropdown key={node.id} folderId={node.id} nodes={nodes} onOpen={onOpen}>
             {button}
           </FolderDropdown>
@@ -123,7 +123,7 @@ export function BookmarksBar({
             <button
               type="button"
               className="bookmark-chip bookmark-others"
-              onClick={(event) => nativeFolders && onFolder(event, BOOKMARK_OTHER)}
+              onClick={(event) => folderPanel && onFolder(event, BOOKMARK_OTHER)}
               onDragOver={(event) => {
                 event.stopPropagation();
                 allowDrop(event, BOOKMARK_OTHER);
@@ -137,7 +137,7 @@ export function BookmarksBar({
               <span>Outros favoritos</span>
             </button>
           );
-          return nativeFolders ? (
+          return folderPanel ? (
             othersButton
           ) : (
             <FolderDropdown folderId={BOOKMARK_OTHER} nodes={nodes} onOpen={onOpen}>

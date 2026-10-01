@@ -50,6 +50,16 @@ export function OverlayHost({ bridge }: { bridge: OverlayBridge }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [bridge, model]);
 
+  // Tema e vidro também no <html>: o dropdown da pasta (Radix) abre num portal no body,
+  // fora de .browser-stage, como na casca.
+  const classes = model?.classes.join(" ") ?? "";
+  useEffect(() => {
+    const root = document.documentElement;
+    const list = classes.split(" ");
+    root.classList.toggle("dark", list.includes("dark"));
+    root.classList.toggle("ui-glass", list.includes("ui-glass"));
+  }, [classes]);
+
   if (!model) return null;
   const props = hydrateProps(
     model.data,

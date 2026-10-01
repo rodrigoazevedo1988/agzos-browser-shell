@@ -7,6 +7,21 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.6",
+    date: "2026-10-01",
+    items: [
+      "Correção: as pastas e o histórico do Agzos Key não aparecem mais como credenciais vazias no painel de senhas, e o navegador não consegue mais apagá-los — antes, apagar esses itens fazia as pastas sumirem do Agzos Key em todos os dispositivos.",
+      "As senhas agora aparecem agrupadas pelo nome da pasta em que estão no Agzos Key.",
+    ],
+  },
+  {
+    version: "2.2.5",
+    date: "2026-10-01",
+    items: [
+      'As pastas da barra de favoritos voltaram ao menu de vidro (transparência, cantos arredondados, subpastas e "Abrir todos") — agora sempre por cima da página do site.',
+    ],
+  },
+  {
     version: "2.2.4",
     date: "2026-10-01",
     items: [

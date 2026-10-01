@@ -94,6 +94,7 @@ describe("chrome-overlay.cjs", () => {
         "autofill",
         "bookmark",
         "downloads",
+        "folder",
         "key",
         "menu",
         "privacy",

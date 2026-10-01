@@ -95,7 +95,8 @@ type Panel =
   | "site"
   | "palette"
   | "workspaces"
-  | "group";
+  | "group"
+  | "folder";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -141,6 +142,11 @@ export function AgzosBrowser() {
   const [omniboxOpen, setOmniboxOpen] = useState(false);
   // Favorito em edição (popover da estrela, "Editar…" da barra).
   const [editing, setEditing] = useState<{ id: string; added: boolean } | null>(null);
+  // Pasta da barra de favoritos aberta na camada (app), com o retângulo do chip.
+  const [folderOpen, setFolderOpen] = useState<{
+    folderId: string;
+    anchor: { x: number; y: number; width: number; height: number };
+  } | null>(null);
   const [sitePermissions, setSitePermissions] = useState<SitePermission[]>([]);
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [startupInfo, setStartupInfo] = useState<StartupInfo | null>(null);
@@ -543,6 +549,14 @@ export function AgzosBrowser() {
 
   const openFolderMenu = (event: MouseEvent<HTMLElement>, folderId: string) => {
     const rect = event.currentTarget.getBoundingClientRect();
+    if (desktop) {
+      // Clique na mesma pasta com o menu aberto: o clique fora já fechou, só não reabre.
+      if (justDismissed("folder")) return;
+      const anchor = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      setFolderOpen({ folderId, anchor });
+      setPanel("folder");
+      return;
+    }
     void showMenu(rect.left, rect.bottom + 4, folderMenu(state.bookmarks, folderId)).then(
       openBookmarkChoice,
     );
@@ -1135,6 +1149,7 @@ export function AgzosBrowser() {
   };
   const stageClasses = [
     prefs.dark && "dark",
+    prefs.uiBlur && "ui-glass",
     state.fullscreen && "fs",
     // App do Mac sem barra de título nativa: a casca desenha a área de arrastar.
     desktop && isMac && "mac-frameless",
@@ -1336,11 +1351,23 @@ export function AgzosBrowser() {
                             onClearError: vault.clearError,
                           },
                         }
-                      : // Popup de autofill: no app vai para a camada (a página nativa
-                        // cobriria um popup desenhado na casca); na web fica na casca.
-                        desktop && panel === null && canAutofill && autofillOpen
-                        ? { kind: "autofill", key: currentHostKey, props: autofillProps }
-                        : null;
+                      : panel === "folder" && folderOpen
+                        ? {
+                            kind: "folder",
+                            key: folderOpen.folderId,
+                            props: {
+                              folderId: folderOpen.folderId,
+                              nodes: state.bookmarks,
+                              anchor: folderOpen.anchor,
+                              onOpen: (node, newTab) => node.url && openUrl(node.url, newTab),
+                              onClose: closePanel,
+                            },
+                          }
+                        : // Popup de autofill: no app vai para a camada (a página nativa
+                          // cobriria um popup desenhado na casca); na web fica na casca.
+                          desktop && panel === null && canAutofill && autofillOpen
+                          ? { kind: "autofill", key: currentHostKey, props: autofillProps }
+                          : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1393,7 +1420,7 @@ export function AgzosBrowser() {
 
   return (
     <main
-      className={cn("browser-stage", ...stageClasses, prefs.uiBlur && "ui-glass")}
+      className={cn("browser-stage", ...stageClasses)}
       style={
         {
           ...(prefs.accentColor !== defaultPrefs.accentColor
@@ -1485,7 +1512,7 @@ export function AgzosBrowser() {
             onFolder={openFolderMenu}
             onContextMenu={openBookmarkMenu}
             onMove={bookmarkActions.move}
-            nativeFolders={desktop !== null}
+            folderPanel={desktop !== null}
           />
         )}
 
