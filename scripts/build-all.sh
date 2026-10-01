@@ -123,4 +123,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Agzos Key conectado ao cofre (pareamento, senha mestra e sincronização cifrada), tema escuro com vidro de verdade, cor de destaque nos menus e correção do menu de favoritos."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Senhas inteligentes com o Agzos Key: o navegador oferece salvar o login no cofre, preenche e entra com um clique, gera o código MFA (TOTP) e organiza as credenciais por categorias (Pessoal, Trabalho…). Barra de favoritos corrigida: sempre acima da página."
