@@ -48,9 +48,9 @@ async function api(pathname, body, token) {
 
 // --- Cripto (PBKDF2 100k / AES-GCM 256, tag no fim) ---------------------------
 
-function pbkdf2Key(password, saltB64) {
+function pbkdf2Key(password, saltB64, iterations, hash) {
   const salt = Buffer.from(saltB64, "base64");
-  return crypto.pbkdf2Sync(password, salt, PBKDF2_ITERS, 32, "sha256");
+  return crypto.pbkdf2Sync(password, salt, iterations || PBKDF2_ITERS, 32, hash || "sha256");
 }
 
 function aesGcmDecrypt(keyRaw, ivB64, dataB64) {
@@ -72,9 +72,16 @@ function aesGcmEncrypt(keyRaw, plaintext) {
 }
 
 // Deriva a chave AES e valida a senha mestra pelo auth-check do cofre.
+// Os parâmetros da KDF vêm do próprio cofre (authMeta): contas diferentes podem ter
+// iterações/hash diferentes. Ignorar isso derivava a chave errada e recusava a senha
+// mestra correta de algumas contas. Argon2id não é suportado aqui (Web Crypto/Node sem
+// módulo nativo): nesse caso avisamos em vez de derivar uma chave errada em silêncio.
 function deriveKey(password, meta) {
-  // kdf argon2id não é suportado localmente; pbkdf2 cobre a maioria dos cofres.
-  const key = pbkdf2Key(password, meta.salt);
+  const kdf = (meta.kdf || "pbkdf2").toLowerCase();
+  if (kdf.startsWith("argon")) throw new Error("unsupported_kdf");
+  const iterations = Number.isInteger(meta.iterations) ? meta.iterations : PBKDF2_ITERS;
+  const hash = typeof meta.hash === "string" ? meta.hash.replace("-", "").toLowerCase() : "sha256";
+  const key = pbkdf2Key(password, meta.salt, iterations, hash);
   // Senha errada quebra a autenticação do GCM (lança um erro cru do OpenSSL) OU, no
   // limite, decifra para algo != AUTH_STRING. Nos dois casos é "senha mestra incorreta".
   let check;
@@ -264,16 +271,15 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     aesKey = null;
   }
 
-  // Puxa tudo do servidor e devolve as entradas decifradas, filtrando apagadas.
+  // Puxa TODO o cofre e devolve as entradas decifradas, filtrando apagadas.
+  // Sempre com since=0: isto é "carregar o cofre inteiro", não um delta. Com um cursor
+  // que avança, a 2ª chamada voltava vazia (nada mudou) e a casca zerava a lista — era
+  // isso que fazia "as senhas sumirem" depois de logar.
   async function list() {
     if (locked()) throw new Error("locked");
     const token = store.loadToken();
     if (!token) throw new Error("not_paired");
-    const res = await api(
-      "/api/integration/vault/sync",
-      { since: store.getSince(), ops: [] },
-      token,
-    );
+    const res = await api("/api/integration/vault/sync", { since: 0, ops: [] }, token);
     if (typeof res.syncedAt === "number") store.setSince(res.syncedAt);
     const entries = [];
     for (const enc of res.entries || []) {
@@ -298,7 +304,7 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     await api(
       "/api/integration/vault/sync",
       {
-        since: store.getSince(),
+        since: 0,
         ops: [{ type: "UPDATE", entityId: entry.id, timestamp: entry.updatedAt, payload }],
       },
       token,
@@ -313,7 +319,7 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     const timestamp = Date.now();
     await api(
       "/api/integration/vault/sync",
-      { since: store.getSince(), ops: [{ type: "DELETE", entityId: id, timestamp }] },
+      { since: 0, ops: [{ type: "DELETE", entityId: id, timestamp }] },
       token,
     );
     return { ok: true };

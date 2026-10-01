@@ -198,7 +198,9 @@ function UnlockForm({
       </label>
       {error && (
         <small className="form-error" role="alert">
-          Senha mestra incorreta.
+          {error === "unsupported_kdf"
+            ? "Este cofre usa uma proteção (Argon2) ainda não suportada aqui. Atualize o Agzos Key ou use o app do cofre."
+            : "Senha mestra incorreta."}
         </small>
       )}
       <div className="key-form-actions">

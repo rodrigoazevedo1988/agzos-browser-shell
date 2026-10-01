@@ -16,43 +16,107 @@ const keyModule = require(path.join(electronDir, "agzos-key.cjs")) as {
   createAgzosKey: (opts: { userDataDir: string; safeStorage: unknown }) => {
     pair: (code: string, name?: string) => Promise<unknown>;
     unlock: (password: string) => Promise<unknown>;
+    list: () => Promise<{ entries: { id: string; title: string }[] }>;
     state: () => { paired: boolean; unlocked: boolean; accountEmail: string | null };
   };
-  _internals: { pbkdf2Key: (p: string, s: string) => Buffer };
+  _internals: {
+    pbkdf2Key: (p: string, s: string, iters?: number, hash?: string) => Buffer;
+    aesGcmEncrypt: (key: Buffer, text: string) => { iv: string; data: string };
+  };
 };
 
 const { AUTH_STRING, createAgzosKey, _internals } = keyModule;
 
 /** Cifra o auth-check como o Web Crypto (tag no fim), para o deriveKey validar. */
-function authCheck(password: string) {
+function authCheck(password: string, iterations?: number) {
   const salt = crypto.randomBytes(16).toString("base64");
-  const key = _internals.pbkdf2Key(password, salt);
+  const key = _internals.pbkdf2Key(password, salt, iterations);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const enc = Buffer.concat([cipher.update(AUTH_STRING, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return {
+  const meta: Record<string, unknown> = {
     salt,
     authCheckIv: iv.toString("base64"),
     authCheckData: Buffer.concat([enc, tag]).toString("base64"),
   };
+  if (iterations) meta["iterations"] = iterations;
+  return { meta, key };
 }
 
-// Duas contas, cada uma com sua senha mestra e seu auth-check.
-const ACCOUNTS: Record<
-  string,
-  { email: string; password: string; authMeta: ReturnType<typeof authCheck> }
-> = {
+/** Entrada cifrada para o servidor devolver no sync (igual ao formato do cofre). */
+function encEntry(key: Buffer, entry: Record<string, unknown>) {
+  const { iv, data } = _internals.aesGcmEncrypt(key, JSON.stringify(entry));
+  return { id: entry["id"], iv, data, version: 1, vaultId: "personal" };
+}
+
+type Account = {
+  email: string;
+  password: string;
+  authMeta: Record<string, unknown>;
+  key: Buffer;
+  entries: Record<string, unknown>[];
+};
+
+const voceAuth = authCheck("senha-da-voce");
+const arnaldoAuth = authCheck("senha-do-arnaldo");
+const novaAuth = authCheck("senha-nova", 310_000); // conta com iterações diferentes
+
+// Cada conta tem sua senha, seu auth-check e suas credenciais cifradas.
+const ACCOUNTS: Record<string, Account> = {
   "token-voce": {
     email: "voce@agzos.com",
     password: "senha-da-voce",
-    authMeta: authCheck("senha-da-voce"),
+    authMeta: voceAuth.meta,
+    key: voceAuth.key,
+    entries: [
+      {
+        id: "e1",
+        title: "github.com",
+        username: "voce",
+        password: "p1",
+        category: "Trabalho",
+        updatedAt: 1,
+      },
+      {
+        id: "e2",
+        title: "figma.com",
+        username: "voce",
+        password: "p2",
+        category: "Trabalho",
+        updatedAt: 2,
+      },
+    ],
   },
   "token-arnaldo": {
     email: "arnaldo@agzos.com",
     password: "senha-do-arnaldo",
-    authMeta: authCheck("senha-do-arnaldo"),
+    authMeta: arnaldoAuth.meta,
+    key: arnaldoAuth.key,
+    entries: [
+      {
+        id: "a1",
+        title: "notion.so",
+        username: "arnaldo",
+        password: "x1",
+        category: "Pessoal",
+        updatedAt: 1,
+      },
+    ],
   },
+  "token-nova": {
+    email: "nova@agzos.com",
+    password: "senha-nova",
+    authMeta: novaAuth.meta,
+    key: novaAuth.key,
+    entries: [],
+  },
+};
+
+const TOKEN_OF: Record<string, string> = {
+  VOCE: "token-voce",
+  ARNALDO: "token-arnaldo",
+  NOVA: "token-nova",
 };
 
 let server: http.Server;
@@ -69,9 +133,8 @@ beforeAll(async () => {
         res.end(JSON.stringify(obj));
       };
       if (req.url === "/api/integration/pair/claim") {
-        // O código de pareamento diz qual conta (token) devolver.
         const { pairingCode } = JSON.parse(body || "{}");
-        const token = pairingCode === "ARNALDO" ? "token-arnaldo" : "token-voce";
+        const token = TOKEN_OF[pairingCode] ?? "token-voce";
         const acc = ACCOUNTS[token]!;
         json({
           deviceToken: token,
@@ -88,8 +151,20 @@ beforeAll(async () => {
           res.end("{}");
           return;
         }
-        // Fonte da verdade: o auth-check é SEMPRE o da conta dona do token atual.
         json({ hasVault: true, accountEmail: acc.email, authMeta: acc.authMeta });
+        return;
+      }
+      if (req.url === "/api/integration/vault/sync") {
+        const acc = ACCOUNTS[auth];
+        if (!acc) {
+          res.writeHead(401);
+          res.end("{}");
+          return;
+        }
+        const { since } = JSON.parse(body || "{}");
+        // O servidor só devolve as entradas "desde" o cursor: com since>0 vem vazio.
+        const entries = since && since > 0 ? [] : acc.entries.map((e) => encEntry(acc.key, e));
+        json({ entries, deletedIds: [], syncedAt: Date.now() });
         return;
       }
       res.writeHead(404);
@@ -143,5 +218,29 @@ describe("Agzos Key — desbloqueio por conta", () => {
     await client.pair("ARNALDO");
     await expect(client.unlock("senha-do-arnaldo")).resolves.toEqual({ unlocked: true });
     expect(client.state().accountEmail).toBe("arnaldo@agzos.com");
+  });
+
+  it("desbloqueia conta com iterações de KDF diferentes (parâmetros do authMeta)", async () => {
+    const client = freshClient();
+    await client.pair("NOVA");
+    await expect(client.unlock("senha-nova")).resolves.toEqual({ unlocked: true });
+  });
+});
+
+describe("Agzos Key — lista do cofre não some", () => {
+  it("list() devolve o cofre inteiro em TODA chamada (regressão: senhas sumindo)", async () => {
+    const client = freshClient();
+    await client.pair("VOCE");
+    await client.unlock("senha-da-voce");
+
+    const first = await client.list();
+    expect(first.entries.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+
+    // A 2ª chamada (refresh da casca) PRECISA trazer tudo de novo, não um delta vazio.
+    const second = await client.list();
+    expect(second.entries.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+
+    const third = await client.list();
+    expect(third.entries).toHaveLength(2);
   });
 });

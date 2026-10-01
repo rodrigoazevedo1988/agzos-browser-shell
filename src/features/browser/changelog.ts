@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.2",
+    date: "2026-10-01",
+    items: [
+      "Correção: as credenciais sincronizadas não somem mais depois de entrar — o cofre inteiro é recarregado a cada abertura, em vez de só as mudanças recentes.",
+      "Correção: o desbloqueio agora respeita a proteção (KDF) de cada conta do Agzos Key, então a senha mestra correta deixa de ser recusada em contas com configurações diferentes.",
+    ],
+  },
+  {
     version: "2.2.1",
     date: "2026-10-01",
     items: [
