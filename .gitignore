@@ -38,5 +38,6 @@ playwright-report/
 # Command Code (config local)
 .commandcode/
 
-# Bundle do motor de filtros, gerado no desktop:build
+# Bundles vendorizados (adblock e Argon2id), gerados no desktop:vendor/desktop:build
 electron/adblocker.vendor.cjs
+electron/argon2.vendor.cjs
