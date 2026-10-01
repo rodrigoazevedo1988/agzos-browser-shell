@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="2.0.0"
+VERSION="2.0.1"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
 ELECTRON_FILES=(main.cjs preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs)

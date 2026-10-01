@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.1",
+    date: "2026-10-01",
+    items: [
+      "Melhorias visuais e de estabilidade (transparência, cores de destaque e atalhos).",
+    ],
+  },
+  {
     version: "2.0.0",
     date: "2026-10-05",
     items: [
