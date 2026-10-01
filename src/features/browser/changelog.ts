@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.1",
+    date: "2026-10-01",
+    items: [
+      "Correção: quando mais de uma pessoa usava o Agzos Key no mesmo computador, a senha mestra correta de outra conta era recusada. Agora cada conta desbloqueia o seu cofre normalmente.",
+    ],
+  },
+  {
     version: "2.2.0",
     date: "2026-10-01",
     items: [

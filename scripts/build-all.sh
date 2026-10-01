@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs é gerado pelo `bun run desktop:build` (bundle do @ghostery/adblocker).
 ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs adblocker.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs)
@@ -123,4 +123,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Senhas inteligentes com o Agzos Key: o navegador oferece salvar o login no cofre, preenche e entra com um clique, gera o código MFA (TOTP) e organiza as credenciais por categorias (Pessoal, Trabalho…). Barra de favoritos corrigida: sempre acima da página."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "Correção: a senha mestra correta de outra conta era recusada quando mais de uma pessoa usava o Agzos Key no mesmo computador. Agora cada conta desbloqueia o seu cofre normalmente."
