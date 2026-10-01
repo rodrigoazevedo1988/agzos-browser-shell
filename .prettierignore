@@ -7,3 +7,4 @@ package-lock.json
 bun.lock
 routeTree.gen.ts
 electron/adblocker.vendor.cjs
+electron/argon2.vendor.cjs

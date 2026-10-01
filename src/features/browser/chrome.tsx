@@ -211,6 +211,8 @@ export function AgzosBrowser() {
 
   // Chave do site atual (host), para resetar o popup de autofill ao trocar de página.
   const currentHostKey = hostOf(current.url) ?? current.url;
+  const autofillHostRef = useRef(currentHostKey);
+  autofillHostRef.current = currentHostKey;
 
   // Credenciais do cofre que servem para o site aberto (base do popup de autofill).
   const vaultMatches = useMemo(
@@ -352,8 +354,30 @@ export function AgzosBrowser() {
   // clique repassado chegam em qualquer ordem e decidem por ele, não por um setState adiado.
   const panelRef = useRef(panel);
   panelRef.current = panel;
+  const autofillProps = {
+    entries: vaultMatches,
+    copied,
+    canFill: desktop !== null,
+    onCopy: (id: string, value: string) => void copyText(id, value),
+    onFill: fillCredential,
+    onOpenVault: () => {
+      setAutofillOpen(false);
+      setPanel("key");
+    },
+    onClose: () => {
+      setAutofillOpen(false);
+      setAutofillDismissed(currentHostKey);
+    },
+  };
+
   const onOverlayDismissed = useCallback(
-    ({ kind, click }: { kind?: Panel; click?: "shell" | "page" | false }) => {
+    ({ kind, click }: { kind?: Panel | "autofill"; click?: "shell" | "page" | false }) => {
+      // Popup de autofill (na camada, fora do `panel`): fechar = dispensar neste site.
+      if (kind === "autofill") {
+        setAutofillOpen(false);
+        setAutofillDismissed(autofillHostRef.current);
+        return;
+      }
       // O clique repassado já foi tratado (trocou de painel ou fechou este): nada a fazer.
       if (kind && panelRef.current !== kind) return;
       if (kind && click === "shell") dismissedRef.current = { kind, at: Date.now(), downs: 0 };
@@ -1312,7 +1336,11 @@ export function AgzosBrowser() {
                             onClearError: vault.clearError,
                           },
                         }
-                      : null;
+                      : // Popup de autofill: no app vai para a camada (a página nativa
+                        // cobriria um popup desenhado na casca); na web fica na casca.
+                        desktop && panel === null && canAutofill && autofillOpen
+                        ? { kind: "autofill", key: currentHostKey, props: autofillProps }
+                        : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1468,23 +1496,7 @@ export function AgzosBrowser() {
             onDismiss={() => setSaveCandidate(null)}
           />
         )}
-        {canAutofill && autofillOpen && (
-          <AutofillPopup
-            entries={vaultMatches}
-            copied={copied}
-            canFill={desktop !== null}
-            onCopy={(id, value) => void copyText(id, value)}
-            onFill={fillCredential}
-            onOpenVault={() => {
-              setAutofillOpen(false);
-              setPanel("key");
-            }}
-            onClose={() => {
-              setAutofillOpen(false);
-              setAutofillDismissed(currentHostKey);
-            }}
-          />
-        )}
+        {!desktop && canAutofill && autofillOpen && <AutofillPopup {...autofillProps} />}
         {permission && (
           <PermissionBar
             key={permission.id}

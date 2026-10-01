@@ -114,9 +114,66 @@ const PAGES: Record<string, string> = {
 // /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
 let unstableDown = true;
 
+// Agzos Key de mentira (AGZOS_KEY_URL): cofre Argon2id como o servidor real manda, sem
+// t/m/p no authMeta. A chave é o vetor do argon2-browser do Agzos Key (64 MiB, t=3, p=4).
+const KEY_PASSWORD = "senha-do-arnaldo";
+const KEY_RAW = Buffer.from(
+  "f43057afd6ec0bc0819d006d48f669eeb28b2625f6880a71159f8ad74982f465",
+  "hex",
+);
+function keyEncrypt(text: string) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", KEY_RAW, iv);
+  const data = Buffer.concat([cipher.update(text, "utf8"), cipher.final(), cipher.getAuthTag()]);
+  return { iv: iv.toString("base64"), data: data.toString("base64") };
+}
+const KEY_AUTH = keyEncrypt("agzos-key-auth-check-string-v1");
+const KEY_META = {
+  salt: Buffer.from("000102030405060708090a0b0c0d0e0f", "hex").toString("base64"),
+  authCheckIv: KEY_AUTH.iv,
+  authCheckData: KEY_AUTH.data,
+  kdf: "argon2id",
+};
+function keyApi(url: string): unknown {
+  if (url === "/api/integration/pair/claim") {
+    return {
+      deviceToken: "t",
+      accountEmail: "arnaldo@agzos.com",
+      hasVault: true,
+      authMeta: KEY_META,
+    };
+  }
+  if (url === "/api/integration/vault/status") {
+    return { hasVault: true, accountEmail: "arnaldo@agzos.com", authMeta: KEY_META };
+  }
+  if (url === "/api/integration/vault/sync") {
+    const entry = {
+      id: "c1",
+      title: "Login local",
+      url: origin,
+      username: "arnaldo@agzos.com",
+      password: "segredo",
+      updatedAt: 1,
+    };
+    return {
+      entries: [{ id: "c1", ...keyEncrypt(JSON.stringify(entry)), version: 1 }],
+      syncedAt: 1,
+    };
+  }
+  return null;
+}
+
 test.beforeAll(async () => {
   server = http.createServer((request, response) => {
     const url = request.url ?? "/";
+    if (url.startsWith("/api/integration/")) {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(keyApi(url) ?? {}));
+      });
+      return;
+    }
     if (FILTERS[url]) {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end(FILTERS[url]);
@@ -997,14 +1054,14 @@ test("1.6: favorito pela estrela persiste no SQLite e abre pela barra", async ()
 });
 
 test("1.6: atualização encontra a versão nova, confere, baixa e instala ao reiniciar", async () => {
-  // Pacote "1.99.0" no formato do build-all.sh (tar.gz do Linux), servido como no VPS.
+  // Pacote "99.0.0" (sempre acima do app) no formato do build-all.sh (tar.gz do Linux).
   const work = tempProfile();
   const install = path.join(work, "instalado");
   fs.mkdirSync(path.join(install, "resources", "app"), { recursive: true });
   fs.writeFileSync(path.join(install, "resources", "app", "package.json"), '{"version":"1.3.8"}');
   const pkg = path.join(work, "pacote");
   fs.mkdirSync(path.join(pkg, "resources", "app"), { recursive: true });
-  fs.writeFileSync(path.join(pkg, "resources", "app", "package.json"), '{"version":"1.99.0"}');
+  fs.writeFileSync(path.join(pkg, "resources", "app", "package.json"), '{"version":"99.0.0"}');
   // O app reaberto é o executável com o mesmo nome do atual (aqui, o "electron" do teste).
   fs.writeFileSync(
     path.join(pkg, "electron"),
@@ -1018,11 +1075,11 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
     if (request.url === "/browser/latest.json") {
       response.end(
         JSON.stringify({
-          version: "1.99.0",
+          version: "99.0.0",
           notes: "teste",
           files: {
             "linux-x64": {
-              url: "v1.99.0/Agnos-Browser-linux-x64.tar.gz",
+              url: "v99.0.0/Agnos-Browser-linux-x64.tar.gz",
               sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
               size: bytes.length,
             },
@@ -1031,7 +1088,7 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
       );
       return;
     }
-    if (request.url === "/browser/v1.99.0/Agnos-Browser-linux-x64.tar.gz") {
+    if (request.url === "/browser/v99.0.0/Agnos-Browser-linux-x64.tar.gz") {
       response.end(bytes);
       return;
     }
@@ -1054,16 +1111,16 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
       .click();
     const settings = window.locator(".settings-main");
     await settings.getByRole("button", { name: "Verificar agora" }).click();
-    await expect(settings.getByText(/Versão 1\.99\.0 pronta/)).toBeVisible({ timeout: 20_000 });
+    await expect(settings.getByText(/Versão 99\.0\.0 pronta/)).toBeVisible({ timeout: 20_000 });
     // Botão na barra: reinicia e instala.
     await window.getByRole("button", { name: "Atualizar", exact: true }).click();
     await expect.poll(() => closed, { timeout: 15_000 }).toBe(true);
     const result = path.join(work, "perfil", "atualizacoes", "resultado.txt");
     await expect.poll(() => fs.existsSync(result), { timeout: 15_000 }).toBe(true);
-    expect(fs.readFileSync(result, "utf8").trim()).toBe("ok 1.99.0");
+    expect(fs.readFileSync(result, "utf8").trim()).toBe("ok 99.0.0");
     expect(
       fs.readFileSync(path.join(install, "resources", "app", "package.json"), "utf8"),
-    ).toContain("1.99.0");
+    ).toContain("99.0.0");
     await expect.poll(() => fs.existsSync(path.join(work, "reaberto.txt"))).toBe(true);
   } finally {
     if (!closed) await app.close();
@@ -2033,6 +2090,46 @@ test("2.0: painel lateral abre ao lado da página, fica carregado e some ao fech
       )
       .toBe(0);
     expect(await liveViews(app, "/painel-lateral")).toHaveLength(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.2.3: conta Argon2id desbloqueia e o popup de autofill fica acima da página", async () => {
+  const { app, window } = await launch(tempProfile(), {
+    AGZOS_DEBUG_OVERLAY: "1",
+    AGZOS_KEY_URL: origin,
+  });
+  const url = `${origin}/video-vivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+
+    // Pareia e desbloqueia com a senha mestra (Argon2id p=4, na worker do main).
+    await window.getByRole("button", { name: "Abrir Agzos Key" }).click();
+    const overlay = await overlayPage(app);
+    await overlay.getByLabel("Código de pareamento").fill("ABCD-1234");
+    await overlay.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Senha mestra").fill(KEY_PASSWORD);
+    await overlay.getByRole("button", { name: "Desbloquear" }).click();
+    await expect(overlay.getByText("Login local")).toBeVisible({ timeout: 30_000 });
+    await overlay.keyboard.press("Escape");
+
+    // O site tem credencial: o popup de autofill sobe NA CAMADA, por cima da página.
+    const popup = overlay.getByRole("complementary", { name: "Entrar com o Agzos Key" });
+    await expect(popup).toBeVisible();
+    await expect.poll(async () => (await layersOf(app, url)).overlayOnTop).toBe(true);
+    expect((await layersOf(app, url)).overlayVisible).toBe(true);
+    await expect(window.locator(".autofill-popup")).toHaveCount(0);
+    await expect(window.locator(".view-snapshot")).toHaveCount(0);
+    // Aparece sozinho: não rouba o foco da página.
+    expect(
+      await app.evaluate(({ webContents }) => webContents.getFocusedWebContents()?.getURL()),
+    ).not.toMatch(/overlay\.html$/);
+
+    // Fechar dispensa neste site: a camada some.
+    await popup.getByRole("button", { name: "Fechar" }).click();
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
   } finally {
     await app.close();
   }

@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -22,11 +22,30 @@ const keyModule = require(path.join(electronDir, "agzos-key.cjs")) as {
   _internals: {
     pbkdf2Key: (p: string, s: string, iters?: number, hash?: string) => Buffer;
     argon2idKey: (p: string, meta: Record<string, unknown>) => Buffer;
+    argon2idKeyAsync: (p: string, meta: Record<string, unknown>) => Promise<Buffer>;
     aesGcmEncrypt: (key: Buffer, text: string) => { iv: string; data: string };
   };
 };
 
 const { AUTH_STRING, createAgzosKey, _internals } = keyModule;
+
+// Argon2id com os parâmetros reais (64 MiB, t=3, p=4) leva alguns segundos em JS puro.
+vi.setConfig({ testTimeout: 60_000 });
+
+// Vetor de referência gerado com o argon2-browser do próprio Agzos Key (src/lib/argon2.ts:
+// Argon2id, mem 65536, time 3, parallelism 4, hashLen 32). Com p=1 sai outra chave.
+const REAL_SALT = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex").toString("base64");
+const REAL_PASSWORD = "senha-do-arnaldo";
+const REAL_KEY = Buffer.from(
+  "f43057afd6ec0bc0819d006d48f669eeb28b2625f6880a71159f8ad74982f465",
+  "hex",
+);
+
+/** Auth-check cifrado com uma chave dada, no formato do cofre (tag no fim). */
+function authCheckWithKey(key: Buffer, meta: Record<string, unknown>) {
+  const { iv, data } = _internals.aesGcmEncrypt(key, AUTH_STRING);
+  return { meta: { ...meta, authCheckIv: iv, authCheckData: data }, key };
+}
 
 /** Cifra o auth-check como o Web Crypto (tag no fim), para o deriveKey validar. */
 function authCheck(password: string, iterations?: number) {
@@ -77,6 +96,13 @@ const voceAuth = authCheck("senha-da-voce");
 const arnaldoAuth = authCheck("senha-do-arnaldo");
 const novaAuth = authCheck("senha-nova", 310_000); // conta com iterações diferentes
 const argonAuth = authCheckArgon("senha-argon"); // conta com KDF Argon2id
+// Conta Argon2id como o servidor manda de verdade: authMeta SEM t/m/p (só salt, auth-check
+// e kdf). O cofre foi criado pelo Agzos Key com p=4 (chave do vetor de referência).
+const realArgonAuth = authCheckWithKey(REAL_KEY, { salt: REAL_SALT, kdf: "argon2id" });
+// Cofre rotulado "argon2id" mas cifrado com PBKDF2 (o app grava o rótulo mesmo quando cai
+// no PBKDF2): precisa tentar a outra KDF, como o verifyMasterPassword do Agzos Key.
+const mislabeled = authCheck("senha-rotulo");
+mislabeled.meta["kdf"] = "argon2id";
 
 // Cada conta tem sua senha, seu auth-check e suas credenciais cifradas.
 const ACCOUNTS: Record<string, Account> = {
@@ -145,7 +171,24 @@ const ACCOUNTS: Record<string, Account> = {
   },
 };
 
+ACCOUNTS["token-real-argon"] = {
+  email: "arnaldo.real@agzos.com",
+  password: REAL_PASSWORD,
+  authMeta: realArgonAuth.meta,
+  key: realArgonAuth.key,
+  entries: [{ id: "r1", title: "gmail.com", username: "arnaldo", password: "y1", updatedAt: 1 }],
+};
+ACCOUNTS["token-rotulo"] = {
+  email: "rotulo@agzos.com",
+  password: "senha-rotulo",
+  authMeta: mislabeled.meta,
+  key: mislabeled.key,
+  entries: [],
+};
+
 const TOKEN_OF: Record<string, string> = {
+  REAL_ARGON: "token-real-argon",
+  ROTULO: "token-rotulo",
   VOCE: "token-voce",
   ARNALDO: "token-arnaldo",
   NOVA: "token-nova",
@@ -265,6 +308,26 @@ describe("Agzos Key — desbloqueio por conta", () => {
     await expect(client.unlock("senha-argon")).resolves.toEqual({ unlocked: true });
     const vault = await client.list();
     expect(vault.entries.map((e) => e.id)).toEqual(["g1"]);
+  });
+
+  it("Argon2id deriva a mesma chave do argon2-browser do Agzos Key (p=4 por padrão)", async () => {
+    const meta = { salt: REAL_SALT };
+    const key = await _internals.argon2idKeyAsync(REAL_PASSWORD, meta);
+    expect(key.toString("hex")).toBe(REAL_KEY.toString("hex"));
+  });
+
+  it("desbloqueia conta Argon2id real cujo authMeta não traz t/m/p (regressão do Arnaldo)", async () => {
+    const client = freshClient();
+    await client.pair("REAL_ARGON");
+    await expect(client.unlock(REAL_PASSWORD)).resolves.toEqual({ unlocked: true });
+    const vault = await client.list();
+    expect(vault.entries.map((e) => e.id)).toEqual(["r1"]);
+  });
+
+  it("desbloqueia cofre rotulado argon2id mas cifrado com PBKDF2", async () => {
+    const client = freshClient();
+    await client.pair("ROTULO");
+    await expect(client.unlock("senha-rotulo")).resolves.toEqual({ unlocked: true });
   });
 
   it("recusa a senha errada numa conta Argon2id", async () => {

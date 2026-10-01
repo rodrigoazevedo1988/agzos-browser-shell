@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3",
+    date: "2026-10-01",
+    items: [
+      "Correção: contas do Agzos Key protegidas com Argon2id voltam a desbloquear com a senha mestra correta — o navegador agora deriva a chave com os mesmos parâmetros do Agzos Key e, como ele, tenta a outra proteção quando o cofre está rotulado diferente.",
+      "O desbloqueio dessas contas roda em segundo plano, sem travar as janelas enquanto a senha é verificada.",
+      'Correção: o popup "Entrar com o Agzos Key" ficava escondido atrás da página; agora sobe por cima do site, como os outros painéis, sem tirar o foco do que você está digitando.',
+    ],
+  },
+  {
     version: "2.2.2",
     date: "2026-10-01",
     items: [

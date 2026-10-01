@@ -16,6 +16,7 @@ const OVERLAY_KINDS = new Set([
   "downloads",
   "privacy",
   "site",
+  "autofill",
   "key",
   "bookmark",
   "palette",

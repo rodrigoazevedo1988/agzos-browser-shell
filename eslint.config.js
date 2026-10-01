@@ -6,7 +6,15 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi", "electron/adblocker.vendor.cjs"] },
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".vinxi",
+      "electron/adblocker.vendor.cjs",
+      "electron/argon2.vendor.cjs",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

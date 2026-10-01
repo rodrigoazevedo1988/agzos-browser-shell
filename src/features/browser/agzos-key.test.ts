@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// A senha errada também passa pelo Argon2id real (64 MiB), que leva alguns segundos.
+vi.setConfig({ testTimeout: 60_000 });
 
 const require = createRequire(import.meta.url);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -18,7 +21,7 @@ const keyModule = require(path.join(electronDir, "agzos-key.cjs")) as {
     deriveKey: (
       password: string,
       meta: { salt: string; authCheckIv: string; authCheckData: string },
-    ) => Buffer;
+    ) => Promise<Buffer>;
     decryptEntry: (key: Buffer, e: { iv: string; data: string }) => Record<string, unknown>;
     encryptEntry: (
       key: Buffer,
@@ -65,16 +68,18 @@ describe("Agzos Key — compatibilidade de cripto", () => {
     expect(_internals.aesGcmDecrypt(key, iv, data)).toBe("round-trip");
   });
 
-  it("valida a senha mestra pelo auth-check e rejeita a errada", () => {
+  it("valida a senha mestra pelo auth-check e rejeita a errada", async () => {
     const salt = crypto.randomBytes(16).toString("base64");
     const correctKey = _internals.pbkdf2Key("senha-certa", salt);
     const check = webCryptoStyleEncrypt(correctKey, AUTH_STRING);
     const meta = { salt, authCheckIv: check.iv, authCheckData: check.data };
 
     // Senha certa: deriva a chave sem erro.
-    expect(() => _internals.deriveKey("senha-certa", meta)).not.toThrow();
-    // Senha errada: auth-check falha.
-    expect(() => _internals.deriveKey("senha-errada", meta)).toThrow();
+    await expect(_internals.deriveKey("senha-certa", meta)).resolves.toEqual(correctKey);
+    // Senha errada: auth-check falha (com PBKDF2 e com Argon2id).
+    await expect(_internals.deriveKey("senha-errada", meta)).rejects.toThrow(
+      "invalid_master_password",
+    );
   });
 
   it("faz round-trip de uma entrada do cofre (encrypt -> decrypt)", () => {

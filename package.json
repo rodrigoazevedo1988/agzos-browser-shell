@@ -1,6 +1,6 @@
 {
   "name": "tanstack_start_ts",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@noble/hashes": "1.5.0",

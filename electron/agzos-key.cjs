@@ -3,8 +3,8 @@
 // e as decifra em memória. A senha mestra, a chave derivada e as entradas em texto puro
 // NUNCA saem deste processo: o renderer recebe só o resultado já decifrado via IPC.
 //
-// Cripto compatível byte a byte com o Agzos Key (Web Crypto): PBKDF2-HMAC-SHA256 100k
-// -> AES-256-GCM, com o tag de autenticação de 16 bytes concatenado ao FIM do ciphertext.
+// Cripto compatível byte a byte com o Agzos Key (Web Crypto + argon2-browser): KDF
+// PBKDF2-HMAC-SHA256 100k ou Argon2id (64 MiB, t=3, p=4) -> AES-256-GCM, com o tag de autenticação de 16 bytes concatenado ao FIM do ciphertext.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -53,8 +53,8 @@ function pbkdf2Key(password, saltB64, iterations, hash) {
   return crypto.pbkdf2Sync(password, salt, iterations || PBKDF2_ITERS, 32, hash || "sha256");
 }
 
-// Argon2id puro JS, carregado só quando preciso. Primeiro o bundle que vai no app
-// (argon2.vendor.cjs, sem node_modules); no dev/teste cai no pacote @noble/hashes.
+// Argon2id puro JS. Primeiro o bundle que vai no app (argon2.vendor.cjs, sem
+// node_modules); no dev/teste cai no pacote @noble/hashes.
 let argon2idFn = null;
 function loadArgon2id() {
   if (argon2idFn) return argon2idFn;
@@ -66,16 +66,50 @@ function loadArgon2id() {
   return argon2idFn;
 }
 
-// Deriva a chave com Argon2id, com os parâmetros do cofre (authMeta): t (iterações),
-// m (memória em KiB) e p (paralelismo). Nomes alternativos cobertos (timeCost, memoryCost…).
+// Parâmetros fixos do Agzos Key (src/lib/argon2.ts, argon2-browser): 64 MiB, 3 passes,
+// paralelismo 4. O servidor NÃO manda t/m/p no authMeta; o padrão antigo daqui (p=1)
+// derivava outra chave e recusava a senha mestra certa de toda conta Argon2id.
+const ARGON2_DEFAULTS = { t: 3, m: 65536, p: 4 };
+
+function argon2idParams(meta) {
+  return {
+    t: meta.t || meta.time || meta.timeCost || ARGON2_DEFAULTS.t,
+    m: meta.m || meta.mem || meta.memory || meta.memoryCost || ARGON2_DEFAULTS.m, // KiB
+    p: meta.p || meta.parallelism || meta.lanes || ARGON2_DEFAULTS.p,
+  };
+}
+
 function argon2idKey(password, meta) {
-  const argon2id = loadArgon2id();
+  const { t, m, p } = argon2idParams(meta);
   const salt = Buffer.from(meta.salt, "base64");
-  const t = meta.t || meta.time || meta.timeCost || meta.iterations || 3;
-  const m = meta.m || meta.mem || meta.memory || meta.memoryCost || 65536; // KiB
-  const p = meta.p || meta.parallelism || meta.lanes || 1;
-  const out = argon2id(password, salt, { t, m, p, dkLen: 32 });
-  return Buffer.from(out);
+  return Buffer.from(loadArgon2id()(password, salt, { t, m, p, dkLen: 32 }));
+}
+
+// Mesmo cálculo numa worker thread (leva segundos; não pode travar o main process).
+// Se a worker não subir, calcula aqui mesmo.
+function argon2idKeyAsync(password, meta) {
+  let Worker;
+  try {
+    ({ Worker } = require("node:worker_threads"));
+  } catch {
+    return Promise.resolve(argon2idKey(password, meta));
+  }
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = new Worker(path.join(__dirname, "argon2-worker.cjs"), {
+        workerData: { password, salt: meta.salt, ...argon2idParams(meta) },
+      });
+    } catch {
+      resolve(argon2idKey(password, meta));
+      return;
+    }
+    worker.once("message", (msg) => {
+      if (msg && msg.key) resolve(Buffer.from(msg.key, "base64"));
+      else reject(new Error((msg && msg.error) || "argon2_failed"));
+    });
+    worker.once("error", reject);
+  });
 }
 
 function aesGcmDecrypt(keyRaw, ivB64, dataB64) {
@@ -96,35 +130,46 @@ function aesGcmEncrypt(keyRaw, plaintext) {
   return { iv: iv.toString("base64"), data: Buffer.concat([enc, tag]).toString("base64") };
 }
 
-// Deriva a chave AES e valida a senha mestra pelo auth-check do cofre.
-// Os parâmetros da KDF vêm do próprio cofre (authMeta): contas diferentes podem ter KDF
-// (pbkdf2/argon2id), iterações, memória e hash diferentes. Ignorar isso derivava a chave
-// errada e recusava a senha mestra correta de algumas contas.
-function deriveKey(password, meta) {
-  const kdf = (meta.kdf || "pbkdf2").toLowerCase();
-  let key;
-  if (kdf.startsWith("argon")) {
-    try {
-      key = argon2idKey(password, meta);
-    } catch {
-      throw new Error("unsupported_kdf");
-    }
-  } else {
-    const iterations = Number.isInteger(meta.iterations) ? meta.iterations : PBKDF2_ITERS;
-    const hash =
-      typeof meta.hash === "string" ? meta.hash.replace("-", "").toLowerCase() : "sha256";
-    key = pbkdf2Key(password, meta.salt, iterations, hash);
-  }
-  // Senha errada quebra a autenticação do GCM (lança um erro cru do OpenSSL) OU, no
-  // limite, decifra para algo != AUTH_STRING. Nos dois casos é "senha mestra incorreta".
-  let check;
+// A chave abre o auth-check do cofre? Senha errada quebra a autenticação do GCM (erro
+// cru do OpenSSL) ou, no limite, decifra para algo != AUTH_STRING.
+function opensAuthCheck(key, meta) {
   try {
-    check = aesGcmDecrypt(key, meta.authCheckIv, meta.authCheckData);
+    return aesGcmDecrypt(key, meta.authCheckIv, meta.authCheckData) === AUTH_STRING;
   } catch {
-    throw new Error("invalid_master_password");
+    return false;
   }
-  if (check !== AUTH_STRING) throw new Error("invalid_master_password");
-  return key;
+}
+
+function pbkdf2KeyFromMeta(password, meta) {
+  const iterations = Number.isInteger(meta.iterations) ? meta.iterations : PBKDF2_ITERS;
+  const hash = typeof meta.hash === "string" ? meta.hash.replace("-", "").toLowerCase() : "sha256";
+  return pbkdf2Key(password, meta.salt, iterations, hash);
+}
+
+// Deriva a chave AES e valida a senha mestra pelo auth-check do cofre.
+// Igual ao verifyMasterPassword do Agzos Key: tenta a KDF declarada no cofre e depois a
+// outra, porque o rótulo `kdf` pode não bater com a KDF que realmente cifrou o auth-check
+// (o app grava "argon2id" mesmo quando cai no PBKDF2, e cofres antigos não têm o campo).
+async function deriveKey(password, meta) {
+  const declared = String(meta.kdf || "pbkdf2")
+    .toLowerCase()
+    .startsWith("argon")
+    ? "argon2id"
+    : "pbkdf2";
+  const order = declared === "argon2id" ? ["argon2id", "pbkdf2"] : ["pbkdf2", "argon2id"];
+  for (const kdf of order) {
+    let key;
+    try {
+      key =
+        kdf === "argon2id"
+          ? await argon2idKeyAsync(password, meta)
+          : pbkdf2KeyFromMeta(password, meta);
+    } catch {
+      continue;
+    }
+    if (opensAuthCheck(key, meta)) return key;
+  }
+  throw new Error("invalid_master_password");
 }
 
 function decryptEntry(key, entry) {
@@ -296,7 +341,7 @@ function createAgzosKey({ userDataDir, safeStorage }) {
     if (!store.loadToken()) throw new Error("not_paired");
     await refreshStatus();
     if (!authMeta) throw new Error("no_vault");
-    aesKey = deriveKey(masterPassword, authMeta); // lança invalid_master_password
+    aesKey = await deriveKey(masterPassword, authMeta); // lança invalid_master_password
     return { unlocked: true };
   }
 
@@ -393,6 +438,7 @@ module.exports = {
   _internals: {
     pbkdf2Key,
     argon2idKey,
+    argon2idKeyAsync,
     aesGcmDecrypt,
     aesGcmEncrypt,
     deriveKey,

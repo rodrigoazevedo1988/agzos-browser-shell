@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 
 import { BookmarkEditor } from "@/features/bookmarks/editor";
 import { DownloadsPanel } from "@/features/downloads/panel";
+import { AutofillPopup } from "@/features/key/autofill-popup";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { AppMenu } from "@/features/settings/menu";
@@ -21,6 +22,7 @@ export type PanelSpec =
   | { kind: "privacy"; key?: string; props: ComponentProps<typeof PrivacyPanel> }
   | { kind: "site"; key?: string; props: ComponentProps<typeof SitePanel> }
   | { kind: "key"; key?: string; props: ComponentProps<typeof KeyPanel> }
+  | { kind: "autofill"; key?: string; props: ComponentProps<typeof AutofillPopup> }
   | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> }
   | { kind: "palette"; key?: string; props: ComponentProps<typeof CommandPalette> }
   | { kind: "workspaces"; key?: string; props: ComponentProps<typeof WorkspacePanel> }
@@ -41,6 +43,8 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <SitePanel key={key} {...spec.props} />;
     case "key":
       return <KeyPanel key={key} {...spec.props} />;
+    case "autofill":
+      return <AutofillPopup key={key} {...spec.props} />;
     case "bookmark":
       return <BookmarkEditor key={key} {...spec.props} />;
     case "palette":

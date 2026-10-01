@@ -1501,6 +1501,7 @@ function adoptView(ctx, id, moved) {
   if (!moved.view) return;
   ctx.views.set(id, { view: moved.view, hiddenSince: null });
   ctx.window.contentView.addChildView(moved.view);
+  raisePanelLayer(ctx);
   moved.view.setBounds(HIDDEN_RECT);
   tabOfContents.set(moved.view.webContents.id, { ctx, id });
 }
@@ -2158,6 +2159,9 @@ async function openPanelLayer(ctx, model) {
   }
   const opening = !layer.model;
   layer.model = model;
+  // O popup de autofill aparece sozinho ao abrir a página de login: não tira o foco dela
+  // (o usuário pode estar digitando no site).
+  const passive = model.kind === "autofill";
   if (opening) {
     // Um overlay por vez: o painel ganha da prévia.
     hidePreview(ctx);
@@ -2179,8 +2183,10 @@ async function openPanelLayer(ctx, model) {
   }
   renderPanelLayer(ctx);
   placePanelLayer(ctx);
+  // Foco na camada ao abrir, ou quando o autofill (sem foco) vira um painel de verdade.
+  if (!passive && (opening || layer.passive)) layer.view.webContents.focus();
+  layer.passive = passive;
   if (opening) {
-    layer.view.webContents.focus();
     logOverlay("live-overlay", `kind=${model.kind} window=${ctx.key}`);
   }
   return { ok: true };
@@ -2195,6 +2201,7 @@ function closePanelLayer(ctx, { notify = false, refocus = true, click = false } 
   if (!layer?.model) return;
   const { kind } = layer.model;
   layer.model = null;
+  layer.passive = false;
   const contents = layer.view.webContents;
   const hadFocus = !contents.isDestroyed() && contents.isFocused();
   layer.view.setVisible(false);
