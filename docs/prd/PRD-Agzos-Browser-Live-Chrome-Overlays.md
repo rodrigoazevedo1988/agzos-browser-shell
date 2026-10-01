@@ -85,10 +85,10 @@ Fora de escopo nesta sprint:
 
 Manter **duas** superfícies nativas na janela:
 
-| Camada | Quem é | Z |
-|---|---|---|
-| A | `WebContentsView` da guia ativa (página) | base do content bounds |
-| B | `WebContentsView` da casca-overlay (HTML transparente, só o popover) | acima de A, mesmo bounds do content **ou** bounds do popover + margem |
+| Camada | Quem é                                                               | Z                                                                     |
+| ------ | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| A      | `WebContentsView` da guia ativa (página)                             | base do content bounds                                                |
+| B      | `WebContentsView` da casca-overlay (HTML transparente, só o popover) | acima de A, mesmo bounds do content **ou** bounds do popover + margem |
 
 A casca principal (tabs, omnibox, toolbar) continua no `BrowserWindow` / view de chrome. O popover **não** é pintado nessa superfície por baixo da página.
 
@@ -117,12 +117,12 @@ main closeChromeOverlay:
 
 ### 3.2 Alternativa rejeitada como padrão
 
-| Abordagem | Por que não |
-|---|---|
-| `hide + capturePage` | congela vídeo; custo GPU; race ao redimensionar |
-| `BrowserWindow` filho frameless sempre on top | quebra multi-monitor, foco, Wayland, Alt-Tab; duas janelas por menu |
-| Descer a view da guia com `setBounds` encolhido só na área do menu | layout da página reflow; YouTube player some; pior que freeze |
-| `setIgnoreMouseEvents` na guia + pintar menu na casca de baixo | o menu continua **atrás** da view; invisível |
+| Abordagem                                                          | Por que não                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `hide + capturePage`                                               | congela vídeo; custo GPU; race ao redimensionar                     |
+| `BrowserWindow` filho frameless sempre on top                      | quebra multi-monitor, foco, Wayland, Alt-Tab; duas janelas por menu |
+| Descer a view da guia com `setBounds` encolhido só na área do menu | layout da página reflow; YouTube player some; pior que freeze       |
+| `setIgnoreMouseEvents` na guia + pintar menu na casca de baixo     | o menu continua **atrás** da view; invisível                        |
 
 ### 3.3 Fallback
 
@@ -222,19 +222,22 @@ Main (`electron/*.cjs`), sempre com `ctx` via `event.sender`:
 
 ```js
 // nomes ilustrativos — case iguais aos já usados no preview/Ctrl+Tab
-ipcMain.handle('chrome-overlay:open', (event, payload) => { /* ctx = windowFromSender(event) */ })
-ipcMain.handle('chrome-overlay:update', (event, payload) => {})
-ipcMain.on('chrome-overlay:close', (event) => {})
+ipcMain.handle("chrome-overlay:open", (event, payload) => {
+  /* ctx = windowFromSender(event) */
+});
+ipcMain.handle("chrome-overlay:update", (event, payload) => {});
+ipcMain.on("chrome-overlay:close", (event) => {});
 ```
 
 `payload` mínimo:
 
 ```ts
 type ChromeOverlayOpen = {
-  kind: 'app-menu' | 'downloads' | 'ablock' | 'find' | 'omnibox' | 'preview' | 'ctrl-tab' | 'generic'
-  anchor: { x: number; y: number; w: number; h: number } // coords da janela
-  size?: { w: number; h: number }
-}
+  kind:
+    "app-menu" | "downloads" | "ablock" | "find" | "omnibox" | "preview" | "ctrl-tab" | "generic";
+  anchor: { x: number; y: number; w: number; h: number }; // coords da janela
+  size?: { w: number; h: number };
+};
 ```
 
 Preload da casca: só esses canais. Sem `nodeIntegration`.
@@ -247,23 +250,23 @@ Preferência: **um** `overlayView` reusado por janela (criar na primeira abertur
 
 ## 7. Casos de borda
 
-| Caso | Esperado |
-|---|---|
-| YouTube play + menu 30s | frames andam, áudio contínuo |
-| YouTube Shorts / Reels / Twitch | idem |
-| Canvas WebGL (jogo no browser) | não congela |
-| Página em fullscreen HTML5 | menu da chrome normalmente nem aparece; se aparecer, overlay no bounds restante |
-| Zoom da página 80% (como no print) | overlay em DIP da janela, não em CSS da página |
-| Zoom da chrome / display scale 150% Win | âncora alinhada ao botão |
-| Hibernar a guia com menu aberto | fecha overlay, depois hiberna |
-| Crash da GPU / view destroyed | fallback snapshot **ou** fecha overlay; sem throw no main |
-| Duas overlays ao mesmo tempo (preview + menu) | uma só. Menu ganha. Fecha preview |
-| Ctrl+Tab com menu aberto | fecha menu, abre seletor (mesmo overlayView, outro kind) |
-| Context menu da **página** (Chromium nativo) | não passa por este PRD; continua nativo |
-| Drag da janela com menu aberto | menu acompanha / fecha — escolha uma e teste; preferir fechar |
-| Linux Wayland | overlayView filho da mesma BrowserWindow; sem janela popup extra |
-| macOS ⌘H com menu aberto | app esconde; ao voltar overlay fechado |
-| Windows Ctrl key-repeat | não deve spammar open/close do menu |
+| Caso                                          | Esperado                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------- |
+| YouTube play + menu 30s                       | frames andam, áudio contínuo                                                    |
+| YouTube Shorts / Reels / Twitch               | idem                                                                            |
+| Canvas WebGL (jogo no browser)                | não congela                                                                     |
+| Página em fullscreen HTML5                    | menu da chrome normalmente nem aparece; se aparecer, overlay no bounds restante |
+| Zoom da página 80% (como no print)            | overlay em DIP da janela, não em CSS da página                                  |
+| Zoom da chrome / display scale 150% Win       | âncora alinhada ao botão                                                        |
+| Hibernar a guia com menu aberto               | fecha overlay, depois hiberna                                                   |
+| Crash da GPU / view destroyed                 | fallback snapshot **ou** fecha overlay; sem throw no main                       |
+| Duas overlays ao mesmo tempo (preview + menu) | uma só. Menu ganha. Fecha preview                                               |
+| Ctrl+Tab com menu aberto                      | fecha menu, abre seletor (mesmo overlayView, outro kind)                        |
+| Context menu da **página** (Chromium nativo)  | não passa por este PRD; continua nativo                                         |
+| Drag da janela com menu aberto                | menu acompanha / fecha — escolha uma e teste; preferir fechar                   |
+| Linux Wayland                                 | overlayView filho da mesma BrowserWindow; sem janela popup extra                |
+| macOS ⌘H com menu aberto                      | app esconde; ao voltar overlay fechado                                          |
+| Windows Ctrl key-repeat                       | não deve spammar open/close do menu                                             |
 
 ---
 
@@ -330,14 +333,14 @@ Não use eventos sintéticos do Playwright como prova única de atalho físico; 
 
 ## 11. Riscos
 
-| Risco | Mitigação |
-|---|---|
-| Dois `WebContentsView` transparentes = input vai para o errado | overlay só `visible` quando há UI; `setIgnoreMouseEvents(true)` quando hidden |
-| Overlay captura 100% do content e a página não rola | backdrop com `pointer-events: none` exceto o card; wheel fora do card não é `preventDefault` |
-| Foco preso no overlay hidden | `setVisible(false)` + `tabView.webContents.focus()` no close |
-| Duplicar o React tree no overlay | mesma origem, rota leve; ou serializar o menu já aberto via props/IPC |
-| `ELECTRON_FILES` esquece o html do overlay | se for arquivo novo no main, incluir no `build-all.sh` |
-| macOS: menu bar Editar some o foco | não criar janela separada |
+| Risco                                                          | Mitigação                                                                                    |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Dois `WebContentsView` transparentes = input vai para o errado | overlay só `visible` quando há UI; `setIgnoreMouseEvents(true)` quando hidden                |
+| Overlay captura 100% do content e a página não rola            | backdrop com `pointer-events: none` exceto o card; wheel fora do card não é `preventDefault` |
+| Foco preso no overlay hidden                                   | `setVisible(false)` + `tabView.webContents.focus()` no close                                 |
+| Duplicar o React tree no overlay                               | mesma origem, rota leve; ou serializar o menu já aberto via props/IPC                        |
+| `ELECTRON_FILES` esquece o html do overlay                     | se for arquivo novo no main, incluir no `build-all.sh`                                       |
+| macOS: menu bar Editar some o foco                             | não criar janela separada                                                                    |
 
 ---
 
@@ -427,22 +430,22 @@ contextIsolation, ELECTRON_FILES, regras de hibernação.
 
 ### 14.3 Decisões de comportamento
 
-| Caso | Decisão |
-|---|---|
-| Clique fora do cartão | 1.5.4 comia o clique. **1.5.5**, como no Comet (conferido pelo dono do produto): fecha **e o clique vale** para o que está embaixo. A camada manda o ponto; o main repassa `mouseMove`/`mouseDown`/`mouseUp` (`sendInputEvent`) para a página, em coordenadas dela, ou para a casca (guias, omnibox, botões), e dá o foco ao alvo. Clicar no botão do próprio painel (⋯, downloads, estrela…) só fecha: a casca não reabre com o clique repassado (vale uma vez, decidido de forma síncrona por `panelRef`, porque o aviso e o clique chegam em qualquer ordem). |
-| Rolagem fora do cartão | A página rola: `sendInputEvent` `mouseWheel` na guia ativa, com as coordenadas convertidas da janela para a página. |
-| Esc | Fecha, pela camada ou pelo próprio componente. |
-| Atalho do app com o foco no painel (Ctrl+T, Ctrl+Tab, Ctrl+J…) | O painel fecha e o atalho segue pelo `forwardAppShortcut`, o mesmo caminho da página, com o Ctrl sintético. |
-| Foco ao fechar | Volta para o webContents que tinha o foco ao abrir (a casca, que recebeu o clique). A camada escondida sai do foco (`setVisible(false)`). |
-| Arrastar a janela | Fecha, mas só se a posição mudou de fato. O WM manda `move` solto ao mostrar a janela. |
-| Minimizar ou esconder (⌘H) | Fecha. Ao voltar, o painel está fechado. |
-| Perder o foco (blur) | **Não** fecha. Sob xvfb e alguns WMs chega um `blur` solto logo depois de a janela aparecer, e o painel recém-aberto sumia. |
-| Fullscreen HTML5 da página | Fecha. |
-| Mover a guia para outra janela | Fecha o painel da janela de origem. |
-| Prévia e painel juntos | O painel ganha: esconde a prévia, e a prévia não abre com o painel aberto. |
-| Guia nova aberta com o painel aberto | A camada volta ao topo (`raisePanelLayer`). |
-| Argumento não clonável (`onClick={onClose}` passa o evento) | Vira `undefined` antes do IPC. Sem isso a chamada inteira falhava. |
-| Copiar senha no cofre | É escrito na área de transferência pela própria camada, que tem o foco. |
+| Caso                                                           | Decisão                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clique fora do cartão                                          | 1.5.4 comia o clique. **1.5.5**, como no Comet (conferido pelo dono do produto): fecha **e o clique vale** para o que está embaixo. A camada manda o ponto; o main repassa `mouseMove`/`mouseDown`/`mouseUp` (`sendInputEvent`) para a página, em coordenadas dela, ou para a casca (guias, omnibox, botões), e dá o foco ao alvo. Clicar no botão do próprio painel (⋯, downloads, estrela…) só fecha: a casca não reabre com o clique repassado (vale uma vez, decidido de forma síncrona por `panelRef`, porque o aviso e o clique chegam em qualquer ordem). |
+| Rolagem fora do cartão                                         | A página rola: `sendInputEvent` `mouseWheel` na guia ativa, com as coordenadas convertidas da janela para a página.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Esc                                                            | Fecha, pela camada ou pelo próprio componente.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Atalho do app com o foco no painel (Ctrl+T, Ctrl+Tab, Ctrl+J…) | O painel fecha e o atalho segue pelo `forwardAppShortcut`, o mesmo caminho da página, com o Ctrl sintético.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Foco ao fechar                                                 | Volta para o webContents que tinha o foco ao abrir (a casca, que recebeu o clique). A camada escondida sai do foco (`setVisible(false)`).                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Arrastar a janela                                              | Fecha, mas só se a posição mudou de fato. O WM manda `move` solto ao mostrar a janela.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Minimizar ou esconder (⌘H)                                     | Fecha. Ao voltar, o painel está fechado.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Perder o foco (blur)                                           | **Não** fecha. Sob xvfb e alguns WMs chega um `blur` solto logo depois de a janela aparecer, e o painel recém-aberto sumia.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Fullscreen HTML5 da página                                     | Fecha.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Mover a guia para outra janela                                 | Fecha o painel da janela de origem.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Prévia e painel juntos                                         | O painel ganha: esconde a prévia, e a prévia não abre com o painel aberto.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Guia nova aberta com o painel aberto                           | A camada volta ao topo (`raisePanelLayer`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Argumento não clonável (`onClick={onClose}` passa o evento)    | Vira `undefined` antes do IPC. Sem isso a chamada inteira falhava.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Copiar senha no cofre                                          | É escrito na área de transferência pela própria camada, que tem o foco.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ### 14.4 Testes
 
@@ -468,4 +471,3 @@ contextIsolation, ELECTRON_FILES, regras de hibernação.
   - YouTube e Shorts no Windows e no Linux, com o menu aberto por 10 s;
   - comparar com o Comet (clique fora entregue ou comido);
   - macOS: ⌘C/⌘V no editor de favorito aberto na camada.
-

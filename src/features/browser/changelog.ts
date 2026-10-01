@@ -16,6 +16,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Painéis laterais com WhatsApp, Telegram, Messenger e Instagram ao lado da página (escolha outros no +).",
       "Busca de comandos (Ctrl+K): ache qualquer comando, guia, workspace ou favorito digitando.",
       "Barra de endereço: o primeiro clique seleciona o endereço todo; o ícone de link copia o endereço, e favorito, ajustes do site e proteção aparecem ao pausar o mouse.",
+      "Personalização: escolha uma nova cor de acento para a interface, papel de parede na aba inicial e efeito de desfoque translúcido nos painéis (Configurações > Personalização).",
     ],
   },
   {

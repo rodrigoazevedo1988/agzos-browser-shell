@@ -5,6 +5,7 @@ import logoUrl from "@/assets/agzos-logo.svg";
 import { Button } from "@/components/ui/button";
 import { engines } from "./engines";
 import type { QuickLink } from "./types";
+import type { Prefs } from "./store/state";
 
 function shortOf(name: string) {
   return name.trim().charAt(0).toUpperCase() || "?";
@@ -14,6 +15,7 @@ export function StartPage({
   links,
   engine,
   blocked,
+  prefs,
   onOpen,
   onAdd,
   onRemove,
@@ -22,6 +24,7 @@ export function StartPage({
   engine: (typeof engines)[number];
   /** Bloqueios reais de hoje; null com o escudo desligado. */
   blocked: number | null;
+  prefs: Prefs;
   onOpen: (value: string) => void;
   onAdd: (link: QuickLink) => void;
   onRemove: (url: string) => void;
@@ -49,8 +52,36 @@ export function StartPage({
   }
 
   return (
-    <div className="start-page">
-      <div className="start-content">
+    <div
+      className={`start-page ${prefs.backgroundImage ? "has-bg" : ""}`}
+      style={
+        prefs.backgroundImage
+          ? {
+              backgroundImage: `url(${prefs.backgroundImage})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }
+          : undefined
+      }
+    >
+      {prefs.backgroundImage && (
+        <div
+          className="start-bg-overlay"
+          style={{
+            position: "absolute",
+            inset: 0,
+            backdropFilter: `blur(${prefs.backgroundBlur}px)`,
+            backgroundColor: prefs.dark
+              ? `rgba(0, 0, 0, ${1 - prefs.backgroundOpacity / 100})`
+              : `rgba(255, 255, 255, ${1 - prefs.backgroundOpacity / 100})`,
+            zIndex: 0,
+          }}
+        />
+      )}
+      <div
+        className={`start-content ${prefs.uiBlur ? "glass-panel" : ""}`}
+        style={{ position: "relative", zIndex: 1 }}
+      >
         <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
         <form className="start-search" onSubmit={search}>

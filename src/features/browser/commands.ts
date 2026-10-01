@@ -138,7 +138,10 @@ export const commands: Command[] = [
     id: "tab.new",
     label: "Nova guia",
     shortcuts: [{ key: "t" }],
-    run: ({ dispatch }) => dispatch({ type: "tab/new" }),
+    run: ({ dispatch, ui }) => {
+      dispatch({ type: "tab/new" });
+      setTimeout(ui.focusOmnibox, 50);
+    },
   },
   {
     id: "window.new",
@@ -182,7 +185,10 @@ export const commands: Command[] = [
     id: "tab.new-private",
     label: "Nova guia anônima",
     shortcuts: [{ key: "n", shift: true }],
-    run: ({ dispatch }) => dispatch({ type: "tab/new", private: true }),
+    run: ({ dispatch, ui }) => {
+      dispatch({ type: "tab/new", private: true });
+      setTimeout(ui.focusOmnibox, 50);
+    },
   },
   {
     id: "tab.new-right",

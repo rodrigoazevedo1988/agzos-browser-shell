@@ -118,6 +118,7 @@ export function Viewport({
           links={state.links}
           engine={engineOf(state.prefs.engine)}
           blocked={blockedToday}
+          prefs={state.prefs}
           onOpen={onOpen}
           onAdd={onAddLink}
           onRemove={onRemoveLink}

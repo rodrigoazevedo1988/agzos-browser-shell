@@ -59,7 +59,14 @@ import {
   splitShown,
   workspaceTabs,
 } from "./store/selectors";
-import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, initialState, type Prefs } from "./store/state";
+import {
+  BOOKMARKS_URL,
+  HISTORY_URL,
+  SETTINGS_URL,
+  defaultPrefs,
+  initialState,
+  type Prefs,
+} from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
 import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab } from "./types";
 import { BookmarksBar } from "./ui/bookmarks-bar";
@@ -893,8 +900,14 @@ export function AgzosBrowser() {
     hibernated: state.hibernated,
     confirmingClose,
     handlers: tabHandlers,
-    onNewTab: () => dispatch({ type: "tab/new" }),
-    onNewPrivateTab: () => dispatch({ type: "tab/new", private: true }),
+    onNewTab: () => {
+      dispatch({ type: "tab/new" });
+      setTimeout(focusOmnibox, 50);
+    },
+    onNewPrivateTab: () => {
+      dispatch({ type: "tab/new", private: true });
+      setTimeout(focusOmnibox, 50);
+    },
     onStripMenu: openStripMenu,
     onMoveTab: (id: number, index: number) => dispatch({ type: "tab/move", id, index }),
     groups: state.groups,
@@ -1255,7 +1268,14 @@ export function AgzosBrowser() {
 
   return (
     <main
-      className={cn("browser-stage", ...stageClasses)}
+      className={cn("browser-stage", ...stageClasses, prefs.uiBlur && "ui-glass")}
+      style={
+        {
+          ...(prefs.accentColor !== defaultPrefs.accentColor
+            ? { "--primary": prefs.accentColor }
+            : {}),
+        } as React.CSSProperties
+      }
       data-ready={state.hydrated ? "true" : undefined}
     >
       <section className="browser-window" aria-label="Agzos Browser">

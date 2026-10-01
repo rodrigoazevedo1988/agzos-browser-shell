@@ -9,6 +9,7 @@ import {
   Power,
   Search,
   ShieldCheck,
+  Wand2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import { HIBERNATE_MINUTES, type Prefs } from "@/features/browser/store/state";
 import { PermissionSelect } from "@/features/site/panel";
 import { PERMISSION_LABELS } from "@/features/site/permissions";
 import { Toggle } from "@/features/ui/toggle";
+import { ColorPicker } from "@/features/browser/ui/color-picker";
 import { cn } from "@/lib/utils";
 
 function updateText(update: UpdateState): string {
@@ -50,6 +52,7 @@ function updateText(update: UpdateState): string {
 
 export type SettingsSectionId =
   | "aparencia"
+  | "personalizacao"
   | "pesquisa"
   | "privacidade"
   | "desempenho"
@@ -181,6 +184,96 @@ export function SettingsPage(props: SettingsPageProps) {
                 checked={prefs.aiOpen}
                 onChange={(aiOpen) => setPrefs({ aiOpen })}
               />
+            ),
+          },
+        ],
+      },
+      {
+        id: "personalizacao",
+        label: "Personalização",
+        icon: Wand2,
+        rows: [
+          {
+            id: "cor-acento",
+            label: "Cor de acento",
+            keywords: "cor tema accent color rgb mandala",
+            node: (
+              <div className="settings-block flex-col items-start gap-4">
+                <strong>Cor de acento da interface</strong>
+                <ColorPicker
+                  color={prefs.accentColor}
+                  onChange={(accentColor) => setPrefs({ accentColor })}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "ui-blur",
+            label: "Efeitos visuais da interface",
+            keywords: "blur glassmorphism transparencia",
+            node: (
+              <Toggle
+                label="Painéis translúcidos"
+                hint="Ativa efeitos de desfoque (glassmorphism) em menus e barra de guias"
+                checked={prefs.uiBlur}
+                onChange={(uiBlur) => setPrefs({ uiBlur })}
+              />
+            ),
+          },
+          {
+            id: "papel-parede",
+            label: "Papel de parede",
+            keywords: "fundo imagem background wallpaper",
+            node: (
+              <div className="settings-block flex-col items-start gap-4">
+                <strong>Imagem da Nova aba</strong>
+                <div className="flex gap-4 items-center">
+                  <input
+                    type="url"
+                    className="flex-1 bg-muted rounded-md border px-3 py-2 text-sm"
+                    placeholder="URL da imagem (ex: https://...)"
+                    value={prefs.backgroundImage}
+                    onChange={(e) => setPrefs({ backgroundImage: e.target.value })}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPrefs({ backgroundImage: "" })}
+                  >
+                    Remover
+                  </Button>
+                </div>
+                {prefs.backgroundImage && (
+                  <div className="w-full flex flex-col gap-4">
+                    <label className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">
+                        Opacidade: {prefs.backgroundOpacity}%
+                      </span>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        step="1"
+                        value={prefs.backgroundOpacity}
+                        onChange={(e) => setPrefs({ backgroundOpacity: Number(e.target.value) })}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">
+                        Desfoque (Blur): {prefs.backgroundBlur}px
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="20"
+                        step="1"
+                        value={prefs.backgroundBlur}
+                        onChange={(e) => setPrefs({ backgroundBlur: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
             ),
           },
         ],

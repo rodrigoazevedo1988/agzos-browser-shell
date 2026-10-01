@@ -61,6 +61,16 @@ export type Prefs = {
   sidePanels: string[];
   /** Largura do painel lateral aberto (px). */
   sidePanelWidth: number;
+  /** Cor de acento (hex). */
+  accentColor: string;
+  /** Papel de parede da página inicial (URL ou data-url). */
+  backgroundImage: string;
+  /** Intensidade do blur do papel de parede (0 a 20). */
+  backgroundBlur: number;
+  /** Opacidade da imagem de fundo (0 a 100). */
+  backgroundOpacity: number;
+  /** Efeito de glassmorphism na interface. */
+  uiBlur: boolean;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -81,6 +91,11 @@ export const defaultPrefs: Prefs = {
   sidebar: true,
   sidePanels: DEFAULT_SIDE_PANELS,
   sidePanelWidth: SIDE_PANEL_WIDTH.initial,
+  accentColor: "#D43420",
+  backgroundImage: "",
+  backgroundBlur: 0,
+  backgroundOpacity: 100,
+  uiBlur: true,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };

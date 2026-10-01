@@ -206,6 +206,19 @@ export function parsePrefs(value: unknown): Prefs {
     pausedHosts: Array.isArray(raw["pausedHosts"])
       ? [...new Set(raw["pausedHosts"].filter(isString))]
       : [],
+    accentColor: isString(raw["accentColor"]) ? raw["accentColor"] : defaultPrefs.accentColor,
+    backgroundImage: isString(raw["backgroundImage"])
+      ? raw["backgroundImage"]
+      : defaultPrefs.backgroundImage,
+    backgroundBlur:
+      typeof raw["backgroundBlur"] === "number"
+        ? raw["backgroundBlur"]
+        : defaultPrefs.backgroundBlur,
+    backgroundOpacity:
+      typeof raw["backgroundOpacity"] === "number"
+        ? raw["backgroundOpacity"]
+        : defaultPrefs.backgroundOpacity,
+    uiBlur: typeof raw["uiBlur"] === "boolean" ? raw["uiBlur"] : defaultPrefs.uiBlur,
   };
 }
 

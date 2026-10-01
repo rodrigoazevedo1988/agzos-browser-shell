@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { childrenOf } from "../bookmarks";
 import { BOOKMARK_BAR, BOOKMARK_OTHER, type BookmarkNode } from "../types";
 import { BookmarkIcon } from "./bookmark-icon";
+import { FolderDropdown } from "./folder-dropdown";
 
 const DRAG_TYPE = "application/x-agzos-bookmark";
 
@@ -18,7 +19,7 @@ export function BookmarksBar({
 }: {
   nodes: BookmarkNode[];
   onOpen: (node: BookmarkNode, newTab: boolean) => void;
-  /** Clique na pasta: menu com o conteúdo, ancorado no botão. */
+  /** Clique na pasta: mantido para retrocompatibilidade, mas agora o dropdown shadcn intercepta. */
   onFolder: (event: MouseEvent<HTMLElement>, folderId: string) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>, node: BookmarkNode | null) => void;
   onMove: (id: string, parentId: string, index?: number) => void;
@@ -65,7 +66,7 @@ export function BookmarksBar({
       )}
       {items.map((node, index) => {
         const folder = node.kind === "folder";
-        return (
+        const button = (
           <button
             key={node.id}
             type="button"
@@ -79,12 +80,9 @@ export function BookmarksBar({
             }}
             onDrop={(event) => {
               event.stopPropagation();
-              // Soltar numa pasta coloca dentro dela; num favorito, antes dele.
               drop(event, folder ? node.id : BOOKMARK_BAR, folder ? undefined : index);
             }}
-            onClick={(event) =>
-              folder ? onFolder(event, node.id) : onOpen(node, event.ctrlKey || event.metaKey)
-            }
+            onClick={(event) => !folder && onOpen(node, event.ctrlKey || event.metaKey)}
             onMouseDown={(event) => {
               if (event.button === 1) event.preventDefault();
             }}
@@ -101,24 +99,33 @@ export function BookmarksBar({
             <span>{node.title || node.url}</span>
           </button>
         );
+
+        return folder ? (
+          <FolderDropdown key={node.id} folderId={node.id} nodes={nodes} onOpen={onOpen}>
+            {button}
+          </FolderDropdown>
+        ) : (
+          button
+        );
       })}
       {others.length > 0 && (
-        <button
-          type="button"
-          className="bookmark-chip bookmark-others"
-          onClick={(event) => onFolder(event, BOOKMARK_OTHER)}
-          onDragOver={(event) => {
-            event.stopPropagation();
-            allowDrop(event, BOOKMARK_OTHER);
-          }}
-          onDrop={(event) => {
-            event.stopPropagation();
-            drop(event, BOOKMARK_OTHER);
-          }}
-        >
-          <FolderOpen aria-hidden="true" />
-          <span>Outros favoritos</span>
-        </button>
+        <FolderDropdown folderId={BOOKMARK_OTHER} nodes={nodes} onOpen={onOpen}>
+          <button
+            type="button"
+            className="bookmark-chip bookmark-others"
+            onDragOver={(event) => {
+              event.stopPropagation();
+              allowDrop(event, BOOKMARK_OTHER);
+            }}
+            onDrop={(event) => {
+              event.stopPropagation();
+              drop(event, BOOKMARK_OTHER);
+            }}
+          >
+            <FolderOpen aria-hidden="true" />
+            <span>Outros favoritos</span>
+          </button>
+        </FolderDropdown>
       )}
     </nav>
   );
