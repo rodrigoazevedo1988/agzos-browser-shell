@@ -193,6 +193,7 @@ export function parsePrefs(value: unknown): Prefs {
     railCollapsed: bool("railCollapsed"),
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),
+    keyBarPinned: bool("keyBarPinned"),
     hibernate: bool("hibernate"),
     sidebar: bool("sidebar"),
     sidePanels: parseSidePanels(raw["sidePanels"]),

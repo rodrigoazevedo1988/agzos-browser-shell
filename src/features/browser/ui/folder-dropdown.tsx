@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Folder } from "lucide-react";
 import {
   DropdownMenu,
@@ -24,7 +23,7 @@ function RecursiveFolderItems({
   nodes: BookmarkNode[];
   folderId: string;
   depth: number;
-  onOpen: (node: BookmarkNode, newTab: boolean) => void;
+  onOpen: (node: BookmarkNode) => void;
 }) {
   const items = childrenOf(nodes, folderId);
   const urls = items.filter((node) => node.kind === "url");
@@ -64,9 +63,9 @@ function RecursiveFolderItems({
         return (
           <DropdownMenuItem
             key={node.id}
-            onClick={(e) => onOpen(node, e.ctrlKey || e.metaKey)}
+            onClick={() => onOpen(node)}
             onAuxClick={(e) => {
-              if (e.button === 1) onOpen(node, true);
+              if (e.button === 1) onOpen(node);
             }}
             className="flex items-center gap-2 rounded-md hover:bg-accent cursor-pointer group"
           >
@@ -83,7 +82,7 @@ function RecursiveFolderItems({
           <DropdownMenuSeparator className="bg-border/50" />
           <DropdownMenuItem
             className="font-medium text-primary hover:bg-primary/10 rounded-md"
-            onClick={() => urls.forEach((node) => onOpen(node, true))}
+            onClick={() => urls.forEach((node) => onOpen(node))}
           >
             Abrir todos ({urls.length})
           </DropdownMenuItem>
@@ -94,7 +93,9 @@ function RecursiveFolderItems({
 }
 
 const CONTENT_CLASS =
-  "glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-border/60 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200";
+  "folder-menu glass-panel min-w-[220px] max-h-[70vh] overflow-y-auto border-border/60 shadow-2xl rounded-xl p-1 animate-in fade-in zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200";
+
+export type FolderAnchor = { x: number; y: number; width: number; height: number };
 
 /**
  * Menu da pasta no app: o mesmo dropdown (vidro, subpastas, teclado), desenhado na camada
@@ -105,13 +106,78 @@ export function FolderMenu({
   folderId,
   nodes,
   anchor,
+  siblings = [],
+  enterFrom = null,
+  onOpen,
+  onSwitch,
+  onClose,
+}: {
+  folderId: string;
+  nodes: BookmarkNode[];
+  anchor: FolderAnchor;
+  /**
+   * As outras pastas da barra (chips da casca, por baixo da camada). Com o menu aberto,
+   * passar o mouse numa delas troca o menu para ela, como numa barra de menus.
+   */
+  siblings?: { folderId: string; anchor: FolderAnchor }[];
+  /** De que lado veio a troca: o menu novo desliza a partir dele. */
+  enterFrom?: "left" | "right" | null;
+  onOpen: (node: BookmarkNode) => void;
+  onSwitch?: (folderId: string, anchor: FolderAnchor) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {/* Zonas sobre os chips das pastas: a camada cobre a barra, então o hover é aqui. */}
+      {siblings.map((sibling) => (
+        <span
+          key={sibling.folderId}
+          className="folder-hover-zone"
+          data-folder-zone={sibling.folderId}
+          aria-hidden="true"
+          style={{
+            left: sibling.anchor.x,
+            top: sibling.anchor.y,
+            width: sibling.anchor.width,
+            height: sibling.anchor.height,
+          }}
+          onPointerEnter={() => {
+            if (sibling.folderId !== folderId) onSwitch?.(sibling.folderId, sibling.anchor);
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            // Clique na própria pasta fecha; em outra, abre a outra (o hover já trocou).
+            if (sibling.folderId === folderId) onClose();
+            else onSwitch?.(sibling.folderId, sibling.anchor);
+          }}
+        />
+      ))}
+      <FolderMenuContent
+        folderId={folderId}
+        nodes={nodes}
+        anchor={anchor}
+        enterFrom={enterFrom}
+        onOpen={onOpen}
+        onClose={onClose}
+      />
+    </>
+  );
+}
+
+function FolderMenuContent({
+  folderId,
+  nodes,
+  anchor,
+  enterFrom,
   onOpen,
   onClose,
 }: {
   folderId: string;
   nodes: BookmarkNode[];
-  anchor: { x: number; y: number; width: number; height: number };
-  onOpen: (node: BookmarkNode, newTab: boolean) => void;
+  anchor: FolderAnchor;
+  enterFrom: "left" | "right" | null;
+  onOpen: (node: BookmarkNode) => void;
   onClose: () => void;
 }) {
   return (
@@ -132,6 +198,7 @@ export function FolderMenu({
       <DropdownMenuContent
         align="start"
         aria-label="Pasta de favoritos"
+        data-enter-from={enterFrom ?? undefined}
         className={CONTENT_CLASS}
         // Clique fora: quem fecha é a camada, que repassa o clique para o que está embaixo.
         onPointerDownOutside={(event) => event.preventDefault()}
@@ -149,16 +216,21 @@ export function FolderDropdown({
   nodes,
   children,
   onOpen,
+  open,
+  onOpenChange,
 }: {
   folderId: string;
   nodes: BookmarkNode[];
   children: React.ReactNode;
-  onOpen: (node: BookmarkNode, newTab: boolean) => void;
+  onOpen: (node: BookmarkNode) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const setOpen = onOpenChange;
 
+  // Sem modal: com uma pasta aberta, o hover nos outros chips continua chegando à barra.
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
       {/* O menu de contexto (botão direito) do próprio favorito deve passar reto: fechamos
           o dropdown e deixamos o onContextMenu do botão abrir o menu de edição. */}
       <DropdownMenuTrigger asChild onContextMenu={() => setOpen(false)}>

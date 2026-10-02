@@ -2311,6 +2311,150 @@ function certificateKey(url, fingerprint) {
 
 const MAX_SESSION_BYTES = 2 * 1024 * 1024;
 
+// --- Agzos Key: scripts injetados na página para preencher e ler o login ----------------
+// Rodam no mundo da página (executeJavaScript). Ficam como funções de verdade (lint e
+// testes) e vão para a página por toString().
+
+/* eslint-disable no-undef */
+function fillLoginScript(data) {
+  const visible = (el) =>
+    el && !el.disabled && !el.readOnly && (el.offsetWidth > 0 || el.offsetHeight > 0);
+  const set = (el, value) => {
+    if (!el) return false;
+    el.focus();
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value");
+    if (setter && setter.set) setter.set.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  };
+  const inputs = Array.from(document.querySelectorAll("input")).filter(visible);
+  const active = document.activeElement;
+  // O campo de senha do formulário em foco ganha; senão o primeiro visível.
+  const passwords = inputs.filter((i) => i.type === "password");
+  const pass =
+    (active && active.type === "password" && visible(active) ? active : null) ||
+    passwords.find((i) => active && active.form && i.form === active.form) ||
+    passwords.find((i) => !/new|confirm/i.test(i.autocomplete || "")) ||
+    passwords[0] ||
+    null;
+  const scope = (pass && pass.form) || (active && active.form) || document;
+  const candidates = inputs.filter(
+    (i) =>
+      (scope === document || i.form === scope) &&
+      ["text", "email", "tel", ""].includes(i.type) &&
+      !/one-time-code/i.test(i.autocomplete || ""),
+  );
+  const hint = (i) => `${i.name} ${i.id} ${i.autocomplete} ${i.placeholder} ${i.ariaLabel || ""}`;
+  const before = pass
+    ? candidates.filter((i) => i.compareDocumentPosition(pass) & Node.DOCUMENT_POSITION_FOLLOWING)
+    : candidates;
+  const user =
+    candidates.find((i) => /username/i.test(i.autocomplete || "")) ||
+    candidates.find((i) => i.type === "email") ||
+    before.reverse().find((i) => /e-?mail|user|login|usu|conta|account|ident|cpf/i.test(hint(i))) ||
+    before[0] ||
+    (active && candidates.includes(active) ? active : null);
+  let filled = false;
+  if (data.username && user) filled = set(user, data.username) || filled;
+  if (data.password && pass) filled = set(pass, data.password) || filled;
+  // Deixa o foco na senha (Enter já entra), ou no usuário no login em etapas.
+  if (pass && data.password) pass.focus();
+  return { filled, password: Boolean(pass), username: Boolean(user) };
+}
+
+function fillOtpScript(code) {
+  const visible = (el) => el && !el.disabled && (el.offsetWidth > 0 || el.offsetHeight > 0);
+  const set = (el, value) => {
+    el.focus();
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value");
+    if (setter && setter.set) setter.set.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  const inputs = Array.from(document.querySelectorAll("input")).filter(
+    (i) => visible(i) && ["text", "tel", "number", "password", ""].includes(i.type),
+  );
+  const boxes = inputs.filter((i) => i.maxLength === 1);
+  if (boxes.length >= code.length) {
+    boxes.slice(0, code.length).forEach((box, index) => set(box, code[index]));
+    return { filled: true };
+  }
+  const hint = (i) => `${i.name} ${i.id} ${i.autocomplete} ${i.placeholder} ${i.ariaLabel || ""}`;
+  const field =
+    inputs.find((i) => /one-time-code/i.test(i.autocomplete || "")) ||
+    inputs.find(
+      (i) =>
+        i.type !== "password" &&
+        /otp|totp|2fa|mfa|token|c[oó]digo|code|verifica|authenticator/i.test(hint(i)),
+    ) ||
+    (document.activeElement && inputs.includes(document.activeElement)
+      ? document.activeElement
+      : null);
+  if (!field) return { filled: false };
+  set(field, code);
+  return { filled: true };
+}
+
+function readLoginScript() {
+  const visible = (el) => el && (el.offsetWidth > 0 || el.offsetHeight > 0);
+  const inputs = Array.from(document.querySelectorAll("input")).filter(visible);
+  const pass = inputs.find((i) => i.type === "password" && i.value);
+  const scope = (pass && pass.form) || document;
+  const texts = inputs.filter(
+    (i) =>
+      (scope === document || i.form === scope) && ["text", "email", "tel", ""].includes(i.type),
+  );
+  const user =
+    texts.find((i) => i.value && /username/i.test(i.autocomplete || "")) ||
+    texts.find((i) => i.value && i.type === "email") ||
+    texts.find(
+      (i) => i.value && /e-?mail|user|login|usu|conta|account|ident|cpf/i.test(`${i.name} ${i.id}`),
+    ) ||
+    texts.find((i) => i.value);
+  return { username: user ? user.value : "", password: pass ? pass.value : "" };
+}
+/* eslint-enable no-undef */
+
+/** Host "do site" para comparar frames: sem www., em minúsculas. */
+function frameHost(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** Mesmo site (igual ou subdomínio um do outro): pode receber a credencial da guia. */
+function sameSite(a, b) {
+  if (!a || !b) return false;
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
+/**
+ * Roda o script na página e nos iframes do mesmo site; vale o primeiro que preencheu.
+ * Frames de outro site (anúncio, widget) nunca recebem a credencial.
+ */
+async function runInLoginFrames(contents, script) {
+  const top = contents.mainFrame;
+  const topHost = frameHost(contents.getURL());
+  const frames = [
+    top,
+    ...top.framesInSubtree.filter((frame) => frame !== top && !frame.detached),
+  ].filter((frame) => frame === top || sameSite(frameHost(frame.url), topHost));
+  for (const frame of frames) {
+    try {
+      const result = await frame.executeJavaScript(script, true);
+      if (result && result.filled) return { ok: true, filled: true };
+    } catch {
+      /* frame navegando ou destruído: tenta o próximo */
+    }
+  }
+  return { ok: true, filled: false };
+}
+
 function registerIpc() {
   // Login enviado numa página (detectado pelo page-preload.cjs): acha a janela/guia dona
   // pela webContents que mandou e repassa para a casca oferecer salvar no Agzos Key.
@@ -2327,40 +2471,50 @@ function registerIpc() {
     });
   });
 
-  // Autofill: a casca pede para preencher usuário/senha na guia; o main injeta nos campos.
+  // Formulário de login na página (page-preload.cjs): à vista (`focused` false) ou com o
+  // usuário clicando num campo de usuário/senha/código MFA. A casca busca no cofre.
+  ipcMain.on("agzos:login-form", (event, payload) => {
+    const where = tabOfContents.get(event.sender.id);
+    if (!where || !payload) return;
+    const field = ["password", "username", "otp"].includes(payload.field) ? payload.field : null;
+    if (!field) return;
+    send(where.ctx, "agzos:tab-event", {
+      type: "login-form",
+      id: where.id,
+      url: typeof payload.url === "string" ? payload.url : "",
+      focused: payload.focused === true,
+      field,
+    });
+  });
+
+  // Autofill: a casca pede para preencher usuário/senha na guia; o main injeta nos campos
+  // da página e dos iframes do mesmo site (logins embutidos), nunca em frames de terceiros.
   ipcMain.handle("tab:autofill", (event, { id, username, password } = {}) => {
     const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || contents.isDestroyed()) return { ok: false };
-    const payload = JSON.stringify({ username: username ?? "", password: password ?? "" });
-    // Preenche o 1º campo de senha e o melhor palpite de usuário, disparando os eventos
-    // que os frameworks (React/Vue) escutam. Nenhuma credencial fica na página além disso.
-    const script = `(() => {
-      const data = ${payload};
-      const forms = Array.from(document.querySelectorAll('form'));
-      const pass = document.querySelector('input[type=password]');
-      const form = (pass && pass.form) || forms[0] || document;
-      const set = (el, value) => {
-        if (!el) return;
-        const proto = Object.getPrototypeOf(el);
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (setter && setter.set) setter.set.call(el, value); else el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      };
-      if (data.password && pass) set(pass, data.password);
-      if (data.username) {
-        const inputs = Array.from(form.querySelectorAll('input'));
-        const user = inputs.find((i) => i.type === 'email')
-          || inputs.find((i) => /email|user|login|usuario/i.test((i.name||'')+(i.id||'')+(i.autocomplete||'')))
-          || inputs.find((i) => i.type === 'text');
-        set(user, data.username);
-      }
-      return true;
-    })()`;
+    const data = { username: username ?? "", password: password ?? "" };
+    return runInLoginFrames(contents, `(${fillLoginScript.toString()})(${JSON.stringify(data)})`);
+  });
+
+  // Código MFA (TOTP) no campo de código da página (ou nas caixinhas de 1 dígito).
+  ipcMain.handle("tab:autofill-otp", (event, { id, code } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed() || !/^\d{4,10}$/.test(String(code ?? "")))
+      return { ok: false };
+    return runInLoginFrames(contents, `(${fillOtpScript.toString()})(${JSON.stringify(code)})`);
+  });
+
+  // "Salvar login" pela chave da barra de endereço: o que o usuário já digitou na página.
+  ipcMain.handle("tab:login-fields", (event, { id } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed()) return { username: "", password: "" };
     return contents
-      .executeJavaScript(script, true)
-      .then(() => ({ ok: true }))
-      .catch(() => ({ ok: false }));
+      .executeJavaScript(`(${readLoginScript.toString()})()`, true)
+      .then((result) => ({
+        username: typeof result?.username === "string" ? result.username : "",
+        password: typeof result?.password === "string" ? result.password : "",
+      }))
+      .catch(() => ({ username: "", password: "" }));
   });
 
   ipcMain.handle("tab:attach", (event, { id, url, options }) => {

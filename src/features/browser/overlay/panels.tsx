@@ -24,6 +24,8 @@ export type PanelSpec =
   | { kind: "site"; key?: string; props: ComponentProps<typeof SitePanel> }
   | { kind: "key"; key?: string; props: ComponentProps<typeof KeyPanel> }
   | { kind: "autofill"; key?: string; props: ComponentProps<typeof AutofillPopup> }
+  /** O mesmo popup, aberto pela chave da barra de endereço (com foco: busca e salvar). */
+  | { kind: "login"; key?: string; props: ComponentProps<typeof AutofillPopup> }
   | { kind: "folder"; key?: string; props: ComponentProps<typeof FolderMenu> }
   | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> }
   | { kind: "palette"; key?: string; props: ComponentProps<typeof CommandPalette> }
@@ -48,6 +50,8 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
     case "folder":
       return <FolderMenu key={key} {...spec.props} />;
     case "autofill":
+      return <AutofillPopup key={key} {...spec.props} />;
+    case "login":
       return <AutofillPopup key={key} {...spec.props} />;
     case "bookmark":
       return <BookmarkEditor key={key} {...spec.props} />;

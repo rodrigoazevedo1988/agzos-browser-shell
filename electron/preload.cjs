@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   agzosKeyUnpair: () => ipcRenderer.invoke("agzosKey:unpair"),
   autofill: (id, username, password) =>
     ipcRenderer.invoke("tab:autofill", { id, username, password }),
+  autofillOtp: (id, code) => ipcRenderer.invoke("tab:autofill-otp", { id, code }),
+  loginFields: (id) => ipcRenderer.invoke("tab:login-fields", { id }),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   permissionsList: () => ipcRenderer.invoke("permissions:list"),
   permissionsSet: (origin, type, value) =>

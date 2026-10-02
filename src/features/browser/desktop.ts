@@ -64,6 +64,14 @@ export type DesktopTabEvent =
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
   /** Login enviado numa página (page-preload): oferecer salvar no Agzos Key. */
   | { type: "login-detected"; id: number; url: string; username: string; password: string }
+  /** Formulário de login na página; `focused`: o usuário clicou num campo dele. */
+  | {
+      type: "login-form";
+      id: number;
+      url: string;
+      focused: boolean;
+      field: "password" | "username" | "otp";
+    }
   /** Tela dividida: o usuário clicou na página do outro pane. */
   | { type: "focused"; id: number };
 
@@ -213,7 +221,15 @@ export type DesktopBridge = {
   agzosKeyRemove(id: string): Promise<KeyResult<{ ok: boolean }>>;
   agzosKeyUnpair(): Promise<KeyResult<{ ok: boolean }>>;
   /** Preenche usuário/senha nos campos de login da guia (autofill do cofre). */
-  autofill(id: number, username: string, password: string): Promise<{ ok: boolean }>;
+  autofill(
+    id: number,
+    username: string,
+    password: string,
+  ): Promise<{ ok: boolean; filled?: boolean }>;
+  /** Preenche o código MFA (TOTP) no campo de código da guia. */
+  autofillOtp(id: number, code: string): Promise<{ ok: boolean; filled?: boolean }>;
+  /** Usuário/senha já digitados na guia (para "salvar login" pela chave da barra). */
+  loginFields(id: number): Promise<{ username: string; password: string }>;
   openExternal(url: string): Promise<void>;
   permissionsList(): Promise<SitePermission[]>;
   /** value null volta para "perguntar". */

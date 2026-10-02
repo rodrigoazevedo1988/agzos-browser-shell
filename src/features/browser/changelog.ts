@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.7",
+    date: "2026-10-02",
+    items: [
+      "Favoritos da barra (e das pastas) agora sempre abrem numa guia nova — a página que você está vendo não é mais substituída.",
+      "Com uma pasta de favoritos aberta, basta passar o mouse nas outras pastas para ir abrindo cada uma, com uma transição suave.",
+      "Agzos Key mais confiável nas páginas de login: ao clicar no campo de usuário ou senha ele já busca no cofre e sugere o preenchimento (ou pede para desbloquear), inclusive em sites que montam o login aos poucos ou em etapas.",
+      "Logins com Authenticator: depois de preencher, a barrinha do Key abre com o código de verificação, sem cobrir a página. Use a tachinha para deixá-la fixa enquanto copia e cola; o botão Preencher põe o código direto no campo.",
+      "Chave do Agzos Key na barra de endereço: mostra os logins do site, busca no cofre e salva um login novo em um clique, já com o que você digitou na página.",
+      "O navegador agora guarda no cofre a URL do site quando um login sem endereço é usado, e o sincroniza com o Agzos Key.",
+    ],
+  },
+  {
     version: "2.2.6",
     date: "2026-10-01",
     items: [

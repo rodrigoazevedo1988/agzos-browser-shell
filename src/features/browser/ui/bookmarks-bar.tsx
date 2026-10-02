@@ -17,9 +17,11 @@ export function BookmarksBar({
   onContextMenu,
   onMove,
   folderPanel = false,
+  openFolderId = null,
 }: {
   nodes: BookmarkNode[];
-  onOpen: (node: BookmarkNode, newTab: boolean) => void;
+  /** Favoritos da barra sempre abrem numa guia nova (a página atual fica). */
+  onOpen: (node: BookmarkNode) => void;
   /** Clique na pasta com `folderPanel` (app): a casca abre o menu da pasta na camada. */
   onFolder: (event: MouseEvent<HTMLElement>, folderId: string) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>, node: BookmarkNode | null) => void;
@@ -29,10 +31,19 @@ export function BookmarksBar({
    * na casca ficaria atrás dela (o WebContentsView cobre o que flutua sobre a página).
    */
   folderPanel?: boolean;
+  /** Pasta com o menu aberto na camada (app): o chip fica marcado. */
+  openFolderId?: string | null;
 }) {
   const items = childrenOf(nodes, BOOKMARK_BAR);
   const others = childrenOf(nodes, BOOKMARK_OTHER);
   const [dropAt, setDropAt] = useState<string | null>(null);
+  // Web: pasta aberta na casca. Com uma aberta, passar o mouse em outra troca o menu
+  // (como numa barra de menus); no app quem faz isso é o menu na camada.
+  const [webOpen, setWebOpen] = useState<string | null>(null);
+  const openId = folderPanel ? openFolderId : webOpen;
+  const hoverFolder = (folderId: string) => {
+    if (!folderPanel && webOpen && webOpen !== folderId) setWebOpen(folderId);
+  };
 
   const dragStart = (event: DragEvent, node: BookmarkNode) => {
     event.dataTransfer.setData(DRAG_TYPE, node.id);
@@ -76,7 +87,12 @@ export function BookmarksBar({
           <button
             key={node.id}
             type="button"
-            className={cn("bookmark-chip", dropAt === node.id && "drop-target")}
+            className={cn(
+              "bookmark-chip",
+              dropAt === node.id && "drop-target",
+              folder && openId === node.id && "open",
+            )}
+            data-folder-id={folder ? node.id : undefined}
             title={folder ? node.title : `${node.title}\n${node.url}`}
             draggable
             onDragStart={(event) => dragStart(event, node)}
@@ -89,14 +105,15 @@ export function BookmarksBar({
               drop(event, folder ? node.id : BOOKMARK_BAR, folder ? undefined : index);
             }}
             onClick={(event) => {
-              if (!folder) onOpen(node, event.ctrlKey || event.metaKey);
+              if (!folder) onOpen(node);
               else if (folderPanel) onFolder(event, node.id);
             }}
+            onPointerEnter={() => folder && hoverFolder(node.id)}
             onMouseDown={(event) => {
               if (event.button === 1) event.preventDefault();
             }}
             onAuxClick={(event) => {
-              if (event.button === 1 && !folder) onOpen(node, true);
+              if (event.button === 1 && !folder) onOpen(node);
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -110,7 +127,16 @@ export function BookmarksBar({
         );
 
         return folder && !folderPanel ? (
-          <FolderDropdown key={node.id} folderId={node.id} nodes={nodes} onOpen={onOpen}>
+          <FolderDropdown
+            key={node.id}
+            folderId={node.id}
+            nodes={nodes}
+            onOpen={onOpen}
+            open={webOpen === node.id}
+            onOpenChange={(open) =>
+              setWebOpen((current) => (open ? node.id : current === node.id ? null : current))
+            }
+          >
             {button}
           </FolderDropdown>
         ) : (
@@ -122,8 +148,10 @@ export function BookmarksBar({
           const othersButton = (
             <button
               type="button"
-              className="bookmark-chip bookmark-others"
+              className={cn("bookmark-chip bookmark-others", openId === BOOKMARK_OTHER && "open")}
+              data-folder-id={BOOKMARK_OTHER}
               onClick={(event) => folderPanel && onFolder(event, BOOKMARK_OTHER)}
+              onPointerEnter={() => hoverFolder(BOOKMARK_OTHER)}
               onDragOver={(event) => {
                 event.stopPropagation();
                 allowDrop(event, BOOKMARK_OTHER);
@@ -140,7 +168,17 @@ export function BookmarksBar({
           return folderPanel ? (
             othersButton
           ) : (
-            <FolderDropdown folderId={BOOKMARK_OTHER} nodes={nodes} onOpen={onOpen}>
+            <FolderDropdown
+              folderId={BOOKMARK_OTHER}
+              nodes={nodes}
+              onOpen={onOpen}
+              open={webOpen === BOOKMARK_OTHER}
+              onOpenChange={(open) =>
+                setWebOpen((current) =>
+                  open ? BOOKMARK_OTHER : current === BOOKMARK_OTHER ? null : current,
+                )
+              }
+            >
               {othersButton}
             </FolderDropdown>
           );

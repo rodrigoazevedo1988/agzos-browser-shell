@@ -17,6 +17,7 @@ const OVERLAY_KINDS = new Set([
   "privacy",
   "site",
   "autofill",
+  "login",
   "folder",
   "key",
   "bookmark",

@@ -71,6 +71,8 @@ export type Prefs = {
   backgroundOpacity: number;
   /** Efeito de glassmorphism na interface. */
   uiBlur: boolean;
+  /** Barra do Agzos Key (código MFA) fixada pela tachinha: não some depois de copiar. */
+  keyBarPinned: boolean;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -96,6 +98,7 @@ export const defaultPrefs: Prefs = {
   backgroundBlur: 0,
   backgroundOpacity: 100,
   uiBlur: true,
+  keyBarPinned: false,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };

@@ -27,14 +27,8 @@ import type { KeyState, VaultEntry } from "@/features/browser/types";
 import { isValidTotpSecret, normalizeTotpSecret } from "@/features/browser/totp";
 import { categoryOf, groupByCategory, knownCategories } from "@/features/browser/vault";
 
+import { generatePassword } from "./password";
 import { TotpCode } from "./totp-code";
-
-function generatePassword() {
-  const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
-  const values = new Uint32Array(18);
-  crypto.getRandomValues(values);
-  return Array.from(values, (value) => chars[value % chars.length]).join("");
-}
 
 /** Rótulo do item (título, ou domínio da URL, ou usuário). */
 function labelOf(entry: VaultEntry): string {

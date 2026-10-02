@@ -15,6 +15,9 @@ const LOCAL_EFFECTS: Partial<
   autofill: {
     onCopy: (_id, value) => void navigator.clipboard?.writeText(String(value)).catch(() => {}),
   },
+  login: {
+    onCopy: (_id, value) => void navigator.clipboard?.writeText(String(value)).catch(() => {}),
+  },
 };
 
 /** Fora do cartão do painel: o fundo transparente da camada. */

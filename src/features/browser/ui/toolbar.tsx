@@ -45,6 +45,11 @@ export type ToolbarProps = {
   /** Botão de downloads: só aparece quando há algum na lista. */
   downloads: { visible: boolean; open: boolean; active: number; fraction: number | null };
   keyOpen: boolean;
+  /**
+   * Chave do Agzos Key na barra de endereço (como nos Chromium): aparece em páginas com
+   * login salvo (`saved`) ou com formulário de login; abre o popup do site. null = some.
+   */
+  siteKey: { saved: boolean; open: boolean; onToggle: () => void } | null;
   dark: boolean;
   aiOpen: boolean;
   isMac: boolean;
@@ -172,6 +177,27 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
           )}
           {/* Como no Comet: o link fica à mão; o resto aparece ao pausar o mouse na barra. */}
           <div className="omnibox-actions">
+            {props.siteKey && (
+              <button
+                type="button"
+                className={cn(
+                  "omnibox-action",
+                  "site-key",
+                  props.siteKey.saved && "saved",
+                  props.siteKey.open && "on",
+                )}
+                onClick={props.siteKey.onToggle}
+                title={
+                  props.siteKey.saved
+                    ? "Logins do Agzos Key para este site"
+                    : "Salvar login deste site no Agzos Key"
+                }
+                aria-label="Agzos Key deste site"
+                aria-pressed={props.siteKey.open}
+              >
+                <KeyRound />
+              </button>
+            )}
             <div className="omnibox-more">
               <button
                 type="button"

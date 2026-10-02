@@ -92,6 +92,7 @@ describe("chrome-overlay.cjs", () => {
     expect([...overlay.OVERLAY_KINDS].sort()).toEqual(
       [
         "autofill",
+        "login",
         "bookmark",
         "downloads",
         "folder",

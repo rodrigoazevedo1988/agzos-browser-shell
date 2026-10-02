@@ -195,6 +195,7 @@ describe("migração da 1.3", () => {
         backgroundBlur: 0,
         backgroundOpacity: 100,
         uiBlur: true,
+        keyBarPinned: false,
       },
       session: {
         tabs: legacyTabs,

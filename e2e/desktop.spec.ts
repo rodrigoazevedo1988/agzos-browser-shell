@@ -107,6 +107,15 @@ const PAGES: Record<string, string> = {
     const v = document.getElementById("v"); v.srcObject = c.captureStream(25); v.play();
     window.painted = 0; const tick = () => { window.painted++; requestAnimationFrame(tick); };
     requestAnimationFrame(tick);</script>`,
+  // Login com e-mail e senha (Agzos Key sugere ao clicar no campo) e a tela do código MFA.
+  "/entrar-key": `<!doctype html><title>Entrar no site</title>
+    <form id="f" onsubmit="event.preventDefault()">
+      <input id="email" type="email" name="email" autocomplete="username">
+      <input id="senha" type="password" name="senha" autocomplete="current-password">
+      <button type="submit">Entrar</button>
+    </form>`,
+  "/codigo-key": `<!doctype html><title>Código de verificação</title>
+    <input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6">`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
 };
@@ -153,6 +162,7 @@ function keyApi(url: string): unknown {
       url: origin,
       username: "arnaldo@agzos.com",
       password: "segredo",
+      totpSecret: "JBSWY3DPEHPK3PXP",
       updatedAt: 1,
     };
     return {
@@ -2100,10 +2110,11 @@ test("2.2.3: conta Argon2id desbloqueia e o popup de autofill fica acima da pág
     AGZOS_DEBUG_OVERLAY: "1",
     AGZOS_KEY_URL: origin,
   });
-  const url = `${origin}/video-vivo`;
+  // 2.2.7: o popup só sobe sozinho em página com formulário de login.
+  const url = `${origin}/entrar-key`;
   try {
     await go(window, url);
-    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    await expect(tabs(window).first()).toContainText("Entrar no site");
 
     // Pareia e desbloqueia com a senha mestra (Argon2id p=4, na worker do main).
     await window.getByRole("button", { name: "Abrir Agzos Key" }).click();
@@ -2115,7 +2126,7 @@ test("2.2.3: conta Argon2id desbloqueia e o popup de autofill fica acima da pág
     await expect(overlay.getByText("Login local")).toBeVisible({ timeout: 30_000 });
     await overlay.keyboard.press("Escape");
 
-    // O site tem credencial: o popup de autofill sobe NA CAMADA, por cima da página.
+    // A página de login tem credencial: o popup sobe NA CAMADA, por cima da página.
     const popup = overlay.getByRole("complementary", { name: "Entrar com o Agzos Key" });
     await expect(popup).toBeVisible();
     await expect.poll(async () => (await layersOf(app, url)).overlayOnTop).toBe(true);
@@ -2202,6 +2213,154 @@ test("2.2.5: pasta da barra de favoritos abre o menu de vidro na camada, acima d
     // Clicar no item abre o favorito e fecha a camada.
     await folder.getByRole("menuitem", { name: "Vídeo vivo" }).click();
     await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+/** Clica num campo da guia como o usuário (mouse de verdade na página, não um focus()). */
+async function focusField(app: ElectronApplication, url: string, selector: string) {
+  await app.evaluate(
+    async ({ webContents }, [target, sel]) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      const rect = await contents.executeJavaScript(
+        `(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()`,
+      );
+      contents.focus();
+      for (const type of ["mouseDown", "mouseUp"] as const)
+        contents.sendInputEvent({ type, x: rect.x, y: rect.y, button: "left", clickCount: 1 });
+    },
+    [url, selector],
+  );
+}
+
+test("2.2.7: clicar no campo de login sugere o Key, preenche e abre a barrinha do MFA", async () => {
+  const { app, window } = await launch(tempProfile(), {
+    AGZOS_DEBUG_OVERLAY: "1",
+    AGZOS_KEY_URL: origin,
+  });
+  const url = `${origin}/entrar-key`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Entrar no site");
+    // Formulário de login à vista: a chave do Agzos Key aparece na barra de endereço.
+    await expect(window.getByRole("button", { name: "Agzos Key deste site" })).toBeVisible();
+
+    // Clique no campo com o Key ainda desconectado: o popup já pede a conexão.
+    await focusField(app, url, "#email");
+    const overlay = await overlayPage(app);
+    const popup = overlay.getByRole("complementary", { name: "Entrar com o Agzos Key" });
+    await popup.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Código de pareamento").fill("ABCD-1234");
+    await overlay.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Senha mestra").fill(KEY_PASSWORD);
+    await overlay.getByRole("button", { name: "Desbloquear" }).click();
+    await expect(overlay.getByText("Login local")).toBeVisible({ timeout: 30_000 });
+    await overlay.keyboard.press("Escape");
+
+    // Fechado o cofre, o popup volta com o login do site; preencher vai para a página.
+    const fill = popup.getByRole("button", { name: "Preencher login de Login local" });
+    await expect(fill).toBeVisible();
+    if (process.env.AGZOS_SHOT) {
+      await window.waitForTimeout(600);
+      execFileSync("import", ["-window", "root", `${process.env.AGZOS_SHOT}-popup.png`]);
+    }
+    await fill.click();
+    await expect
+      .poll(() =>
+        inTab<string>(
+          app,
+          url,
+          `document.getElementById("email").value + "|" + document.getElementById("senha").value`,
+        ),
+      )
+      .toBe("arnaldo@agzos.com|segredo");
+
+    // O login tem Authenticator: a barrinha do Key abre na casca com o código, e a página
+    // encolhe por baixo dela (nada cobre o site, copiar e colar seguem livres).
+    const bar = window.getByRole("region", { name: "Código MFA do Agzos Key" });
+    await expect(bar).toBeVisible();
+    await expect(bar.locator(".key-bar-digits")).toHaveText(/^\d{3} \d{3}$/);
+    const barBox = (await bar.boundingBox())!;
+    await expect
+      .poll(async () => (await nativeChildren(app)).find((view) => view.url === url)?.bounds.y)
+      .toBeGreaterThanOrEqual(Math.floor(barBox.y + barBox.height));
+
+    // Tachinha: a barra fica fixada; na tela do código, "Preencher" põe o código no campo.
+    await bar.getByRole("button", { name: "Fixar a barra do Key" }).click();
+    await expect(bar.getByRole("button", { name: "Desafixar a barra do Key" })).toBeVisible();
+    const code = `${origin}/codigo-key`;
+    await go(window, code);
+    await expect(tabs(window).first()).toContainText("Código de verificação");
+    await expect(bar).toBeVisible();
+    // Na tela do código quem ajuda é a barrinha: o popup de login não volta sozinho.
+    await window.waitForTimeout(800);
+    expect((await layersOf(app, code)).overlayVisible).toBe(false);
+    await bar.getByRole("button", { name: "Preencher" }).click();
+    if (process.env.AGZOS_SHOT) {
+      await window.waitForTimeout(600);
+      execFileSync("import", ["-window", "root", `${process.env.AGZOS_SHOT}-bar.png`]);
+    }
+    await expect
+      .poll(() => inTab<string>(app, code, `document.getElementById("otp").value`))
+      .toMatch(/^\d{6}$/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.2.7: favorito da barra abre em guia nova e o hover troca a pasta aberta", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/video-vivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    await app.evaluate(({ Menu }) => {
+      const g = globalThis as { __pick?: string };
+      Menu.prototype.popup = function (options?: Electron.PopupOptions) {
+        this.items.find((entry) => entry.label === g.__pick)?.click();
+        options?.callback?.();
+      };
+    });
+    const bar = window.getByRole("navigation", { name: "Barra de favoritos" });
+    let overlay!: Page;
+    // Duas pastas, criadas pelo menu da barra (o editor abre na camada).
+    for (const name of ["Pasta A", "Pasta B"]) {
+      await app.evaluate(() => {
+        (globalThis as { __pick?: string }).__pick = "Nova pasta";
+      });
+      const box = (await bar.boundingBox())!;
+      await bar.click({ button: "right", position: { x: box.width - 8, y: box.height / 2 } });
+      overlay = await overlayPage(app);
+      await overlay.getByLabel("Nome").fill(name);
+      await overlay.getByRole("button", { name: "Concluído" }).click();
+      await expect(bar.getByRole("button", { name })).toBeVisible();
+    }
+
+    // Favorito na barra: clicar abre numa guia nova, a página atual fica.
+    await window.getByRole("button", { name: "Favoritar página" }).click();
+    await overlay.getByRole("button", { name: "Concluído" }).click();
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await bar.getByRole("button", { name: "Vídeo vivo" }).click();
+    await expect(tabs(window)).toHaveCount(2);
+    await tabs(window).first().click();
+    await expect(omnibox(window)).toHaveValue(url);
+
+    // Abre a Pasta A; passar o mouse na Pasta B (sob a camada) troca o menu para ela.
+    await bar.getByRole("button", { name: "Pasta A" }).click();
+    const folder = overlay.getByRole("menu", { name: "Pasta de favoritos" });
+    await expect(folder).toBeVisible();
+    await expect(bar.locator(".bookmark-chip.open")).toHaveText("Pasta A");
+    const b = (await bar.getByRole("button", { name: "Pasta B" }).boundingBox())!;
+    await overlay.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+    await expect(bar.locator(".bookmark-chip.open")).toHaveText("Pasta B");
+    await expect(folder).toBeVisible();
+    await expect(folder).toHaveAttribute("data-enter-from", "right");
+    if (process.env.AGZOS_SHOT) {
+      await window.waitForTimeout(600);
+      execFileSync("import", ["-window", "root", `${process.env.AGZOS_SHOT}-folder.png`]);
+    }
   } finally {
     await app.close();
   }

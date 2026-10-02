@@ -947,10 +947,7 @@ button {
   border-radius: 50%;
   font-size: 9px;
   font-weight: 700;
-  background: conic-gradient(
-    var(--primary) calc(var(--totp-frac) * 360deg),
-    var(--border) 0
-  );
+  background: conic-gradient(var(--primary) calc(var(--totp-frac) * 360deg), var(--border) 0);
   color: var(--foreground);
 }
 .key-editor {
@@ -1118,6 +1115,229 @@ button {
 }
 .autofill-foot:hover {
   background: var(--muted);
+}
+
+.autofill-popup {
+  width: min(360px, calc(100% - 24px));
+}
+.autofill-item {
+  align-items: flex-start;
+}
+.autofill-item .autofill-actions {
+  padding-top: 2px;
+}
+.autofill-info .totp-code {
+  white-space: nowrap;
+}
+.autofill-info small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.autofill-actions .autofill-fill {
+  height: 28px;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.autofill-actions .autofill-fill svg {
+  width: 14px;
+  height: 14px;
+}
+.autofill-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.autofill-title small {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.autofill-info small svg {
+  display: inline;
+  width: 11px;
+  vertical-align: -1px;
+  color: var(--primary);
+}
+.autofill-popup {
+  animation: autofill-in 0.18s var(--ease-out);
+}
+@keyframes autofill-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+.autofill-empty {
+  margin: 0;
+  padding: 10px 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.autofill-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+.autofill-search svg {
+  width: 14px;
+  color: var(--muted-foreground);
+}
+.autofill-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12px;
+}
+.autofill-search:focus-within {
+  border-color: var(--primary);
+}
+.autofill-foot {
+  display: flex;
+  padding: 0;
+}
+.autofill-foot button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.autofill-foot button + button {
+  border-left: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+.autofill-foot button:hover {
+  background: var(--muted);
+}
+.autofill-foot svg {
+  width: 13px;
+}
+.autofill-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px;
+  text-align: center;
+}
+.autofill-locked > svg {
+  width: 22px;
+  color: var(--primary);
+}
+.autofill-locked p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.autofill-save {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+/* Chave do Agzos Key na barra de endereço (como nos Chromium). */
+.omnibox-action.site-key.saved {
+  color: var(--primary);
+}
+.omnibox-action.site-key {
+  animation: site-key-in 0.24s var(--ease-out);
+}
+@keyframes site-key-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-30deg);
+  }
+}
+
+/* Barrinha do Key com o código MFA: faixa na casca, a página encolhe (não é coberta). */
+.key-bar {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--primary) 9%, var(--card)),
+    var(--card) 60%
+  );
+  animation: key-bar-in 0.22s var(--ease-out);
+}
+.key-bar.pinned {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+@keyframes key-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.key-bar-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in oklch, var(--primary) 35%, var(--border));
+  border-radius: 9px;
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
+}
+.key-bar-code:hover {
+  border-color: var(--primary);
+}
+.key-bar-code:active {
+  transform: scale(0.97);
+}
+.key-bar-code svg {
+  width: 14px;
+  color: var(--primary);
+}
+.key-bar-digits {
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+}
+.key-bar .totp-ring {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
+.key-bar.expiring .key-bar-digits {
+  color: var(--destructive, #d43420);
+}
+.key-bar-hint {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .mock-page {
@@ -2610,6 +2830,53 @@ button.download-name:hover {
 .bookmark-chip:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
+}
+/* Pasta com o menu aberto: o chip fica aceso; trocar de pasta no hover desliza o destaque. */
+.bookmark-chip.open {
+  background: color-mix(in oklab, var(--primary) 18%, var(--muted));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent);
+  transition:
+    background-color var(--dur-enter) var(--ease-out),
+    box-shadow var(--dur-enter) var(--ease-out);
+}
+.bookmark-chip.open > svg {
+  transform: scale(1.08);
+}
+.bookmark-chip > svg {
+  transition: transform var(--dur-enter) var(--ease-out);
+}
+/* Zonas da camada sobre os chips das pastas (o hover troca a pasta aberta). */
+.folder-hover-zone {
+  position: fixed;
+  z-index: 60;
+  cursor: pointer;
+  pointer-events: auto;
+}
+/* Troca de pasta pelo hover: o menu novo vem do lado da pasta anterior, sem o "pop". */
+.folder-menu[data-enter-from="right"][data-state="open"] {
+  animation: folder-menu-from-right 0.22s var(--ease-out);
+}
+.folder-menu[data-enter-from="left"][data-state="open"] {
+  animation: folder-menu-from-left 0.22s var(--ease-out);
+}
+@keyframes folder-menu-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(-14px) scale(0.985);
+    filter: blur(2px);
+  }
+}
+@keyframes folder-menu-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(14px) scale(0.985);
+    filter: blur(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folder-menu[data-enter-from][data-state="open"] {
+    animation: none;
+  }
 }
 .bookmark-chip.drop-target,
 .library-row.drop-target,

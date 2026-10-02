@@ -31,6 +31,13 @@ type Options = {
     username: string;
     password: string;
   }) => void;
+  /** Formulário de login na página (à vista ou com um campo em foco): sugerir o cofre. */
+  onLoginForm: (payload: {
+    id: number;
+    url: string;
+    focused: boolean;
+    field: "password" | "username" | "otp";
+  }) => void;
 };
 
 /**
@@ -47,11 +54,14 @@ export function useDesktopSync({
   runHotkeyRef,
   onPermission,
   onLoginDetected,
+  onLoginForm,
 }: Options) {
   const permissionRef = useRef(onPermission);
   permissionRef.current = onPermission;
   const loginRef = useRef(onLoginDetected);
   loginRef.current = onLoginDetected;
+  const loginFormRef = useRef(onLoginForm);
+  loginFormRef.current = onLoginForm;
 
   useEffect(() => {
     if (!desktop) return;
@@ -128,6 +138,14 @@ export function useDesktopSync({
               url: event.url,
               username: event.username,
               password: event.password,
+            });
+            return;
+          case "login-form":
+            loginFormRef.current({
+              id: event.id,
+              url: event.url,
+              focused: event.focused,
+              field: event.field,
             });
             return;
         }

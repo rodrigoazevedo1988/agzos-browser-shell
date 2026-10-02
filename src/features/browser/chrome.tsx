@@ -19,7 +19,8 @@ import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
-import { AutofillPopup } from "@/features/key/autofill-popup";
+import { AutofillPopup, type AutofillStatus, type QuickLogin } from "@/features/key/autofill-popup";
+import { KeyBar } from "@/features/key/key-bar";
 import { SavePrompt, type SaveCandidate } from "@/features/key/save-prompt";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { type AppMenuAction } from "@/features/settings/menu";
@@ -52,7 +53,7 @@ import { defaultHistoryStore } from "./persistence/history-store";
 import { useVault } from "./persistence/use-vault";
 import { usePersistence } from "./persistence/use-persistence";
 import { browserReducer } from "./store/reducer";
-import { matchesForUrl } from "./vault";
+import { loginUrlOf, matchesForUrl, withLoginUrl } from "./vault";
 import {
   activeTabOf,
   currentBookmark,
@@ -71,8 +72,9 @@ import {
   type Prefs,
 } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
-import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab } from "./types";
+import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab, type VaultEntry } from "./types";
 import { BookmarksBar } from "./ui/bookmarks-bar";
+import type { FolderAnchor } from "./ui/folder-dropdown";
 import { folderMenu, webMenuGroups } from "./ui/shell-menu";
 import { FindBar } from "./ui/find-bar";
 import { PermissionBar } from "./ui/permission-bar";
@@ -96,7 +98,8 @@ type Panel =
   | "palette"
   | "workspaces"
   | "group"
-  | "folder";
+  | "folder"
+  | "login";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -118,6 +121,12 @@ async function writeClipboard(value: string) {
   }
 }
 
+/** Retângulo do chip na janela (a camada desenha o menu da pasta ancorado nele). */
+function anchorOf(element: HTMLElement): FolderAnchor {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+}
+
 export function AgzosBrowser() {
   const [state, dispatch] = useReducer(browserReducer, initialState);
   const desktop = useMemo(() => desktopBridge(), []);
@@ -130,8 +139,28 @@ export function AgzosBrowser() {
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
   // Faixa "salvar no Agzos Key?" (login detectado numa página) e popup de autofill.
   const [saveCandidate, setSaveCandidate] = useState<SaveCandidate | null>(null);
-  const [autofillOpen, setAutofillOpen] = useState(false);
+  // "auto": a página tem login e há credencial salva; "focus": o usuário clicou num campo
+  // de login (abre mesmo sem credencial, para buscar no cofre ou desbloquear).
+  const [autofillOpen, setAutofillOpen] = useState<false | "auto" | "focus">(false);
   const [autofillDismissed, setAutofillDismissed] = useState<string | null>(null);
+  // Formulário de login visto na guia (page-preload): mostra a chave na barra de endereço.
+  const [loginForm, setLoginForm] = useState<{
+    tabId: number;
+    host: string;
+    url: string;
+    field: "password" | "username" | "otp";
+  } | null>(null);
+  // Usuário/senha já digitados na página, para o "salvar login" da chave da barra.
+  const [loginCapture, setLoginCapture] = useState<{ username: string; password: string } | null>(
+    null,
+  );
+  // Barrinha do Key com o código MFA (Authenticator) do login preenchido.
+  const [keyBar, setKeyBar] = useState<{
+    tabId: number;
+    title: string;
+    secret: string;
+    copiedAt: number | null;
+  } | null>(null);
   const [findFocus, setFindFocus] = useState(0);
   // O seletor só aparece se o Ctrl continuar pressionado: toque rápido troca sem piscar.
   const [switcherVisible, setSwitcherVisible] = useState(false);
@@ -145,7 +174,9 @@ export function AgzosBrowser() {
   // Pasta da barra de favoritos aberta na camada (app), com o retângulo do chip.
   const [folderOpen, setFolderOpen] = useState<{
     folderId: string;
-    anchor: { x: number; y: number; width: number; height: number };
+    anchor: FolderAnchor;
+    siblings: { folderId: string; anchor: FolderAnchor }[];
+    enterFrom: "left" | "right" | null;
   } | null>(null);
   const [sitePermissions, setSitePermissions] = useState<SitePermission[]>([]);
   const [update, setUpdate] = useState<UpdateState | null>(null);
@@ -228,15 +259,104 @@ export function AgzosBrowser() {
         : [],
     [current.kind, current.url, vault.entries, vault.state.unlocked],
   );
-  // O popup some ao trocar de site e volta a poder aparecer no site novo.
+  const vaultStatus: AutofillStatus = !vault.state.paired
+    ? "unpaired"
+    : !vault.state.unlocked
+      ? "locked"
+      : vault.loading && vault.entries.length === 0
+        ? "loading"
+        : "ready";
+  // O popup some ao navegar (outra página ou outro site) e pode voltar na página nova.
   useEffect(() => {
     setAutofillOpen(false);
-  }, [currentHostKey]);
-  const canAutofill = vaultMatches.length > 0 && autofillDismissed !== currentHostKey;
-  // Mostra o popup uma vez quando o site aberto tem credencial (como o ícone de chave).
+  }, [current.url]);
+  const canAutofill =
+    current.kind === "page" &&
+    (autofillOpen === "focus" ||
+      (autofillOpen === "auto" && vaultMatches.length > 0 && autofillDismissed !== currentHostKey));
+  // Web (sem páginas de verdade para observar): mostra o popup quando o site tem credencial.
   useEffect(() => {
-    if (vaultMatches.length > 0 && autofillDismissed !== currentHostKey) setAutofillOpen(true);
-  }, [currentHostKey, vaultMatches.length, autofillDismissed]);
+    if (!desktop && vaultMatches.length > 0 && autofillDismissed !== currentHostKey)
+      setAutofillOpen("auto");
+  }, [desktop, currentHostKey, vaultMatches.length, autofillDismissed]);
+
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
+  const lastVaultSync = useRef(0);
+  // O cofre pode ter mudado desde a última leitura (senha nova no Agzos Key, desbloqueio em
+  // outra janela): ao achar um login, relê do main, no máximo a cada 45 s.
+  const syncVaultSoon = useCallback(() => {
+    const current = vaultRef.current;
+    if (current.loading) return;
+    if (current.state.unlocked && Date.now() - lastVaultSync.current < 45_000) return;
+    lastVaultSync.current = Date.now();
+    void current.refresh();
+  }, []);
+
+  /** Abre a barrinha do MFA para um login com Authenticator. */
+  const openKeyBar = useCallback((tabId: number, entry: VaultEntry) => {
+    if (!entry.totpSecret) return;
+    setKeyBar((bar) =>
+      bar && bar.tabId === tabId && bar.secret === entry.totpSecret
+        ? bar
+        : {
+            tabId,
+            title: entry.username ? `${entry.username} · ${entry.title}` : entry.title,
+            secret: entry.totpSecret!,
+            copiedAt: null,
+          },
+    );
+  }, []);
+
+  // Formulário de login na guia (page-preload): à vista ou com um campo clicado.
+  const onLoginForm = useCallback(
+    (payload: {
+      id: number;
+      url: string;
+      focused: boolean;
+      field: "password" | "username" | "otp";
+    }) => {
+      if (payload.id !== stateRef.current.activeId) return;
+      const host = hostOf(payload.url);
+      if (!host) return;
+      setLoginForm({ tabId: payload.id, host, url: payload.url, field: payload.field });
+      syncVaultSoon();
+      const unlocked = vaultRef.current.state.unlocked;
+      const matches = unlocked ? matchesForUrl(vaultRef.current.entries, payload.url) : [];
+      if (payload.field === "otp") {
+        // Tela do código: a barrinha com o Authenticator do site, se houver.
+        const withTotp = matches.find((entry) => entry.totpSecret);
+        if (withTotp) openKeyBar(payload.id, withTotp);
+        if (!payload.focused || withTotp) return;
+      }
+      // Só à vista (sem clique): quem sugere é o efeito abaixo, uma vez por página.
+      if (!payload.focused) return;
+      // O próprio preenchimento foca os campos: não reabre o popup logo depois.
+      if (Date.now() - filledAtRef.current < 2000) return;
+      // Clique num campo de login: sempre busca no cofre (e pede o desbloqueio se preciso).
+      // Fechado com o X neste site e nada salvo para ele: não insiste.
+      if (matches.length === 0 && unlocked && dismissedHostRef.current === host) return;
+      setAutofillOpen("focus");
+    },
+    [openKeyBar, syncVaultSoon],
+  );
+  const filledAtRef = useRef(0);
+  const dismissedHostRef = useRef(autofillDismissed);
+  dismissedHostRef.current = autofillDismissed;
+  // Página de login já aberta e o cofre só agora com credencial para ela (desbloqueou,
+  // sincronizou): sugere sem esperar outro clique no campo.
+  const loginFormHere =
+    loginForm !== null && loginForm.tabId === activeTab.id && loginForm.host === currentHostKey;
+  // Uma vez por página de login (não na tela do código MFA, que tem a barrinha).
+  const autoShownRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!loginFormHere || !loginForm || loginForm.field === "otp") return;
+    if (vaultMatches.length === 0) return;
+    const page = `${loginForm.tabId}|${loginForm.url}`;
+    if (autoShownRef.current === page) return;
+    autoShownRef.current = page;
+    setAutofillOpen((open) => open || "auto");
+  }, [loginFormHere, loginForm, vaultMatches.length]);
 
   // Login detectado numa página: oferecer salvar/atualizar no cofre (só se mudou algo).
   const onLoginDetected = useCallback(
@@ -245,7 +365,12 @@ export function AgzosBrowser() {
       const existing = matchesForUrl(vault.entries, payload.url).find(
         (entry) => !payload.username || entry.username === payload.username,
       );
-      if (existing && existing.password === payload.password) return; // nada mudou
+      if (existing && existing.password === payload.password) {
+        // Mesma senha: só falta a URL do login no cofre? Coleta e sincroniza.
+        const linked = withLoginUrl(existing, payload.url);
+        if (linked) void vault.add(linked);
+        return;
+      }
       setSaveCandidate({
         url: payload.url,
         username: payload.username,
@@ -253,7 +378,7 @@ export function AgzosBrowser() {
         update: Boolean(existing),
       });
     },
-    [vault.entries, vault.state.unlocked],
+    [vault],
   );
 
   const saveDetectedCredential = useCallback(() => {
@@ -268,7 +393,7 @@ export function AgzosBrowser() {
       id: existing?.id ?? crypto.randomUUID(),
       type: "login",
       title: existing?.title ?? host,
-      url: existing?.url ?? `https://${host}`,
+      url: existing?.url?.trim() || loginUrlOf(candidate.url) || `https://${host}`,
       username: candidate.username || existing?.username || "",
       password: candidate.password,
       category: existing?.category ?? "Pessoal",
@@ -279,12 +404,60 @@ export function AgzosBrowser() {
   }, [saveCandidate, vault]);
 
   const fillCredential = useCallback(
-    (entry: { username?: string; password?: string }) => {
-      if (desktop) void desktop.autofill(activeTab.id, entry.username ?? "", entry.password ?? "");
+    (entry: VaultEntry) => {
+      const tabId = activeTab.id;
+      filledAtRef.current = Date.now();
+      if (desktop) {
+        void desktop.autofill(tabId, entry.username ?? "", entry.password ?? "").then((result) => {
+          // Nenhum campo achado (página montando o formulário): tenta mais uma vez.
+          if (result.ok && result.filled === false)
+            window.setTimeout(
+              () => void desktop.autofill(tabId, entry.username ?? "", entry.password ?? ""),
+              700,
+            );
+        });
+      }
       setAutofillOpen(false);
+      setPanel((open) => (open === "login" ? null : open));
+      // Login usado aqui e ainda sem URL no cofre: guarda a URL do site (sincroniza).
+      const linked = withLoginUrl(entry, current.url);
+      if (linked) void vault.add(linked);
+      // Tem Authenticator: a barrinha do Key já abre com o código.
+      openKeyBar(tabId, entry);
     },
-    [desktop, activeTab.id],
+    [desktop, activeTab.id, current.url, vault, openKeyBar],
   );
+
+  const saveQuickLogin = useCallback(
+    (login: QuickLogin) => {
+      const now = Date.now();
+      const host = hostOf(current.url) ?? current.url;
+      void vault.add({
+        id: crypto.randomUUID(),
+        type: "login",
+        title: login.title || host,
+        url: loginUrlOf(current.url) ?? `https://${host}`,
+        username: login.username,
+        password: login.password,
+        category: "Pessoal",
+        passwordUpdatedAt: now,
+        updatedAt: now,
+      });
+      setPanel((open) => (open === "login" ? null : open));
+    },
+    [current.url, vault],
+  );
+
+  // Barrinha do Key: copiou o código e não está fixada (tachinha) -> some depois de um
+  // tempo para colar com calma. Fixada, fica até o X.
+  useEffect(() => {
+    if (!keyBar?.copiedAt || prefs.keyBarPinned) return;
+    const timer = window.setTimeout(
+      () => setKeyBar((bar) => (bar?.copiedAt === keyBar.copiedAt ? null : bar)),
+      15_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [keyBar?.copiedAt, prefs.keyBarPinned]);
 
   const setPrefs = useCallback(
     (patch: Partial<Prefs>) => dispatch({ type: "prefs/set", patch }),
@@ -361,11 +534,17 @@ export function AgzosBrowser() {
   const panelRef = useRef(panel);
   panelRef.current = panel;
   const autofillProps = {
+    host: currentHostKey,
+    status: vaultStatus,
     entries: vaultMatches,
+    vault: vault.entries,
     copied,
     canFill: desktop !== null,
     onCopy: (id: string, value: string) => void copyText(id, value),
     onFill: fillCredential,
+    onSave: saveQuickLogin,
+    // Desbloquear: o painel do Key; fechado ele, o popup volta já com os logins.
+    onUnlock: () => setPanel("key"),
     onOpenVault: () => {
       setAutofillOpen(false);
       setPanel("key");
@@ -373,15 +552,46 @@ export function AgzosBrowser() {
     onClose: () => {
       setAutofillOpen(false);
       setAutofillDismissed(currentHostKey);
+      setPanel((open) => (open === "login" ? null : open));
     },
   };
+  // Chave da barra de endereço: abre o popup do site, com o que já foi digitado na página.
+  const toggleSiteKey = () => {
+    if (justDismissed("login")) return;
+    if (panelRef.current === "login") {
+      panelRef.current = null;
+      setPanel(null);
+      return;
+    }
+    const open = (capture: { username: string; password: string } | null) => {
+      setLoginCapture(capture);
+      setAutofillOpen(false);
+      panelRef.current = "login";
+      setPanel("login");
+    };
+    syncVaultSoon();
+    if (!desktop) {
+      open(null);
+      return;
+    }
+    void desktop
+      .loginFields(activeTab.id)
+      .catch(() => null)
+      .then(open);
+  };
+  const siteKeyVisible =
+    current.kind === "page" &&
+    !activeTab.private &&
+    /^https?:/i.test(current.url) &&
+    (panel === "login" || vaultMatches.length > 0 || saveCandidate !== null || loginFormHere);
 
   const onOverlayDismissed = useCallback(
     ({ kind, click }: { kind?: Panel | "autofill"; click?: "shell" | "page" | false }) => {
-      // Popup de autofill (na camada, fora do `panel`): fechar = dispensar neste site.
+      // Popup de autofill (na camada, fora do `panel`). Clique fora (na página, em geral
+      // no próprio campo) só fecha; Esc dispensa neste site.
       if (kind === "autofill") {
         setAutofillOpen(false);
-        setAutofillDismissed(autofillHostRef.current);
+        if (!click) setAutofillDismissed(autofillHostRef.current);
         return;
       }
       // O clique repassado já foi tratado (trocou de painel ou fechou este): nada a fazer.
@@ -536,8 +746,9 @@ export function AgzosBrowser() {
       if (!choice) return;
       const nodes = stateRef.current.bookmarks;
       if (choice.startsWith("open:")) {
+        // Favorito da barra/pasta: sempre numa guia nova, sem trocar a página aberta.
         const node = nodes.find((item) => item.id === choice.slice("open:".length));
-        if (node?.url) openUrl(node.url, false);
+        if (node?.url) openUrl(node.url, true);
       } else if (choice.startsWith("open-all:")) {
         for (const node of childrenOf(nodes, choice.slice("open-all:".length))) {
           if (node.url) openUrl(node.url, true);
@@ -552,8 +763,11 @@ export function AgzosBrowser() {
     if (desktop) {
       // Clique na mesma pasta com o menu aberto: o clique fora já fechou, só não reabre.
       if (justDismissed("folder")) return;
-      const anchor = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-      setFolderOpen({ folderId, anchor });
+      // Os chips das outras pastas: com o menu aberto, o hover neles troca de pasta.
+      const siblings = Array.from(
+        document.querySelectorAll<HTMLElement>(".bookmarks-bar [data-folder-id]"),
+      ).map((chip) => ({ folderId: chip.dataset["folderId"] ?? "", anchor: anchorOf(chip) }));
+      setFolderOpen({ folderId, anchor: anchorOf(event.currentTarget), siblings, enterFrom: null });
       setPanel("folder");
       return;
     }
@@ -567,8 +781,8 @@ export function AgzosBrowser() {
     const items: NativeMenuItem[] = node
       ? node.kind === "url"
         ? [
-            { id: "open", label: "Abrir" },
             { id: "open-tab", label: "Abrir em nova guia" },
+            { id: "open", label: "Abrir nesta guia" },
             { separator: true },
             { id: "edit", label: "Editar…" },
             { id: "remove", label: "Excluir" },
@@ -1359,15 +1573,34 @@ export function AgzosBrowser() {
                               folderId: folderOpen.folderId,
                               nodes: state.bookmarks,
                               anchor: folderOpen.anchor,
-                              onOpen: (node, newTab) => node.url && openUrl(node.url, newTab),
+                              siblings: folderOpen.siblings,
+                              enterFrom: folderOpen.enterFrom,
+                              onOpen: (node) => node.url && openUrl(node.url, true),
+                              onSwitch: (folderId, anchor) =>
+                                setFolderOpen((open) =>
+                                  open && open.folderId !== folderId
+                                    ? {
+                                        ...open,
+                                        folderId,
+                                        anchor,
+                                        enterFrom: anchor.x < open.anchor.x ? "left" : "right",
+                                      }
+                                    : open,
+                                ),
                               onClose: closePanel,
                             },
                           }
                         : // Popup de autofill: no app vai para a camada (a página nativa
                           // cobriria um popup desenhado na casca); na web fica na casca.
-                          desktop && panel === null && canAutofill && autofillOpen
+                          desktop && panel === null && canAutofill
                           ? { kind: "autofill", key: currentHostKey, props: autofillProps }
-                          : null;
+                          : panel === "login"
+                            ? {
+                                kind: "login",
+                                key: currentHostKey,
+                                props: { ...autofillProps, mode: "site", capture: loginCapture },
+                              }
+                            : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1416,6 +1649,7 @@ export function AgzosBrowser() {
     runHotkeyRef,
     onPermission: setPermission,
     onLoginDetected,
+    onLoginForm,
   });
 
   return (
@@ -1466,6 +1700,11 @@ export function AgzosBrowser() {
             fraction: downloadBatch.fraction,
           }}
           keyOpen={panel === "key"}
+          siteKey={
+            siteKeyVisible
+              ? { saved: vaultMatches.length > 0, open: panel === "login", onToggle: toggleSiteKey }
+              : null
+          }
           dark={prefs.dark}
           aiOpen={prefs.aiOpen}
           isMac={isMac}
@@ -1508,8 +1747,9 @@ export function AgzosBrowser() {
         {prefs.bookmarksBar && (
           <BookmarksBar
             nodes={state.bookmarks}
-            onOpen={(node, newTab) => node.url && openUrl(node.url, newTab)}
+            onOpen={(node) => node.url && openUrl(node.url, true)}
             onFolder={openFolderMenu}
+            openFolderId={panel === "folder" ? (folderOpen?.folderId ?? null) : null}
             onContextMenu={openBookmarkMenu}
             onMove={bookmarkActions.move}
             folderPanel={desktop !== null}
@@ -1524,7 +1764,24 @@ export function AgzosBrowser() {
             onDismiss={() => setSaveCandidate(null)}
           />
         )}
-        {!desktop && canAutofill && autofillOpen && <AutofillPopup {...autofillProps} />}
+        {keyBar && (prefs.keyBarPinned || keyBar.tabId === activeTab.id) && (
+          <KeyBar
+            key={keyBar.secret}
+            title={keyBar.title}
+            secret={keyBar.secret}
+            pinned={prefs.keyBarPinned}
+            canFill={desktop !== null}
+            onCopied={(code) => {
+              void writeClipboard(code);
+              setKeyBar((bar) => (bar ? { ...bar, copiedAt: Date.now() } : bar));
+            }}
+            onFill={(code) => void desktop?.autofillOtp(activeTab.id, code)}
+            onPin={() => setPrefs({ keyBarPinned: !prefs.keyBarPinned })}
+            onClose={() => setKeyBar(null)}
+          />
+        )}
+        {!desktop && canAutofill && <AutofillPopup {...autofillProps} />}
+
         {permission && (
           <PermissionBar
             key={permission.id}
