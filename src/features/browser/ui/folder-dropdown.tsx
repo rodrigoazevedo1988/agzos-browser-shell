@@ -1,4 +1,5 @@
 import { Folder } from "lucide-react";
+import { useEffect, useRef } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -130,27 +131,12 @@ export function FolderMenu({
     <>
       {/* Zonas sobre os chips das pastas: a camada cobre a barra, então o hover é aqui. */}
       {siblings.map((sibling) => (
-        <span
+        <FolderHoverZone
           key={sibling.folderId}
-          className="folder-hover-zone"
-          data-folder-zone={sibling.folderId}
-          aria-hidden="true"
-          style={{
-            left: sibling.anchor.x,
-            top: sibling.anchor.y,
-            width: sibling.anchor.width,
-            height: sibling.anchor.height,
-          }}
-          onPointerEnter={() => {
-            if (sibling.folderId !== folderId) onSwitch?.(sibling.folderId, sibling.anchor);
-          }}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            // Clique na própria pasta fecha; em outra, abre a outra (o hover já trocou).
-            if (sibling.folderId === folderId) onClose();
-            else onSwitch?.(sibling.folderId, sibling.anchor);
-          }}
+          sibling={sibling}
+          current={sibling.folderId === folderId}
+          onSwitch={() => onSwitch?.(sibling.folderId, sibling.anchor)}
+          onClose={onClose}
         />
       ))}
       <FolderMenuContent
@@ -162,6 +148,59 @@ export function FolderMenu({
         onClose={onClose}
       />
     </>
+  );
+}
+
+/**
+ * Zona sobre o chip de uma pasta da barra (na camada, por cima da casca). Troca o menu
+ * pelo hover da camada ou pelo cursor que o main acompanha ("agzos-pointer", ver
+ * followFolderPointer em electron/main.cjs): vale o que chegar primeiro.
+ */
+function FolderHoverZone({
+  sibling,
+  current,
+  onSwitch,
+  onClose,
+}: {
+  sibling: { folderId: string; anchor: FolderAnchor };
+  current: boolean;
+  onSwitch: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const switchRef = useRef(onSwitch);
+  switchRef.current = onSwitch;
+  useEffect(() => {
+    const zone = ref.current;
+    if (!zone || current) return;
+    const onPointer = () => switchRef.current();
+    zone.addEventListener("agzos-pointer", onPointer);
+    return () => zone.removeEventListener("agzos-pointer", onPointer);
+  }, [current]);
+
+  return (
+    <span
+      ref={ref}
+      className="folder-hover-zone"
+      data-folder-zone={sibling.folderId}
+      aria-hidden="true"
+      style={{
+        left: sibling.anchor.x,
+        top: sibling.anchor.y,
+        width: sibling.anchor.width,
+        height: sibling.anchor.height,
+      }}
+      onPointerEnter={() => {
+        if (!current) onSwitch();
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // Clique na própria pasta fecha; em outra, abre a outra (o hover já trocou).
+        if (current) onClose();
+        else onSwitch();
+      }}
+    />
   );
 }
 

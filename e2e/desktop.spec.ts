@@ -116,6 +116,17 @@ const PAGES: Record<string, string> = {
     </form>`,
   "/codigo-key": `<!doctype html><title>Código de verificação</title>
     <input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6">`,
+  "/entrar-shadow": `<!doctype html><title>Entrar com web component</title>
+    <login-box></login-box>
+    <script>
+      customElements.define("login-box", class extends HTMLElement {
+        connectedCallback() {
+          this.attachShadow({ mode: "open" }).innerHTML =
+            '<input id="u" type="email" autocomplete="username">' +
+            '<input id="p" type="password" autocomplete="current-password">';
+        }
+      });
+    </script>`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
 };
@@ -2361,6 +2372,151 @@ test("2.2.7: favorito da barra abre em guia nova e o hover troca a pasta aberta"
       await window.waitForTimeout(600);
       execFileSync("import", ["-window", "root", `${process.env.AGZOS_SHOT}-folder.png`]);
     }
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.2.8: chave e estrela na ponta da omnibox; Preencher sem formulário avisa", async () => {
+  const { app, window } = await launch(tempProfile(), {
+    AGZOS_DEBUG_OVERLAY: "1",
+    AGZOS_KEY_URL: origin,
+  });
+  const url = `${origin}/entrar-key`;
+  try {
+    await go(window, url);
+    const key = window.getByRole("button", { name: "Agzos Key deste site" });
+    await expect(key).toBeVisible();
+    // Chave, estrela e link juntos na ponta direita, sem buraco dos ícones escondidos.
+    const star = window.getByRole("button", { name: "Favoritar página" });
+    const link = window.getByRole("button", { name: "Copiar link" });
+    const [k, s, l] = await Promise.all(
+      [key, star, link].map(async (b) => (await b.boundingBox())!),
+    );
+    expect(s.x).toBeGreaterThan(k.x);
+    expect(l.x).toBeGreaterThan(s.x);
+    expect(s.x - (k.x + k.width)).toBeLessThanOrEqual(4);
+    expect(l.x - (s.x + s.width)).toBeLessThanOrEqual(4);
+    expect(Math.abs(k.y - s.y)).toBeLessThanOrEqual(1);
+    if (process.env.AGZOS_SHOT) {
+      execFileSync("import", ["-window", "root", `${process.env.AGZOS_SHOT}-omnibox.png`]);
+    }
+
+    // Conecta e desbloqueia o Key pelo popup da chave.
+    await key.click();
+    const overlay = await overlayPage(app);
+    const popup = overlay.getByRole("complementary", { name: "Entrar com o Agzos Key" });
+    await popup.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Código de pareamento").fill("ABCD-1234");
+    await overlay.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Senha mestra").fill(KEY_PASSWORD);
+    await overlay.getByRole("button", { name: "Desbloquear" }).click();
+    await expect(overlay.getByText("Login local")).toBeVisible({ timeout: 30_000 });
+    await overlay.keyboard.press("Escape");
+
+    // Página do site sem formulário de login: Preencher não some calado, o popup avisa.
+    const plain = `${origin}/video-vivo`;
+    await go(window, plain);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    await expect(key).toBeVisible();
+    await key.click();
+    await popup.getByRole("button", { name: "Preencher login de Login local" }).click();
+    await expect(popup.getByRole("status")).toContainText("Não achei campos de login");
+    await expect(popup).toBeVisible();
+
+    // Na tela de login (o popup do Key fechou ao navegar e volta sozinho com o login do
+    // site), Preencher põe usuário e senha e o foco fica na página (Enter já entra).
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Entrar no site");
+    await popup.getByRole("button", { name: "Preencher login de Login local" }).click();
+    await expect
+      .poll(() =>
+        inTab<string>(
+          app,
+          url,
+          `document.getElementById("email").value + "|" + document.getElementById("senha").value`,
+        ),
+      )
+      .toBe("arnaldo@agzos.com|segredo");
+    await expect.poll(async () => (await layersOf(app, url)).overlayVisible).toBe(false);
+    await expect
+      .poll(() => inTab<string>(app, url, `document.hasFocus() && document.activeElement.id`))
+      .toBe("senha");
+
+    // Login dentro de web component (shadow DOM aberto) também é preenchido.
+    const shadow = `${origin}/entrar-shadow`;
+    await go(window, shadow);
+    await expect(tabs(window).first()).toContainText("Entrar com web component");
+    await key.click();
+    await popup.getByRole("button", { name: "Preencher login de Login local" }).click();
+    await expect
+      .poll(() =>
+        inTab<string>(
+          app,
+          shadow,
+          `(() => { const r = document.querySelector("login-box").shadowRoot;
+             return r.getElementById("u").value + "|" + r.getElementById("p").value; })()`,
+        ),
+      )
+      .toBe("arnaldo@agzos.com|segredo");
+  } finally {
+    await app.close();
+  }
+});
+
+test("2.2.8: com uma pasta aberta, o cursor sobre outra troca o menu (sem hover da camada)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/video-vivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Vídeo vivo");
+    await app.evaluate(({ Menu }) => {
+      const g = globalThis as { __pick?: string };
+      Menu.prototype.popup = function (options?: Electron.PopupOptions) {
+        this.items.find((entry) => entry.label === g.__pick)?.click();
+        options?.callback?.();
+      };
+    });
+    const bar = window.getByRole("navigation", { name: "Barra de favoritos" });
+    for (const name of ["Pasta A", "Pasta B", "Pasta C"]) {
+      await app.evaluate(() => {
+        (globalThis as { __pick?: string }).__pick = "Nova pasta";
+      });
+      const box = (await bar.boundingBox())!;
+      await bar.click({ button: "right", position: { x: box.width - 8, y: box.height / 2 } });
+      const overlay = await overlayPage(app);
+      await overlay.getByLabel("Nome").fill(name);
+      await overlay.getByRole("button", { name: "Concluído" }).click();
+      await expect(bar.getByRole("button", { name })).toBeVisible();
+    }
+    // O cursor do sistema (o main acompanha): nenhum evento de mouse chega à camada.
+    const cursorAt = async (name: string) => {
+      const b = (await bar.getByRole("button", { name }).boundingBox())!;
+      await app.evaluate(
+        ({ screen, BrowserWindow }, point) => {
+          const bounds = BrowserWindow.getAllWindows()[0].getContentBounds();
+          screen.getCursorScreenPoint = () => ({ x: bounds.x + point.x, y: bounds.y + point.y });
+        },
+        { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) },
+      );
+    };
+    await cursorAt("Pasta A");
+    await bar.getByRole("button", { name: "Pasta A" }).click();
+    await expect(bar.locator(".bookmark-chip.open")).toHaveText("Pasta A");
+    await cursorAt("Pasta C");
+    await expect(bar.locator(".bookmark-chip.open")).toHaveText("Pasta C");
+    const overlay = await overlayPage(app);
+    const folder = overlay.getByRole("menu", { name: "Pasta de favoritos" });
+    await expect(folder).toHaveAttribute("data-enter-from", "right");
+    await cursorAt("Pasta B");
+    await expect(bar.locator(".bookmark-chip.open")).toHaveText("Pasta B");
+    await expect(folder).toHaveAttribute("data-enter-from", "left");
+    // Fechado o menu, o cursor sobre as pastas não abre nada.
+    await overlay.keyboard.press("Escape");
+    await expect(bar.locator(".bookmark-chip.open")).toHaveCount(0);
+    await cursorAt("Pasta A");
+    await window.waitForTimeout(300);
+    await expect(bar.locator(".bookmark-chip.open")).toHaveCount(0);
   } finally {
     await app.close();
   }

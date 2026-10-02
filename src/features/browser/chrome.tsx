@@ -122,6 +122,17 @@ async function writeClipboard(value: string) {
 }
 
 /** Retângulo do chip na janela (a camada desenha o menu da pasta ancorado nele). */
+/** Mesma página (origem e caminho; query e âncora não contam). */
+function samePage(a: string, b: string) {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.origin === y.origin && x.pathname === y.pathname;
+  } catch {
+    return a === b;
+  }
+}
+
 function anchorOf(element: HTMLElement): FolderAnchor {
   const rect = element.getBoundingClientRect();
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
@@ -269,6 +280,7 @@ export function AgzosBrowser() {
   // O popup some ao navegar (outra página ou outro site) e pode voltar na página nova.
   useEffect(() => {
     setAutofillOpen(false);
+    setPanel((open) => (open === "login" ? null : open));
   }, [current.url]);
   const canAutofill =
     current.kind === "page" &&
@@ -346,7 +358,10 @@ export function AgzosBrowser() {
   // Página de login já aberta e o cofre só agora com credencial para ela (desbloqueou,
   // sincronizou): sugere sem esperar outro clique no campo.
   const loginFormHere =
-    loginForm !== null && loginForm.tabId === activeTab.id && loginForm.host === currentHostKey;
+    loginForm !== null &&
+    loginForm.tabId === activeTab.id &&
+    loginForm.host === currentHostKey &&
+    samePage(loginForm.url, current.url);
   // Uma vez por página de login (não na tela do código MFA, que tem a barrinha).
   const autoShownRef = useRef<string | null>(null);
   useEffect(() => {
@@ -357,6 +372,11 @@ export function AgzosBrowser() {
     autoShownRef.current = page;
     setAutofillOpen((open) => open || "auto");
   }, [loginFormHere, loginForm, vaultMatches.length]);
+  // Saiu da página: voltando a ela (outra visita), o popup pode subir de novo.
+  useEffect(() => {
+    if (autoShownRef.current && !autoShownRef.current.endsWith(`|${current.url}`))
+      autoShownRef.current = null;
+  }, [current.url]);
 
   // Login detectado numa página: oferecer salvar/atualizar no cofre (só se mudou algo).
   const onLoginDetected = useCallback(
@@ -403,30 +423,44 @@ export function AgzosBrowser() {
     setSaveCandidate(null);
   }, [saveCandidate, vault]);
 
+  // Login que não achou campos para preencher (a página não tem formulário de login à
+  // vista): o popup fica aberto e avisa, em vez de fechar sem fazer nada.
+  const [fillMiss, setFillMiss] = useState<string | null>(null);
   const fillCredential = useCallback(
     (entry: VaultEntry) => {
       const tabId = activeTab.id;
+      const pageUrl = current.url;
       filledAtRef.current = Date.now();
-      if (desktop) {
-        void desktop.autofill(tabId, entry.username ?? "", entry.password ?? "").then((result) => {
-          // Nenhum campo achado (página montando o formulário): tenta mais uma vez.
-          if (result.ok && result.filled === false)
-            window.setTimeout(
-              () => void desktop.autofill(tabId, entry.username ?? "", entry.password ?? ""),
-              700,
-            );
-        });
+      const done = () => {
+        setFillMiss(null);
+        setAutofillOpen(false);
+        setPanel((open) => (open === "login" ? null : open));
+        // Login usado aqui e ainda sem URL no cofre: guarda a URL do site (sincroniza).
+        const linked = withLoginUrl(entry, pageUrl);
+        if (linked) void vault.add(linked);
+        // Tem Authenticator: a barrinha do Key já abre com o código.
+        openKeyBar(tabId, entry);
+      };
+      if (!desktop) {
+        done();
+        return;
       }
-      setAutofillOpen(false);
-      setPanel((open) => (open === "login" ? null : open));
-      // Login usado aqui e ainda sem URL no cofre: guarda a URL do site (sincroniza).
-      const linked = withLoginUrl(entry, current.url);
-      if (linked) void vault.add(linked);
-      // Tem Authenticator: a barrinha do Key já abre com o código.
-      openKeyBar(tabId, entry);
+      const fill = () => desktop.autofill(tabId, entry.username ?? "", entry.password ?? "");
+      void (async () => {
+        let result = await fill();
+        // Nenhum campo achado (página montando o formulário): tenta mais uma vez.
+        if (result.ok && result.filled === false) {
+          await new Promise((resolve) => window.setTimeout(resolve, 700));
+          result = await fill();
+        }
+        filledAtRef.current = Date.now();
+        if (result.ok && result.filled === false) setFillMiss(entry.id);
+        else done();
+      })();
     },
     [desktop, activeTab.id, current.url, vault, openKeyBar],
   );
+  useEffect(() => setFillMiss(null), [current.url, panel, autofillOpen]);
 
   const saveQuickLogin = useCallback(
     (login: QuickLogin) => {
@@ -542,6 +576,7 @@ export function AgzosBrowser() {
     canFill: desktop !== null,
     onCopy: (id: string, value: string) => void copyText(id, value),
     onFill: fillCredential,
+    missed: fillMiss,
     onSave: saveQuickLogin,
     // Desbloquear: o painel do Key; fechado ele, o popup volta já com os logins.
     onUnlock: () => setPanel("key"),

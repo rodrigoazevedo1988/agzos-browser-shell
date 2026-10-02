@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.8",
+    date: "2026-10-02",
+    items: [
+      "Barra de endereço: a chave do Agzos Key, a estrela e o link agora ficam juntos na ponta direita, sempre no mesmo lugar e com o mesmo espaçamento — os ajustes do site e a proteção aparecem à esquerda deles ao passar o mouse.",
+      "Correção: com uma pasta de favoritos aberta, passar o mouse nas outras pastas troca o menu de verdade, em qualquer sistema, sem precisar clicar.",
+      "Agzos Key: Preencher agora leva o foco para a página (é só apertar Enter), funciona também em logins feitos com web components e, quando a página não tem formulário de login à vista, avisa no próprio popup em vez de fechar sem fazer nada.",
+      "Voltando a uma página de login, o Agzos Key sugere o preenchimento de novo, e o popup da chave fecha ao trocar de página.",
+    ],
+  },
+  {
     version: "2.2.7",
     date: "2026-10-02",
     items: [

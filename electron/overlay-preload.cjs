@@ -12,3 +12,13 @@ contextBridge.exposeInMainWorld("agzosOverlay", {
   dismiss: (click) => ipcRenderer.send("overlay:dismiss", click ?? null),
   wheel: (payload) => ipcRenderer.send("overlay:wheel", payload),
 });
+
+// Cursor acompanhado pelo main (menu de pasta aberto): o elemento sob ele recebe
+// "agzos-pointer", e a zona de outra pasta troca o menu (ver followFolderPointer).
+ipcRenderer.on("agzos:overlay-pointer", (_event, point) => {
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const target = document.elementFromPoint(x, y);
+  if (target) target.dispatchEvent(new Event("agzos-pointer", { bubbles: true }));
+});

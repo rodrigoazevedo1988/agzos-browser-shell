@@ -81,7 +81,11 @@ function fieldKind(target) {
   // Usuário só conta como login se a página tem senha à vista ou o campo é claramente o
   // primeiro passo de um login em etapas (autocomplete username / e-mail no formulário).
   const auto = (target.getAttribute("autocomplete") || "").toLowerCase();
-  const hasPassword = visibleInputs().some(isPassword);
+  // Campo dentro de web component: a senha costuma estar na mesma shadow root.
+  const root = target.getRootNode();
+  const hasPassword =
+    visibleInputs().some(isPassword) ||
+    (root instanceof ShadowRoot && visibleInputs(root).some(isPassword));
   const form = target.form;
   const formText = form ? `${form.id} ${form.name} ${form.action} ${form.className}` : "";
   if (hasPassword || auto.includes("username") || /login|signin|sign-in|auth/i.test(formText))
@@ -142,7 +146,9 @@ function userActed(event) {
 let lastFocus = { el: null, at: 0 };
 function onFocus(event) {
   if (Date.now() - lastUserAt > 1000) return;
-  const target = event.target;
+  // Em web components (shadow DOM aberto) o evento chega com o host como alvo.
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  const target = path[0] instanceof HTMLInputElement ? path[0] : event.target;
   const kind = fieldKind(target);
   if (!kind) return;
   // O mesmo campo focado de novo em seguida (clique depois do foco): um aviso só.
@@ -247,7 +253,11 @@ window.addEventListener("focusin", onFocus, true);
 window.addEventListener(
   "pointerdown",
   (event) => {
-    if (event.target === document.activeElement) onFocus(event);
+    let active = document.activeElement;
+    while (active && active.shadowRoot && active.shadowRoot.activeElement)
+      active = active.shadowRoot.activeElement;
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    if ((path[0] || event.target) === active) onFocus(event);
   },
   true,
 );

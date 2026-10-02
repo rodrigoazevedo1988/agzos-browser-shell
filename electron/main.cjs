@@ -2183,6 +2183,7 @@ async function openPanelLayer(ctx, model) {
   }
   renderPanelLayer(ctx);
   placePanelLayer(ctx);
+  followFolderPointer(ctx);
   // Foco na camada ao abrir, ou quando o autofill (sem foco) vira um painel de verdade.
   if (!passive && (opening || layer.passive)) layer.view.webContents.focus();
   layer.passive = passive;
@@ -2190,6 +2191,43 @@ async function openPanelLayer(ctx, model) {
     logOverlay("live-overlay", `kind=${model.kind} window=${ctx.key}`);
   }
   return { ok: true };
+}
+
+const FOLDER_POINTER_MS = 50;
+
+/**
+ * Menu de pasta dos favoritos aberto: o main acompanha o cursor e avisa a camada, que
+ * troca de pasta quando ele passa por cima de outra. Sem depender do hover da própria
+ * camada: em alguns sistemas o WebContentsView transparente recém-mostrado não recebe o
+ * movimento do mouse até um clique, e a troca pelo hover não acontecia.
+ */
+function followFolderPointer(ctx) {
+  const layer = ctx.overlay;
+  if (!layer || layer.model?.kind !== "folder" || layer.pointerTimer) return;
+  let last = "";
+  layer.pointerTimer = setInterval(() => {
+    if (layer.model?.kind !== "folder" || ctx.window.isDestroyed()) {
+      stopFolderPointer(layer);
+      return;
+    }
+    const contents = layer.view.webContents;
+    if (contents.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = ctx.window.getContentBounds();
+    const x = Math.round(cursor.x - bounds.x);
+    const y = Math.round(cursor.y - bounds.y);
+    const key = `${x},${y}`;
+    if (key === last) return;
+    last = key;
+    if (x < 0 || y < 0 || x >= bounds.width || y >= bounds.height) return;
+    contents.send("agzos:overlay-pointer", { x, y });
+  }, FOLDER_POINTER_MS);
+}
+
+function stopFolderPointer(layer) {
+  if (!layer?.pointerTimer) return;
+  clearInterval(layer.pointerTimer);
+  layer.pointerTimer = null;
 }
 
 /**
@@ -2202,6 +2240,7 @@ function closePanelLayer(ctx, { notify = false, refocus = true, click = false } 
   const { kind } = layer.model;
   layer.model = null;
   layer.passive = false;
+  stopFolderPointer(layer);
   const contents = layer.view.webContents;
   const hadFocus = !contents.isDestroyed() && contents.isFocused();
   layer.view.setVisible(false);
@@ -2329,8 +2368,20 @@ function fillLoginScript(data) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   };
-  const inputs = Array.from(document.querySelectorAll("input")).filter(visible);
-  const active = document.activeElement;
+  // Campos dentro de web components (shadow DOM aberto) também contam.
+  const allInputs = () => {
+    const out = [];
+    const walk = (root) => {
+      out.push(...root.querySelectorAll("input"));
+      for (const el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot);
+    };
+    walk(document);
+    return out;
+  };
+  const inputs = allInputs().filter(visible);
+  let active = document.activeElement;
+  while (active && active.shadowRoot && active.shadowRoot.activeElement)
+    active = active.shadowRoot.activeElement;
   // O campo de senha do formulário em foco ganha; senão o primeiro visível.
   const passwords = inputs.filter((i) => i.type === "password");
   const pass =
@@ -2374,7 +2425,17 @@ function fillOtpScript(code) {
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
   };
-  const inputs = Array.from(document.querySelectorAll("input")).filter(
+  // Campos dentro de web components (shadow DOM aberto) também contam.
+  const allInputs = () => {
+    const out = [];
+    const walk = (root) => {
+      out.push(...root.querySelectorAll("input"));
+      for (const el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot);
+    };
+    walk(document);
+    return out;
+  };
+  const inputs = allInputs().filter(
     (i) => visible(i) && ["text", "tel", "number", "password", ""].includes(i.type),
   );
   const boxes = inputs.filter((i) => i.maxLength === 1);
@@ -2400,7 +2461,17 @@ function fillOtpScript(code) {
 
 function readLoginScript() {
   const visible = (el) => el && (el.offsetWidth > 0 || el.offsetHeight > 0);
-  const inputs = Array.from(document.querySelectorAll("input")).filter(visible);
+  // Campos dentro de web components (shadow DOM aberto) também contam.
+  const allInputs = () => {
+    const out = [];
+    const walk = (root) => {
+      out.push(...root.querySelectorAll("input"));
+      for (const el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot);
+    };
+    walk(document);
+    return out;
+  };
+  const inputs = allInputs().filter(visible);
   const pass = inputs.find((i) => i.type === "password" && i.value);
   const scope = (pass && pass.form) || document;
   const texts = inputs.filter(
@@ -2493,7 +2564,19 @@ function registerIpc() {
     const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || contents.isDestroyed()) return { ok: false };
     const data = { username: username ?? "", password: password ?? "" };
-    return runInLoginFrames(contents, `(${fillLoginScript.toString()})(${JSON.stringify(data)})`);
+    const ctx = ctxOfEvent(event);
+    return runInLoginFrames(
+      contents,
+      `(${fillLoginScript.toString()})(${JSON.stringify(data)})`,
+    ).then((result) => {
+      // Preenchido: o foco vai para a página (Enter já entra), também quando o pedido veio
+      // do popup da chave, que ao fechar devolveria o foco para a casca.
+      if (result.filled && !contents.isDestroyed()) {
+        if (ctx?.overlay?.model) ctx.overlay.returnFocus = contents;
+        else contents.focus();
+      }
+      return result;
+    });
   });
 
   // Código MFA (TOTP) no campo de código da página (ou nas caixinhas de 1 dígito).

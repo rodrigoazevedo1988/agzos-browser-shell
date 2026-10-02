@@ -41,6 +41,7 @@ export function AutofillPopup({
   capture = null,
   copied,
   canFill,
+  missed = null,
   onCopy,
   onFill,
   onSave,
@@ -61,6 +62,8 @@ export function AutofillPopup({
   copied: string | null;
   /** Só no desktop dá para preencher a página de verdade. */
   canFill: boolean;
+  /** Login que não achou campos para preencher na página (o popup avisa). */
+  missed?: string | null;
   onCopy: (id: string, value: string) => void;
   /** Preenche (e, se o login não tem URL, guarda a do site no cofre). */
   onFill: (entry: VaultEntry) => void;
@@ -132,6 +135,12 @@ export function AutofillPopup({
             entry.title
           )}
         </small>
+        {missed === entry.id && (
+          <small className="autofill-miss" role="status">
+            Não achei campos de login nesta página. Abra a tela de login ou copie o usuário e a
+            senha ao lado.
+          </small>
+        )}
         {entry.totpSecret && (
           <TotpCode
             secret={entry.totpSecret}

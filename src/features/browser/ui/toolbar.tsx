@@ -175,44 +175,11 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               {Math.round(props.zoom * 100)}%
             </button>
           )}
-          {/* Como no Comet: o link fica à mão; o resto aparece ao pausar o mouse na barra. */}
+          {/* Como nos Chromium: chave do Agzos Key, estrela e link ficam juntos na ponta
+              direita; ajustes do site e proteção aparecem ao pausar o mouse, à esquerda deles
+              (escondidos não abrem buraco entre a chave e a estrela). */}
           <div className="omnibox-actions">
-            {props.siteKey && (
-              <button
-                type="button"
-                className={cn(
-                  "omnibox-action",
-                  "site-key",
-                  props.siteKey.saved && "saved",
-                  props.siteKey.open && "on",
-                )}
-                onClick={props.siteKey.onToggle}
-                title={
-                  props.siteKey.saved
-                    ? "Logins do Agzos Key para este site"
-                    : "Salvar login deste site no Agzos Key"
-                }
-                aria-label="Agzos Key deste site"
-                aria-pressed={props.siteKey.open}
-              >
-                <KeyRound />
-              </button>
-            )}
             <div className="omnibox-more">
-              <button
-                type="button"
-                className={cn("fav-button", props.favorite && "on")}
-                onClick={props.onToggleFavorite}
-                title={
-                  props.favorite
-                    ? "Editar favorito (Ctrl/⌘ D)"
-                    : "Adicionar aos favoritos (Ctrl/⌘ D)"
-                }
-                aria-label="Favoritar página"
-                aria-pressed={props.favorite}
-              >
-                <Star />
-              </button>
               {props.siteInfo.available && (
                 <button
                   type="button"
@@ -234,6 +201,39 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 <ShieldCheck />
               </button>
             </div>
+            {props.siteKey && (
+              <button
+                type="button"
+                className={cn(
+                  "omnibox-action",
+                  "site-key",
+                  props.siteKey.saved && "saved",
+                  props.siteKey.open && "on",
+                )}
+                onClick={props.siteKey.onToggle}
+                title={
+                  props.siteKey.saved
+                    ? "Logins do Agzos Key para este site"
+                    : "Salvar login deste site no Agzos Key"
+                }
+                aria-label="Agzos Key deste site"
+                aria-pressed={props.siteKey.open}
+              >
+                <KeyRound />
+              </button>
+            )}
+            <button
+              type="button"
+              className={cn("omnibox-action", "fav-button", props.favorite && "on")}
+              onClick={props.onToggleFavorite}
+              title={
+                props.favorite ? "Editar favorito (Ctrl/⌘ D)" : "Adicionar aos favoritos (Ctrl/⌘ D)"
+              }
+              aria-label="Favoritar página"
+              aria-pressed={props.favorite}
+            >
+              <Star />
+            </button>
             {props.shareUrl && (
               <button
                 type="button"
