@@ -20,6 +20,7 @@ import type {
 
 import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
+import { DEFAULT_SOUND_TICK, type SoundTick } from "@/features/sounds/sounds";
 
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
@@ -86,8 +87,16 @@ export type Prefs = {
   netLimitOn: boolean;
   netDownKbps: number;
   netUpKbps: number;
-  /** Largura do painel lateral aberto (px). */
+  /** Largura padrão do painel lateral (px): a de quem ainda não tem largura própria. */
   sidePanelWidth: number;
+  /** Largura de cada painel (3.1.1), por id do app. */
+  sidePanelWidths: Record<string, number>;
+  /** Sons da interface (3.1.1): geral, hover, teclado, qual tick e volume (0–100). */
+  sounds: boolean;
+  soundHover: boolean;
+  soundKeys: boolean;
+  soundTick: SoundTick;
+  soundVolume: number;
   /** Cor de acento (hex). */
   accentColor: string;
   /** Papel de parede da página inicial (URL ou data-url). */
@@ -122,6 +131,12 @@ export const defaultPrefs: Prefs = {
   sidePanelsSeen: DEFAULT_SIDE_PANELS,
   ...DEFAULT_LIMITS,
   sidePanelWidth: SIDE_PANEL_WIDTH.initial,
+  sidePanelWidths: {},
+  sounds: true,
+  soundHover: true,
+  soundKeys: true,
+  soundTick: DEFAULT_SOUND_TICK,
+  soundVolume: 40,
   accentColor: "#D43420",
   backgroundImage: "",
   backgroundBlur: 0,

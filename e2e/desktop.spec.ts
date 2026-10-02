@@ -67,6 +67,14 @@ const FILTERS: Record<string, string> = {
 };
 
 const PAGES: Record<string, string> = {
+  // Como o Discord: lê o token, tira do localStorage enquanto aberto e só grava de volta ao
+  // descarregar a página. Sem descarregar ao sair, o login se perde.
+  "/painel-sessao": `<!doctype html><title>Sessão</title><script>
+    const token = localStorage.getItem("token");
+    localStorage.removeItem("token");
+    document.title = "token=" + (token || "nenhum");
+    addEventListener("beforeunload", () => localStorage.setItem("token", "salvo"));
+  </script>`,
   "/com-anuncio": `<!doctype html><title>Com anúncio</title>
     <h1>Notícia</h1><div class="caixa-anuncio">ANÚNCIO</div>
     <script src="/anuncios/banner.js"></script>
@@ -2555,5 +2563,113 @@ test("3.0: GX Control mede as guias de verdade, limpa o cache e fica ao lado da 
     await expect(panel.getByText(/liberados/)).toBeVisible({ timeout: 15_000 });
   } finally {
     await app.close();
+  }
+});
+
+test("3.1.1: painel com zoom e largura próprios; a sessão dele volta depois de reiniciar", async () => {
+  const profile = tempProfile();
+  const panelUrl = `${origin}/painel-sessao`;
+  const page = `${origin}/principal`;
+  const env = { AGZOS_SIDE_PANEL_URL: panelUrl };
+  const panelZoom = (app: ElectronApplication) =>
+    app.evaluate(
+      ({ webContents }, url) =>
+        webContents
+          .getAllWebContents()
+          .filter((contents) => contents.getURL() === url)
+          .map((contents) => contents.getZoomFactor()),
+      panelUrl,
+    );
+  const panelTitle = (app: ElectronApplication) =>
+    app.evaluate(
+      ({ webContents }, url) =>
+        webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === url)
+          ?.getTitle() ?? "",
+      panelUrl,
+    );
+  const asideWidth = (window: Page, id: string) =>
+    window
+      .locator(`aside[data-side-panel="${id}"]`)
+      .evaluate((element) => Math.round(element.getBoundingClientRect().width));
+
+  const first = await launch(profile, env);
+  let grown = 0;
+  try {
+    await go(first.window, page);
+    await expect(tabs(first.window).first()).toContainText("Página PRINCIPAL");
+    const bar = first.window.getByRole("navigation", { name: "Painéis laterais" });
+    await bar.getByRole("button", { name: "WhatsApp" }).click();
+    await expect.poll(() => panelTitle(first.app)).toBe("token=nenhum");
+
+    // Ctrl+= com o foco no painel: só ele aumenta (a guia do mesmo site fica em 100 %).
+    await keyInTab(first.app, panelUrl, "=", ["control"]);
+    await expect.poll(() => panelZoom(first.app)).toEqual([1.1]);
+    await expect(
+      first.window.getByRole("button", { name: "Zoom de WhatsApp: 110%. Voltar a 100%" }),
+    ).toBeVisible();
+    const tabZoom = await first.app.evaluate(
+      ({ webContents }, url) =>
+        webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === url)!
+          .getZoomFactor(),
+      page,
+    );
+    expect(tabZoom).toBe(1);
+
+    // A alça aumenta a largura (antes só diminuía) e a página nativa acompanha.
+    const separator = first.window.getByRole("separator", { name: "Largura do painel lateral" });
+    const start = await asideWidth(first.window, "whatsapp");
+    await separator.focus();
+    for (let step = 0; step < 4; step += 1) await separator.press("ArrowRight");
+    await expect.poll(() => asideWidth(first.window, "whatsapp")).toBe(start + 96);
+    grown = start + 96;
+    await expect
+      .poll(async () => {
+        const view = (await nativeChildren(first.app)).find(
+          (item) => item.url === panelUrl && item.bounds.width > 0,
+        );
+        return view?.bounds.width ?? 0;
+      })
+      .toBeGreaterThan(start + 60);
+
+    // Outro painel: largura e zoom dele, sem herdar os do WhatsApp.
+    await bar.getByRole("button", { name: "Telegram" }).click();
+    await expect.poll(() => asideWidth(first.window, "telegram")).toBe(start);
+    await expect(first.window.getByRole("button", { name: /^Zoom de Telegram/ })).toHaveCount(0);
+    await expect.poll(async () => (await panelZoom(first.app)).sort()).toEqual([1, 1.1]);
+    await first.window.waitForTimeout(800);
+  } finally {
+    await first.app.close();
+  }
+
+  // Reiniciou: o painel volta logado (a página gravou ao descarregar), com zoom e largura.
+  const second = await launch(profile, env);
+  try {
+    await second.window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "WhatsApp" })
+      .click();
+    await expect.poll(() => panelTitle(second.app)).toBe("token=salvo");
+    await expect.poll(() => panelZoom(second.app)).toEqual([1.1]);
+    await expect.poll(() => asideWidth(second.window, "whatsapp")).toBe(grown);
+    const exit = await second.app.evaluate(
+      async (_electron, file) => {
+        const { DatabaseSync } = process.getBuiltinModule(
+          "node:sqlite",
+        ) as typeof import("node:sqlite");
+        const db = new DatabaseSync(file, { readOnly: true });
+        const row = db.prepare("SELECT value FROM kv WHERE key = 'meta:sidePanelZoom'").get() as
+          { value: string } | undefined;
+        db.close();
+        return row?.value ?? null;
+      },
+      path.join(profile, "agzos.db"),
+    );
+    expect(JSON.parse(exit ?? "{}")).toEqual({ whatsapp: 1.1 });
+  } finally {
+    await second.app.close();
   }
 });

@@ -10,7 +10,7 @@ import { describeCrash } from "../load-errors";
 import { StartPage } from "../start-page";
 import { entryOf, splitShown } from "../store/selectors";
 import type { BrowserState } from "../store/state";
-import type { QuickLink, Tab } from "../types";
+import type { Tab } from "../types";
 import { WebFrame } from "../web-frame";
 import { ErrorPage } from "./error-page";
 
@@ -33,7 +33,7 @@ export function Viewport({
   desktop,
   layoutSignature = "",
   onOpen,
-  onAddLink,
+  onRequestAddLink,
   onRemoveLink,
   onOpenDial,
   onRecover,
@@ -56,7 +56,7 @@ export function Viewport({
   /** Muda quando as faixas acima da página (favoritos, permissão, aviso) entram/saem. */
   layoutSignature?: string;
   onOpen: (value: string) => void;
-  onAddLink: (link: QuickLink) => void;
+  onRequestAddLink: () => void;
   onRemoveLink: (url: string) => void;
   onOpenDial: () => void;
   onRecover: (id: number) => void;
@@ -125,7 +125,7 @@ export function Viewport({
           blocked={blockedToday}
           prefs={state.prefs}
           onOpen={onOpen}
-          onAdd={onAddLink}
+          onRequestAdd={onRequestAddLink}
           onRemove={onRemoveLink}
           onOpenDial={onOpenDial}
         />

@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import type { QuickLink } from "@/features/browser/types";
 import { HomeNav } from "@/features/browser/ui/home-nav";
 import { SiteIcon } from "@/features/browser/ui/site-icon";
+import { HOVER_SOUND, KEY_SOUND } from "@/features/sounds/sounds";
 import { cn } from "@/lib/utils";
 
-import { dialHref, dialLinkOf, filterDial, type DialScope } from "./dial";
+import { categoriesOf, dialHref, filterDial, type DialScope } from "./dial";
 
 const DRAG_TYPE = "application/x-agzos-dial";
 
@@ -20,7 +21,7 @@ export function DialPage({
   engineName,
   onOpen,
   onSearchWeb,
-  onAdd,
+  onRequestAdd,
   onRemove,
   onMove,
   onHome,
@@ -30,21 +31,26 @@ export function DialPage({
   /** Endereço ou texto: abre na guia atual (como a barra de endereço). */
   onOpen: (value: string) => void;
   onSearchWeb: (text: string) => void;
-  onAdd: (link: QuickLink) => void;
+  /** "+": abre o modal de novo site (nome, URL, categoria, prévia). */
+  onRequestAdd: () => void;
   onRemove: (url: string) => void;
   onMove: (url: string, index: number) => void;
   onHome: () => void;
 }) {
   const [scope, setScope] = useState<DialScope>("general");
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [invalid, setInvalid] = useState(false);
+  const [category, setCategory] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
 
-  const visible = scope === "general" ? filterDial(links, query) : links;
-  const filtering = scope === "general" && query.trim() !== "";
+  const categories = categoriesOf(links);
+  const shownCategory = category && categories.includes(category) ? category : null;
+  const inCategory = shownCategory
+    ? links.filter((link) => link.category === shownCategory)
+    : links;
+  const visible = scope === "general" ? filterDial(inCategory, query) : inCategory;
+  const searching = scope === "general" && query.trim() !== "";
+  // Com filtro (texto ou categoria) os índices não são os da grade inteira: sem arrastar.
+  const filtering = searching || shownCategory !== null;
 
   function search(event: FormEvent) {
     event.preventDefault();
@@ -54,20 +60,6 @@ export function DialPage({
     else if (visible[0]) onOpen(dialHref(visible[0]));
     else onOpen(text);
     setQuery("");
-  }
-
-  function add(event: FormEvent) {
-    event.preventDefault();
-    const link = dialLinkOf(name, address);
-    if (!link) {
-      setInvalid(true);
-      return;
-    }
-    onAdd(link);
-    setName("");
-    setAddress("");
-    setInvalid(false);
-    setAdding(false);
   }
 
   const dragStart = (event: DragEvent, link: QuickLink) => {
@@ -98,7 +90,7 @@ export function DialPage({
   return (
     <div className="dial-page">
       <HomeNav current="dial" onHome={onHome} onDial={() => {}} />
-      <form className="dial-search" onSubmit={search} role="search">
+      <form className="dial-search" onSubmit={search} role="search" {...KEY_SOUND}>
         <div className="dial-scope" role="radiogroup" aria-label="Onde pesquisar">
           {(
             [
@@ -134,6 +126,23 @@ export function DialPage({
         </Button>
       </form>
 
+      {categories.length > 0 && (
+        <div className="dial-categories" role="radiogroup" aria-label="Categoria">
+          {[null, ...categories].map((item) => (
+            <button
+              key={item ?? "*"}
+              type="button"
+              role="radio"
+              aria-checked={shownCategory === item}
+              className={cn(shownCategory === item && "on")}
+              onClick={() => setCategory(item)}
+            >
+              {item ?? "Todas"}
+            </button>
+          ))}
+        </div>
+      )}
+
       <ul className="dial-grid" aria-label="Sites do Discador">
         {visible.map((link) => {
           const index = links.indexOf(link);
@@ -147,6 +156,7 @@ export function DialPage({
               onDragLeave={() => setDropAt((at) => (at === index ? null : at))}
               onDrop={(event) => drop(event, index)}
               onDragEnd={() => setDropAt(null)}
+              {...HOVER_SOUND}
             >
               <button
                 type="button"
@@ -158,6 +168,7 @@ export function DialPage({
                 <SiteIcon url={link.url} name={link.name} className="site-icon dial-icon" />
                 <strong>{link.name}</strong>
                 <small>{link.url}</small>
+                {link.category && <em className="dial-category">{link.category}</em>}
               </button>
               <button
                 type="button"
@@ -171,17 +182,18 @@ export function DialPage({
             </li>
           );
         })}
-        {!filtering && (
+        {!searching && (
           <li
             className={cn("dial-card add", dropAt === links.length && "drop-target")}
             onDragOver={(event) => dragOver(event, links.length)}
             onDrop={(event) => drop(event, links.length)}
+            {...HOVER_SOUND}
           >
             <button
               type="button"
               className="dial-open"
               aria-label="Adicionar site ao Discador"
-              onClick={() => setAdding(true)}
+              onClick={onRequestAdd}
             >
               <span className="site-icon dial-icon">
                 <Plus aria-hidden="true" />
@@ -193,37 +205,10 @@ export function DialPage({
       </ul>
       {filtering && visible.length === 0 && (
         <p className="dial-empty">
-          Nenhum site do Discador com “{query.trim()}”. Enter abre como endereço ou busca.
+          {query.trim()
+            ? `Nenhum site do Discador com “${query.trim()}”. Enter abre como endereço ou busca.`
+            : "Nenhum site nesta categoria."}
         </p>
-      )}
-
-      {adding && (
-        <form className="dial-form" onSubmit={add} aria-label="Novo site do Discador">
-          <input
-            autoFocus
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Nome"
-            aria-label="Nome do site"
-          />
-          <input
-            value={address}
-            onChange={(event) => {
-              setAddress(event.target.value);
-              setInvalid(false);
-            }}
-            placeholder="site.com"
-            aria-label="Endereço do site"
-            aria-invalid={invalid}
-          />
-          <Button size="sm" type="submit">
-            Salvar
-          </Button>
-          <Button size="sm" variant="ghost" type="button" onClick={() => setAdding(false)}>
-            Cancelar
-          </Button>
-          {invalid && <span className="dial-error">Digite um endereço como site.com</span>}
-        </form>
       )}
     </div>
   );

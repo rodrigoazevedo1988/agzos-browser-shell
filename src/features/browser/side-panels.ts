@@ -42,7 +42,48 @@ export const DEFAULT_SIDE_PANELS = SIDE_PANEL_APPS.map((app) => app.id);
  */
 export const SIDE_PANELS_BEFORE_3 = ["whatsapp", "telegram", "messenger", "instagram"];
 
-export const SIDE_PANEL_WIDTH = { min: 320, max: 720, initial: 400 } as const;
+/**
+ * Largura do painel: `min` é o mínimo usável; o máximo depende da janela (3.1.1), ver
+ * `panelWidthLimits`. `max` só limita o valor gravado.
+ */
+export const SIDE_PANEL_WIDTH = { min: 320, max: 4000, initial: 400 } as const;
+
+/** Barra lateral (60 px) e o mínimo de página que fica à vista ao lado do painel. */
+const SIDE_BAR_PX = 60;
+const MIN_PAGE_PX = 360;
+
+/** Limites do arraste para a janela atual: do mínimo usável até sobrar a página mínima. */
+export function panelWidthLimits(windowWidth: number): { min: number; max: number } {
+  const room = Number.isFinite(windowWidth) ? windowWidth - SIDE_BAR_PX - MIN_PAGE_PX : 0;
+  return { min: SIDE_PANEL_WIDTH.min, max: Math.max(SIDE_PANEL_WIDTH.min, Math.round(room)) };
+}
+
+/** Largura no arraste: dentro dos limites da janela. */
+export function dragPanelWidth(width: number, windowWidth: number): number {
+  const { min, max } = panelWidthLimits(windowWidth);
+  return Math.round(Math.min(max, Math.max(min, width)));
+}
+
+/** Larguras por painel gravadas → só apps conhecidos e valores válidos. */
+export function parsePanelWidths(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const known = new Set(SIDE_PANEL_APPS.map((app) => app.id));
+  const widths: Record<string, number> = {};
+  for (const [id, width] of Object.entries(value)) {
+    if (known.has(id) && typeof width === "number" && Number.isFinite(width) && width > 0) {
+      widths[id] = clampPanelWidth(width);
+    }
+  }
+  return widths;
+}
+
+/** Largura de um painel: a dele, senão a última usada (de antes da 3.1.1). */
+export function panelWidthOf(
+  prefs: { sidePanelWidths: Record<string, number>; sidePanelWidth: number },
+  id: string,
+): number {
+  return prefs.sidePanelWidths[id] ?? prefs.sidePanelWidth;
+}
 
 export function sidePanelApp(id: string | null | undefined): SidePanelApp | undefined {
   return SIDE_PANEL_APPS.find((app) => app.id === id);
@@ -79,4 +120,17 @@ export function clampPanelWidth(width: unknown): number {
   const value = typeof width === "number" && Number.isFinite(width) ? width : 0;
   if (!value) return SIDE_PANEL_WIDTH.initial;
   return Math.round(Math.min(SIDE_PANEL_WIDTH.max, Math.max(SIDE_PANEL_WIDTH.min, value)));
+}
+
+/**
+ * Quantos apps cabem na altura da barra (3.1.1); null quando cabem todos. Sem caber, o
+ * último lugar vira o botão "Mais" e o resto vai para a caixinha flutuante.
+ */
+export function sideBarFit(
+  count: number,
+  room: { height: number; fixed: number; item: number; gap: number },
+): number | null {
+  const slots = Math.floor((room.height - room.fixed + room.gap) / (room.item + room.gap));
+  if (count <= slots) return null;
+  return Math.max(0, slots - 1);
 }

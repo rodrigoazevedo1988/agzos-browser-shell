@@ -645,9 +645,11 @@ test("3.0: Discador ao lado do Início, com busca, cards salvos e reordenáveis"
 
   // "+": card novo, salvo depois de recarregar.
   await page.getByRole("button", { name: "Adicionar site ao Discador" }).click();
-  await page.getByLabel("Nome do site").fill("Exemplo");
-  await page.getByLabel("Endereço do site").fill("example.com");
-  await page.getByRole("button", { name: "Salvar" }).click();
+  const dialog = page.getByRole("dialog", { name: "Novo site no Discador" });
+  await dialog.getByLabel("Nome").fill("Exemplo");
+  await dialog.getByLabel("URL").fill("example.com");
+  await dialog.getByLabel("Categoria").fill("");
+  await dialog.getByRole("button", { name: "Salvar" }).click();
   await expect(grid.getByRole("button", { name: /^Exemplo/ })).toBeVisible();
 
   // Ctrl+Shift+← muda o card de lugar.
@@ -683,9 +685,17 @@ test("3.0: Discador ao lado do Início, com busca, cards salvos e reordenáveis"
 
 test("3.0: barra lateral com os apps novos e GX Control com Hot Tabs Killer", async ({ page }) => {
   const bar = page.getByRole("navigation", { name: "Painéis laterais" });
-  for (const name of ["WhatsApp", "ChatGPT", "Claude", "Gemini", "YouTube", "Pinterest"]) {
+  for (const name of ["WhatsApp", "ChatGPT", "Claude", "Gemini"]) {
     await expect(bar.getByRole("button", { name, exact: true })).toBeAttached();
   }
+  // Os que não cabem na altura ficam na caixinha do "Mais" (3.1.1).
+  await bar.getByRole("button", { name: /^Mais \d+ apps?$/ }).click();
+  const more = page.getByRole("menu", { name: "Mais apps da barra lateral" });
+  for (const name of ["YouTube", "Pinterest"]) {
+    await expect(more.getByRole("menuitem", { name, exact: true })).toBeVisible();
+  }
+  await page.keyboard.press("Escape");
+  await expect(more).toHaveCount(0);
   await go(page, "example.com");
   await page.getByRole("button", { name: "Nova aba", exact: true }).first().click();
   await expect(tabs(page)).toHaveCount(2);
@@ -714,4 +724,150 @@ test("3.0: barra lateral com os apps novos e GX Control com Hot Tabs Killer", as
   await go(page, "agzos://configuracoes");
   await page.getByRole("switch", { name: "Barra lateral" }).first().click();
   await expect(bar).toHaveCount(0);
+});
+
+test("3.1.1: barra lateral recolhe o excedente na caixinha, que fecha ao escolher ou clicar fora", async ({
+  page,
+}) => {
+  const bar = page.getByRole("navigation", { name: "Painéis laterais" });
+  const more = bar.getByRole("button", { name: /^Mais \d+ apps?$/ });
+  await expect(more).toBeVisible();
+  // Nada da barra fica cortado ou com rolagem: o último item visível é o "Mais".
+  const overflow = await bar.evaluate((nav) => nav.scrollHeight - nav.clientHeight);
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  await more.click();
+  const box = page.getByRole("menu", { name: "Mais apps da barra lateral" });
+  await expect(box.getByRole("menuitem", { name: "Spotify" })).toBeVisible();
+  // Clicar fora fecha.
+  await page.locator(".start-page").click({ position: { x: 500, y: 300 } });
+  await expect(box).toHaveCount(0);
+
+  // Escolher um app abre o painel dele e fecha a caixinha; o "Mais" fica marcado.
+  await more.click();
+  await box.getByRole("menuitem", { name: "Spotify" }).click();
+  await expect(box).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Painel Spotify" })).toBeVisible();
+  await expect(more).toHaveClass(/\bon\b/);
+
+  // Janela mais alta: cabem mais apps (o "Mais" esconde menos).
+  const hiddenBefore = Number((await more.getAttribute("aria-label"))?.match(/\d+/)?.[0]);
+  await page.setViewportSize({ width: 1440, height: 1300 });
+  await expect
+    .poll(async () => {
+      if (!(await more.count())) return 0;
+      return Number((await more.getAttribute("aria-label"))?.match(/\d+/)?.[0]);
+    })
+    .toBeLessThan(hiddenBefore);
+});
+
+test("3.1.1: Adicionar da home usa o modal do Discador; Início marcado; categoria no Discador", async ({
+  page,
+}) => {
+  const nav = page.getByRole("navigation", { name: "Páginas iniciais" });
+  await expect(nav.getByRole("button", { name: "Início" })).toHaveAttribute("aria-current", "page");
+  await expect(nav.getByRole("button", { name: "Discador" })).not.toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  await page.getByRole("button", { name: "Adicionar atalho" }).click();
+  const dialog = page.getByRole("dialog", { name: "Novo atalho na página inicial" });
+  await expect(dialog.getByLabel("Prévia do card")).toBeVisible();
+  // Endereço inválido não salva.
+  await dialog.getByLabel("URL").fill("não é site");
+  await dialog.getByRole("button", { name: "Salvar" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("site.com");
+  await dialog.getByLabel("Nome").fill("Wiki");
+  await dialog.getByLabel("URL").fill("https://pt.wikipedia.org/");
+  await dialog.getByLabel("Categoria").fill("Estudos");
+  await expect(dialog.getByLabel("Prévia do card")).toContainText("pt.wikipedia.org");
+  await expect(dialog.getByLabel("Prévia do card")).toContainText("Estudos");
+  await dialog.getByRole("button", { name: "Salvar" }).click();
+  await expect(dialog).toHaveCount(0);
+  const shortcut = page.locator(".quick-link").filter({ hasText: "Wiki" });
+  await expect(shortcut).toBeVisible();
+  // O ícone é o do site (pelo domínio), com a inicial só até carregar.
+  await expect(shortcut.locator("img")).toHaveAttribute("src", /pt\.wikipedia\.org/);
+
+  // Cancelar não grava nada.
+  await page.getByRole("button", { name: "Adicionar atalho" }).click();
+  await page.getByRole("dialog").getByLabel("URL").fill("cancelado.com");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.locator(".quick-link").filter({ hasText: "cancelado" })).toHaveCount(0);
+
+  await reload(page);
+  await expect(page.locator(".quick-link").filter({ hasText: "Wiki" })).toBeVisible();
+
+  // No Discador: card com categoria e o filtro por categoria.
+  await nav.getByRole("button", { name: "Discador" }).click();
+  await expect(nav.getByRole("button", { name: "Discador" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.getByRole("button", { name: "Adicionar site ao Discador" }).click();
+  const dialDialog = page.getByRole("dialog", { name: "Novo site no Discador" });
+  await dialDialog.getByLabel("URL").fill("news.ycombinator.com");
+  await dialDialog.getByLabel("Categoria").fill("Notícias");
+  await dialDialog.getByRole("button", { name: "Salvar" }).click();
+  const grid = page.getByRole("list", { name: "Sites do Discador" });
+  await page
+    .getByRole("radiogroup", { name: "Categoria" })
+    .getByRole("radio", { name: "Notícias" })
+    .click();
+  await expect(grid.locator(".dial-card:not(.add)")).toHaveCount(1);
+  await expect(grid.locator(".dial-card:not(.add)")).toContainText("news.ycombinator.com");
+  // Cards do Discador e ícones da barra tocam o tick no hover (marcados para o som).
+  await expect(grid.locator(".dial-card").first()).toHaveAttribute("data-sound", "hover");
+});
+
+test("3.1.1: Configurações → Sons controla hover, teclado, tick e volume", async ({ page }) => {
+  // Conta os sons tocados (o AudioContext real fica no lugar, só observado).
+  await page.evaluate(() => {
+    const original = AudioBufferSourceNode.prototype.start;
+    (window as unknown as { played: number }).played = 0;
+    AudioBufferSourceNode.prototype.start = function (...args) {
+      (window as unknown as { played: number }).played += 1;
+      return original.apply(this, args);
+    };
+  });
+  const played = () => page.evaluate(() => (window as unknown as { played: number }).played);
+  const search = page.getByLabel("Pesquisar na web");
+  await search.click();
+  await search.pressSequentially("abc", { delay: 60 });
+  await expect.poll(played).toBeGreaterThanOrEqual(3);
+
+  await go(page, "agzos://configuracoes");
+  await page.getByRole("button", { name: "Sons" }).first().click();
+  await expect(page.getByRole("switch", { name: "Sons da interface" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await page.getByRole("switch", { name: "Som do teclado" }).click();
+  await expect(page.getByRole("switch", { name: "Som do teclado" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await page.getByRole("combobox").filter({ hasText: "Mecânico" }).selectOption("maquina");
+  await page.getByLabel("Volume dos sons").fill("80");
+  await expect(page.getByText("Volume: 80%")).toBeVisible();
+
+  // Teclado desligado: digitar não toca mais.
+  await go(page, "agzos://discador");
+  const before = await played();
+  await page.getByLabel("Pesquisar no Discador").pressSequentially("xyz", { delay: 60 });
+  await page.waitForTimeout(200);
+  expect(await played()).toBe(before);
+
+  // Tudo desligado: nem o hover da barra toca.
+  await go(page, "agzos://configuracoes");
+  await page.getByRole("button", { name: "Sons" }).first().click();
+  await page.getByRole("switch", { name: "Sons da interface" }).click();
+  await expect(page.getByRole("switch", { name: "Som ao passar o mouse" })).toBeDisabled();
+  await reload(page);
+  await page.getByRole("button", { name: "Sons" }).first().click();
+  await expect(page.getByRole("switch", { name: "Sons da interface" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
 });

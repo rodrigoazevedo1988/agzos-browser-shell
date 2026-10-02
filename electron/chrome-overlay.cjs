@@ -24,6 +24,7 @@ const OVERLAY_KINDS = new Set([
   "palette",
   "workspaces",
   "group",
+  "sideapps",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;

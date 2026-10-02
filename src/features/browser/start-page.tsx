@@ -1,8 +1,9 @@
-import { Search, ShieldCheck, X } from "lucide-react";
+import { Plus, Search, ShieldCheck, X } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import logoUrl from "@/assets/agzos-logo.svg";
 import { Button } from "@/components/ui/button";
+import { KEY_SOUND } from "@/features/sounds/sounds";
 import { engines } from "./engines";
 import type { QuickLink } from "./types";
 import type { Prefs } from "./store/state";
@@ -15,7 +16,7 @@ export function StartPage({
   blocked,
   prefs,
   onOpen,
-  onAdd,
+  onRequestAdd,
   onRemove,
   onOpenDial,
 }: {
@@ -25,25 +26,13 @@ export function StartPage({
   blocked: number | null;
   prefs: Prefs;
   onOpen: (value: string) => void;
-  onAdd: (link: QuickLink) => void;
+  /** "Adicionar": o mesmo modal do Discador (nome, URL, categoria, prévia). */
+  onRequestAdd: () => void;
   onRemove: (url: string) => void;
   /** "Discador" no topo: a grade de sites na mesma guia (3.0). */
   onOpenDial: () => void;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
   const [query, setQuery] = useState("");
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const clean = url.trim().replace(/^https?:\/\//, "");
-    if (!clean) return;
-    onAdd({ name: name.trim() || clean, url: clean });
-    setName("");
-    setUrl("");
-    setAdding(false);
-  }
 
   function search(event: FormEvent) {
     event.preventDefault();
@@ -86,7 +75,7 @@ export function StartPage({
       >
         <img className="brand-logo" src={logoUrl} alt="Agzos" />
         <p className="brand-tagline">Navegue com clareza. Decida com controle.</p>
-        <form className="start-search" onSubmit={search}>
+        <form className="start-search" onSubmit={search} {...KEY_SOUND}>
           <Search aria-hidden="true" />
           <input
             value={query}
@@ -119,34 +108,14 @@ export function StartPage({
             </div>
           ))}
           <div className="quick-link">
-            <button type="button" onClick={() => setAdding(true)} aria-label="Adicionar atalho">
-              <span>+</span>
+            <button type="button" onClick={onRequestAdd} aria-label="Adicionar atalho">
+              <span>
+                <Plus aria-hidden="true" />
+              </span>
               <small>Adicionar</small>
             </button>
           </div>
         </div>
-        {adding && (
-          <form className="quick-form" onSubmit={submit}>
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Nome"
-              aria-label="Nome do atalho"
-            />
-            <input
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="site.com"
-              aria-label="Endereço do atalho"
-            />
-            <Button size="sm" type="submit">
-              Salvar
-            </Button>
-            <Button size="sm" variant="ghost" type="button" onClick={() => setAdding(false)}>
-              Cancelar
-            </Button>
-          </form>
-        )}
       </div>
       <div className="privacy-note">
         <ShieldCheck />

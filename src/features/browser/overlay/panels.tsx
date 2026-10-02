@@ -11,6 +11,7 @@ import { SitePanel } from "@/features/site/panel";
 import { CommandPalette } from "../ui/command-palette";
 import { FolderMenu } from "../ui/folder-dropdown";
 import { GroupEditor } from "../ui/group-editor";
+import { SideAppsMenu } from "../ui/side-bar";
 import { WorkspacePanel } from "../ui/workspace-panel";
 
 /**
@@ -30,7 +31,9 @@ export type PanelSpec =
   | { kind: "bookmark"; key?: string; props: ComponentProps<typeof BookmarkEditor> }
   | { kind: "palette"; key?: string; props: ComponentProps<typeof CommandPalette> }
   | { kind: "workspaces"; key?: string; props: ComponentProps<typeof WorkspacePanel> }
-  | { kind: "group"; key?: string; props: ComponentProps<typeof GroupEditor> };
+  | { kind: "group"; key?: string; props: ComponentProps<typeof GroupEditor> }
+  /** Apps da barra lateral que não couberam na altura (3.1.1). */
+  | { kind: "sideapps"; key?: string; props: ComponentProps<typeof SideAppsMenu> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -61,5 +64,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <WorkspacePanel key={key} {...spec.props} />;
     case "group":
       return <GroupEditor key={key} {...spec.props} />;
+    case "sideapps":
+      return <SideAppsMenu key={key} {...spec.props} />;
   }
 }

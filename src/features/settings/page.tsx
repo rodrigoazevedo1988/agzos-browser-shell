@@ -9,6 +9,7 @@ import {
   Power,
   Search,
   ShieldCheck,
+  Volume2,
   Wand2,
   X,
   type LucideIcon,
@@ -28,6 +29,8 @@ import { engines } from "@/features/browser/engines";
 import { HIBERNATE_MINUTES, type Prefs } from "@/features/browser/store/state";
 import { PermissionSelect } from "@/features/site/panel";
 import { PERMISSION_LABELS } from "@/features/site/permissions";
+import { playSound } from "@/features/sounds/player";
+import { SOUND_TICKS, soundGain, type SoundTick } from "@/features/sounds/sounds";
 import { Toggle } from "@/features/ui/toggle";
 import { ColorPicker } from "@/features/browser/ui/color-picker";
 import { cn } from "@/lib/utils";
@@ -53,6 +56,7 @@ function updateText(update: UpdateState): string {
 export type SettingsSectionId =
   | "aparencia"
   | "personalizacao"
+  | "sons"
   | "pesquisa"
   | "privacidade"
   | "desempenho"
@@ -287,6 +291,115 @@ export function SettingsPage(props: SettingsPageProps) {
                   </div>
                 )}
               </div>
+            ),
+          },
+        ],
+      },
+      {
+        id: "sons",
+        label: "Sons",
+        icon: Volume2,
+        rows: [
+          {
+            id: "sons-geral",
+            label: "Sons da interface",
+            keywords: "som audio tick clique mudo silencio",
+            node: (
+              <Toggle
+                label="Sons da interface"
+                hint="Ticks curtos ao passar o mouse e ao digitar (desligado, tudo fica em silêncio)"
+                checked={prefs.sounds}
+                onChange={(sounds) => setPrefs({ sounds })}
+              />
+            ),
+          },
+          {
+            id: "sons-hover",
+            label: "Som ao passar o mouse",
+            keywords: "hover barra lateral discador cards tick navegacao",
+            node: (
+              <Toggle
+                label="Som ao passar o mouse"
+                hint="Na barra lateral e nos cards do Discador"
+                checked={prefs.soundHover}
+                disabled={!prefs.sounds}
+                onChange={(soundHover) => setPrefs({ soundHover })}
+              />
+            ),
+          },
+          {
+            id: "sons-teclado",
+            label: "Som do teclado",
+            keywords: "digitar teclas busca endereco tick",
+            node: (
+              <Toggle
+                label="Som do teclado"
+                hint="Na busca, na barra de endereço e nos campos dos modais"
+                checked={prefs.soundKeys}
+                disabled={!prefs.sounds}
+                onChange={(soundKeys) => setPrefs({ soundKeys })}
+              />
+            ),
+          },
+          {
+            id: "sons-tick",
+            label: "Tick do teclado",
+            keywords: "som tecla mecanico suave maquina escrever",
+            node: (
+              <label className="settings-select">
+                <span>Tick do teclado</span>
+                <span className="settings-inline">
+                  <select
+                    value={prefs.soundTick}
+                    disabled={!prefs.sounds}
+                    onChange={(event) => {
+                      const soundTick = event.target.value as SoundTick;
+                      setPrefs({ soundTick });
+                      playSound(soundTick, soundGain({ ...prefs, soundKeys: true }, "key"));
+                    }}
+                  >
+                    {SOUND_TICKS.map((tick) => (
+                      <option key={tick.id} value={tick.id}>
+                        {tick.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!prefs.sounds}
+                    onClick={() =>
+                      playSound(prefs.soundTick, soundGain({ ...prefs, soundKeys: true }, "key"))
+                    }
+                  >
+                    Ouvir
+                  </Button>
+                </span>
+              </label>
+            ),
+          },
+          {
+            id: "sons-volume",
+            label: "Volume dos sons",
+            keywords: "volume alto baixo",
+            node: (
+              <label className="settings-range">
+                <span>Volume: {prefs.soundVolume}%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={prefs.soundVolume}
+                  disabled={!prefs.sounds}
+                  aria-label="Volume dos sons"
+                  onChange={(event) => setPrefs({ soundVolume: Number(event.target.value) })}
+                  onPointerUp={() =>
+                    playSound("nav", soundGain({ ...prefs, soundHover: true }, "hover"))
+                  }
+                />
+              </label>
             ),
           },
         ],

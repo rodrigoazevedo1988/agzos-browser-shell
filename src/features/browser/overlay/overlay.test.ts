@@ -103,6 +103,7 @@ describe("chrome-overlay.cjs", () => {
         "palette",
         "workspaces",
         "group",
+        "sideapps",
       ].sort(),
     );
   });

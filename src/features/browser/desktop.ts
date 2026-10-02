@@ -196,6 +196,13 @@ export type DesktopBridge = {
   sidePanelBounds(rect: DesktopRect): Promise<void>;
   sidePanelReload(app: string): Promise<void>;
   sidePanelUnload(app: string): Promise<void>;
+  /** Zoom só do painel (3.1.1): 1 aumenta, -1 diminui, 0 volta a 100 %. */
+  sidePanelZoom(app: string, direction: 1 | -1 | 0): Promise<void>;
+  sidePanelZoomGet(app: string): Promise<number>;
+  /** Arraste da largura: o main acompanha o cursor por cima das páginas. */
+  sidePanelDrag(active: boolean): Promise<void>;
+  onSidePanelZoom(callback: (payload: { app: string; factor: number }) => void): () => void;
+  onSidePanelDrag(callback: (payload: { x?: number; done?: boolean }) => void): () => void;
   navigate(id: number, url: string): Promise<void>;
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;

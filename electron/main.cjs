@@ -25,6 +25,15 @@ const {
 const { createDownloadManager } = require("./downloads.cjs");
 const { nextZoom, zoomHostOf } = require("./zoom.cjs");
 const {
+  createPanelLog,
+  isPanelLoginPage,
+  loginReason,
+  panelZoomKey,
+  panelZoomStep,
+  parsePanelZooms,
+  unloadPanelPages,
+} = require("./panel-session.cjs");
+const {
   createPermissions,
   permissionTypesOf,
   checkTypesOf,
@@ -1036,8 +1045,15 @@ function forwardAppShortcut(ctx, input, event, { page = false, contents = null }
   return true;
 }
 
-function wireShortcuts(contents, { page = false } = {}) {
+function wireShortcuts(contents, { page = false, zoom = null } = {}) {
   contents.on("before-input-event", (event, input) => {
+    // Painel lateral (3.1.1): Ctrl +/−/0 mudam o zoom dele, não o da guia ativa.
+    const zoomDirection = zoom ? panelZoomKey(input) : null;
+    if (zoomDirection !== null) {
+      event.preventDefault();
+      zoom(zoomDirection);
+      return;
+    }
     // A janela é resolvida a cada tecla: a guia pode ter mudado de janela.
     const ctx = ownerCtx(contents);
     // Soltar o Ctrl/⌘ confirma o seletor do Ctrl+Tab, onde quer que esteja o foco.
@@ -1567,6 +1583,8 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     sidePanels: new Map(),
     sidePanel: null,
     sidePanelRect: null,
+    panelsReleased: false,
+    panelDrag: null,
     panelOpen: false,
     fullscreenActive: false,
     crashed: new Set(),
@@ -1624,7 +1642,15 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   window.on("session-end", () => {
     quitting = true;
   });
-  window.on("close", () => {
+  window.on("close", (event) => {
+    // Painéis abertos: a página descarrega e o storage grava antes (sessão do Discord).
+    if (!ctx.panelsReleased && ctx.sidePanels.size > 0) {
+      event.preventDefault();
+      void releaseSidePanels([ctx]).finally(() => {
+        if (!window.isDestroyed()) window.close();
+      });
+      return;
+    }
     clearTimeout(boundsTimer);
     rememberBounds(ctx);
     // Fechar uma janela entre várias descarta as guias dela (como no Chrome). A última
@@ -1644,6 +1670,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) {
       ctx.overlay.view.webContents.close();
     }
+    stopPanelDrag(ctx);
     for (const app of [...ctx.sidePanels.keys()]) unloadSidePanel(ctx, app);
     for (const [id, pending] of pendingOverlayCalls) {
       if (pending.ctx !== ctx) continue;
@@ -2358,31 +2385,178 @@ function clickThrough({ target, point }, button) {
 // webContents do painel → janela dona (links abrem guias nela, permissões perguntam nela).
 const sidePanelOwner = new Map();
 
+// Saída anterior (gravada ao sair): explica no log por que um app pediu login de novo.
+let previousPanelExit;
+let panelLog = null;
+// webContents liberados para descarregar mesmo com beforeunload pedindo para ficar.
+const unloadingPanels = new WeakSet();
+
+function logPanel(message) {
+  panelLog ??= createPanelLog(path.join(app.getPath("userData"), "logs"));
+  panelLog(message);
+}
+
+function panelZooms() {
+  return parsePanelZooms(database?.getMeta("sidePanelZoom"));
+}
+
+/** Zoom do painel (3.1.1): só nele, gravado por app, e a casca mostra o valor. */
+function setPanelZoom(ctx, app, direction) {
+  const entry = ctx?.sidePanels.get(app);
+  if (!entry || entry.view.webContents.isDestroyed()) return;
+  const contents = entry.view.webContents;
+  const factor = panelZoomStep(contents.getZoomFactor(), direction);
+  contents.setZoomFactor(factor);
+  const zooms = panelZooms();
+  if (factor === 1) delete zooms[app];
+  else zooms[app] = factor;
+  database?.setMeta("sidePanelZoom", zooms);
+  // O mesmo app aberto em outras janelas acompanha.
+  for (const other of contexts.values()) {
+    const twin = other.sidePanels.get(app);
+    if (other !== ctx && twin && !twin.view.webContents.isDestroyed()) {
+      twin.view.webContents.setZoomFactor(factor);
+    }
+    send(other, "agzos:side-panel-zoom", { app, factor });
+  }
+}
+
 function sidePanelView(ctx, app, url) {
   const known = ctx.sidePanels.get(app);
   if (known && !known.view.webContents.isDestroyed()) return known;
-  // Mesma sessão das guias (login compartilhado), isolado e sem preload.
+  // Mesma sessão das guias (login compartilhado), isolado e sem preload. Zoom "isolated":
+  // o do painel não muda o de uma guia do mesmo site, nem o de outro painel.
   const view = new WebContentsView({
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      zoomMode: "isolated",
+    },
   });
   view.setBackgroundColor("#FFFFFF");
   view.setBounds(HIDDEN_RECT);
   const contents = view.webContents;
   const id = contents.id;
+  contents.setZoomMode("isolated");
+  const zoom = panelZooms()[app] ?? 1;
+  if (zoom !== 1) contents.setZoomFactor(zoom);
   sidePanelOwner.set(id, ctx);
   contents.once("destroyed", () => sidePanelOwner.delete(id));
   // Links e janelas novas viram guias da janela (popups de login seguem como popup).
   wirePopups(contents);
-  wireShortcuts(contents);
+  wireShortcuts(contents, {
+    zoom: (direction) => setPanelZoom(ownerCtx(contents), app, direction),
+  });
+  // Ctrl+roda do mouse no painel.
+  contents.on("zoom-changed", (_event, direction) =>
+    setPanelZoom(ownerCtx(contents), app, direction === "in" ? 1 : -1),
+  );
   contents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && !contents.isDestroyed()) contents.reload();
   });
+  // Ao sair do app a página precisa descarregar (o Discord grava o token aí).
+  contents.on("will-prevent-unload", (event) => {
+    if (unloadingPanels.has(contents)) event.preventDefault();
+  });
+  const entry = { view, url, loginLogged: false };
+  const checkLogin = (_event, pageUrl) => {
+    if (entry.loginLogged || !isPanelLoginPage(app, pageUrl)) return;
+    entry.loginLogged = true;
+    logPanel(loginReason(app, previousPanelExit, contents.getUserAgent()));
+  };
+  contents.on("did-navigate", checkLogin);
+  // O zoom posto antes da primeira carga não sobrevive a ela: confere a cada navegação.
+  contents.on("did-navigate", () => {
+    const factor = panelZooms()[app] ?? 1;
+    if (Math.abs(contents.getZoomFactor() - factor) > 0.001) contents.setZoomFactor(factor);
+  });
+  contents.on("did-navigate-in-page", checkLogin);
   ctx.window.contentView.addChildView(view);
   raisePanelLayer(ctx);
   void contents.loadURL(url).catch(() => {});
-  const entry = { view, url };
   ctx.sidePanels.set(app, entry);
+  send(ctx, "agzos:side-panel-zoom", { app, factor: zoom });
   return entry;
+}
+
+/**
+ * Antes de fechar janela(s): descarrega as páginas dos painéis e grava cookies e storage.
+ * O que já foi feito (ctx.panelsReleased) não repete.
+ */
+async function releaseSidePanels(ctxs) {
+  const pending = ctxs.filter((ctx) => !ctx.panelsReleased);
+  const entries = pending.flatMap((ctx) => [...ctx.sidePanels.entries()]);
+  for (const ctx of pending) ctx.panelsReleased = true;
+  if (!entries.length) return;
+  await unloadPanelPages(
+    entries.map(([, entry]) => entry.view.webContents),
+    { allowUnload: (contents) => unloadingPanels.add(contents) },
+  );
+  const apps = [...new Set(entries.map(([app]) => app))];
+  try {
+    session.defaultSession.flushStorageData();
+    await session.defaultSession.cookies.flushStore();
+  } catch (error) {
+    logPanel(`não foi possível gravar o storage dos painéis (${error?.message ?? error}).`);
+  }
+  database?.setMeta("sidePanelExit", { clean: true, at: Date.now(), apps });
+}
+
+function anyUnreleasedPanels() {
+  return [...contexts.values()].some((ctx) => !ctx.panelsReleased && ctx.sidePanels.size > 0);
+}
+
+// --- Arrastar a largura do painel (3.1.1) ---
+// A alça fica na casca, mas o cursor passa por cima das páginas (WebContentsView), que
+// ficam com os eventos do mouse. O main acompanha o cursor e avisa a casca até soltar.
+
+function stopPanelDrag(ctx) {
+  const drag = ctx?.panelDrag;
+  if (!drag) return;
+  ctx.panelDrag = null;
+  clearInterval(drag.timer);
+  clearTimeout(drag.limit);
+  for (const [contents, listener] of drag.listeners) {
+    if (!contents.isDestroyed()) contents.off("before-mouse-event", listener);
+  }
+  send(ctx, "agzos:side-panel-drag", { done: true });
+}
+
+function startPanelDrag(ctx) {
+  stopPanelDrag(ctx);
+  if (ctx.window.isDestroyed()) return;
+  const drag = { timer: null, limit: null, lastX: null, listeners: new Map() };
+  ctx.panelDrag = drag;
+  const tick = () => {
+    if (ctx.window.isDestroyed()) return stopPanelDrag(ctx);
+    const point = screen.getCursorScreenPoint();
+    const content = ctx.window.getContentBounds();
+    const x = Math.round(point.x - content.x);
+    if (x === drag.lastX) return;
+    drag.lastX = x;
+    send(ctx, "agzos:side-panel-drag", { x });
+  };
+  drag.timer = setInterval(tick, 16);
+  // Soltou o botão em cima de uma página (ou ela recebeu movimento sem o botão).
+  const views = [
+    ...[...ctx.views.values()].map((entry) => entry.view?.webContents),
+    ...[...ctx.sidePanels.values()].map((entry) => entry.view.webContents),
+  ].filter((contents) => contents && !contents.isDestroyed());
+  for (const contents of views) {
+    const listener = (event, mouse) => {
+      const held = mouse.modifiers?.includes("leftbuttondown");
+      if (mouse.type === "mouseUp" || (mouse.type === "mouseMove" && !held)) {
+        stopPanelDrag(ctx);
+        return;
+      }
+      if (mouse.type === "mouseMove" || mouse.type === "mouseDown") event.preventDefault();
+    };
+    contents.on("before-mouse-event", listener);
+    drag.listeners.set(contents, listener);
+  }
+  drag.limit = setTimeout(() => stopPanelDrag(ctx), 60_000);
+  tick();
 }
 
 function layoutSidePanels(ctx) {
@@ -2788,6 +2962,26 @@ function registerIpc() {
     const entry = ctxOfEvent(event)?.sidePanels.get(app);
     if (!entry || entry.view.webContents.isDestroyed()) return;
     void entry.view.webContents.loadURL(entry.url).catch(() => {});
+  });
+
+  ipcMain.handle("sidepanel:zoom", (event, { app, direction } = {}) => {
+    if (![1, -1, 0].includes(direction)) return;
+    setPanelZoom(ctxOfEvent(event), app, direction);
+  });
+
+  ipcMain.handle("sidepanel:zoom-get", (event, { app } = {}) => {
+    const entry = ctxOfEvent(event)?.sidePanels.get(app);
+    if (entry && !entry.view.webContents.isDestroyed()) {
+      return entry.view.webContents.getZoomFactor();
+    }
+    return panelZooms()[app] ?? 1;
+  });
+
+  ipcMain.handle("sidepanel:drag", (event, { active } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    if (active) startPanelDrag(ctx);
+    else stopPanelDrag(ctx);
   });
 
   ipcMain.handle("sidepanel:unload", (event, { app } = {}) => {
@@ -3619,6 +3813,19 @@ app.whenReady().then(() => {
 
   openStateDatabase();
   updatedFrom = detectUpdate();
+  // Saída dos painéis: a anterior explica um login pedido de novo; esta começa "suja" até
+  // os painéis descarregarem ao sair.
+  previousPanelExit = database?.getMeta("sidePanelExit") ?? null;
+  database?.setMeta("sidePanelExit", { clean: false, at: Date.now(), apps: [] });
+  // Cookies e storage em disco de tempos em tempos (uma queda não leva a sessão junto).
+  setInterval(() => {
+    if (![...contexts.values()].some((ctx) => ctx.sidePanels.size)) return;
+    try {
+      session.defaultSession.flushStorageData();
+    } catch {
+      // Sessão ainda não pronta.
+    }
+  }, 60_000).unref();
   if (database) {
     windowStore = createWindowStore({ database });
     const previous = windowStore.beginRun();
@@ -3659,7 +3866,14 @@ app.on("certificate-error", (event, contents, url, error, certificate, callback,
   callback(false);
 });
 
-app.on("before-quit", () => {
+let releasingPanels = null;
+app.on("before-quit", (event) => {
+  // Primeiro os painéis descarregam e o storage grava; depois a saída segue de novo.
+  if (anyUnreleasedPanels()) {
+    event.preventDefault();
+    releasingPanels ??= releaseSidePanels([...contexts.values()]).finally(() => app.quit());
+    return;
+  }
   quitting = true;
   downloads?.cancelAll();
   updater?.stop();

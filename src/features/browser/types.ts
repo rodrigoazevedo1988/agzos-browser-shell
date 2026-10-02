@@ -71,7 +71,8 @@ export type KeyState = {
   deviceId: string;
 };
 
-export type QuickLink = { name: string; url: string };
+/** Atalho da home e card do Discador; `category` agrupa os cards (3.1.1). */
+export type QuickLink = { name: string; url: string; category?: string | undefined };
 export type EngineId = "duckduckgo" | "yandex";
 
 /** Pastas fixas da árvore de favoritos (não podem ser apagadas nem movidas). */

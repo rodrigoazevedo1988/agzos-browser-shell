@@ -18,6 +18,8 @@ import { batchProgress } from "@/features/downloads/format";
 import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
 import { ControlPanel } from "@/features/control/panel";
+import { categoriesOf } from "@/features/dial/dial";
+import { LinkDialog } from "@/features/dial/link-dialog";
 import { DialPage } from "@/features/dial/page";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
@@ -29,6 +31,7 @@ import { type AppMenuAction } from "@/features/settings/menu";
 import { SettingsPage } from "@/features/settings/page";
 import { SitePanel } from "@/features/site/panel";
 import { originOf } from "@/features/site/permissions";
+import { useUiSounds } from "@/features/sounds/use-ui-sounds";
 import { cn } from "@/lib/utils";
 
 import { childrenOf, newBookmarkId } from "./bookmarks";
@@ -45,8 +48,8 @@ import { useDesktopSync } from "./desktop-sync";
 import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
-import { SIDE_PANEL_APPS, sidePanelApp } from "./side-panels";
-import { CONTROL_PANEL, SideBar, SidePanel } from "./ui/side-bar";
+import { SIDE_PANEL_APPS, panelWidthOf, sidePanelApp } from "./side-panels";
+import { CONTROL_PANEL, SideBar, SidePanel, type SideMoreAnchor } from "./ui/side-bar";
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -102,7 +105,8 @@ type Panel =
   | "workspaces"
   | "group"
   | "folder"
-  | "login";
+  | "login"
+  | "sideapps";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -201,12 +205,15 @@ export function AgzosBrowser() {
     to: string;
     celebrate: boolean;
   } | null>(null);
+  // Modal de novo site (3.1.1): no "Adicionar" da home ou no "+" do Discador.
+  const [linkDialog, setLinkDialog] = useState<"home" | "dial" | null>(null);
   // "Esperar" na página sem resposta: a faixa some até ela travar de novo.
   const [waitingId, setWaitingId] = useState<number | null>(null);
 
   usePersistence(state, dispatch);
 
   const { prefs } = state;
+  useUiSounds(prefs);
 
   // Tema, cor de acento e glassmorphism também no <html>: os menus do Radix (favoritos,
   // dropdowns) são renderizados em portais no document.body, fora de .browser-stage, e
@@ -245,6 +252,8 @@ export function AgzosBrowser() {
     [prefs.sidePanels],
   );
   const openSideApp = sideApps.find((app) => app.id === sidePanel) ?? null;
+  // Caixinha "Mais" da barra lateral (3.1.1): os apps que não couberam.
+  const [sideMore, setSideMore] = useState<{ anchor: SideMoreAnchor; ids: string[] } | null>(null);
   // "Mudar para esta guia" na omnibox: as outras abas normais.
   const switchableTabs = useMemo(
     () => state.tabs.filter((tab) => tab.id !== state.activeId && !tab.private),
@@ -1636,17 +1645,28 @@ export function AgzosBrowser() {
                               onClose: closePanel,
                             },
                           }
-                        : // Popup de autofill: no app vai para a camada (a página nativa
-                          // cobriria um popup desenhado na casca); na web fica na casca.
-                          desktop && panel === null && canAutofill
-                          ? { kind: "autofill", key: currentHostKey, props: autofillProps }
-                          : panel === "login"
-                            ? {
-                                kind: "login",
-                                key: currentHostKey,
-                                props: { ...autofillProps, mode: "site", capture: loginCapture },
-                              }
-                            : null;
+                        : panel === "sideapps" && sideMore
+                          ? {
+                              kind: "sideapps",
+                              props: {
+                                apps: sideMore.ids.flatMap((id) => sidePanelApp(id) ?? []),
+                                open: sidePanel,
+                                anchor: sideMore.anchor,
+                                onPick: (id) => setSidePanel(id),
+                                onClose: closePanel,
+                              },
+                            }
+                          : // Popup de autofill: no app vai para a camada (a página nativa
+                            // cobriria um popup desenhado na casca); na web fica na casca.
+                            desktop && panel === null && canAutofill
+                            ? { kind: "autofill", key: currentHostKey, props: autofillProps }
+                            : panel === "login"
+                              ? {
+                                  kind: "login",
+                                  key: currentHostKey,
+                                  props: { ...autofillProps, mode: "site", capture: loginCapture },
+                                }
+                              : null;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -1655,7 +1675,11 @@ export function AgzosBrowser() {
   // painel no plano B) ele sai da frente e uma foto da página entra no lugar (senão a área
   // fica preta). Painéis no app vão para a camada acima da página: nada de foto.
   const overlay =
-    panelInline || (switcherVisible && !switcherLayer) || omniboxOpen || whatsNew !== null;
+    panelInline ||
+    (switcherVisible && !switcherLayer) ||
+    omniboxOpen ||
+    whatsNew !== null ||
+    linkDialog !== null;
 
   const [viewHidden, setViewHidden] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
@@ -1874,19 +1898,28 @@ export function AgzosBrowser() {
             <SideBar
               apps={sideApps}
               open={sidePanel}
+              moreOpen={panel === "sideapps"}
               onToggle={(id) => setSidePanel((open) => (open === id ? null : id))}
               onManage={manageSidePanels}
+              onMore={(anchor, hidden) => {
+                setSideMore({ anchor, ids: hidden.map((app) => app.id) });
+                togglePanel("sideapps");
+              }}
             />
           )}
           {openSideApp && prefs.sidebar && !state.fullscreen && (
             <SidePanel
               key={openSideApp.id}
               app={openSideApp}
-              width={prefs.sidePanelWidth}
+              width={panelWidthOf(prefs, openSideApp.id)}
               desktop={desktop}
               onClose={() => setSidePanel(null)}
               onOpenInTab={(url) => openUrl(url, true)}
-              onResize={(width) => setPrefs({ sidePanelWidth: width })}
+              onResize={(width) =>
+                setPrefs({
+                  sidePanelWidths: { ...prefs.sidePanelWidths, [openSideApp.id]: width },
+                })
+              }
             />
           )}
           {sidePanel === CONTROL_PANEL && prefs.sidebar && !state.fullscreen && (
@@ -1935,7 +1968,7 @@ export function AgzosBrowser() {
                 prefs.orientation,
               ].join("|")}
               onOpen={openAddress}
-              onAddLink={(link) => dispatch({ type: "links/add", link })}
+              onRequestAddLink={() => setLinkDialog("home")}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
               onOpenDial={() => openInternal(DIAL_URL, "Discador")}
               internal={(pageUrl) =>
@@ -1953,7 +1986,7 @@ export function AgzosBrowser() {
                     engineName={engineOf(prefs.engine).name}
                     onOpen={openAddress}
                     onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
-                    onAdd={(link) => dispatch({ type: "dial/add", link })}
+                    onRequestAdd={() => setLinkDialog("dial")}
                     onRemove={(url) => dispatch({ type: "dial/remove", url })}
                     onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
                     onHome={() => dispatch({ type: "nav/home" })}
@@ -2023,6 +2056,18 @@ export function AgzosBrowser() {
           onSelect={(index) => dispatch({ type: "switcher/select", index })}
           onCommit={(index) => dispatch({ type: "switcher/commit", index })}
           onCancel={() => dispatch({ type: "switcher/cancel" })}
+        />
+      )}
+      {linkDialog && (
+        <LinkDialog
+          title={linkDialog === "home" ? "Novo atalho na página inicial" : "Novo site no Discador"}
+          existing={(linkDialog === "home" ? state.links : state.dial).map((link) => link.url)}
+          categories={categoriesOf([...state.dial, ...state.links])}
+          onCancel={() => setLinkDialog(null)}
+          onSave={(link) => {
+            dispatch({ type: linkDialog === "home" ? "links/add" : "dial/add", link });
+            setLinkDialog(null);
+          }}
         />
       )}
       {whatsNew && (

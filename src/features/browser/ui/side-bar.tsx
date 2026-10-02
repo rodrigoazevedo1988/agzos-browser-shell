@@ -19,14 +19,23 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import type { DesktopBridge } from "../desktop";
 import { faviconSources } from "../favicon";
-import { SIDE_PANEL_WIDTH, clampPanelWidth, type SidePanelApp } from "../side-panels";
+import { HOVER_SOUND } from "@/features/sounds/sounds";
+
+import { dragPanelWidth, panelWidthLimits, sideBarFit, type SidePanelApp } from "../side-panels";
 
 const ICONS: Record<string, LucideIcon> = {
   whatsapp: MessageCircle,
@@ -94,24 +103,72 @@ export function SidePanelIcon({ app }: { app: SidePanelApp }) {
 /** Id do painel do GX Control (da casca, sem página): o primeiro da barra. */
 export const CONTROL_PANEL = "control";
 
+/** Altura de um app na barra (ícone + nome) antes da primeira medida. */
+const ITEM_FALLBACK_PX = 52;
+
+/** Âncora da caixinha "Mais": canto direito do botão, em px da janela. */
+export type SideMoreAnchor = { x: number; y: number; bottom: number };
+
 /**
  * Barra lateral (como no Opera GX): GX Control no topo e um ícone com nome por app; clicar
- * abre ou fecha o painel do app ao lado da página.
+ * abre ou fecha o painel do app ao lado da página. O que não cabe fica atrás do "Mais".
  */
 export function SideBar({
   apps,
   open,
+  moreOpen = false,
   onToggle,
   onManage,
+  onMore,
 }: {
   apps: SidePanelApp[];
   open: string | null;
+  /** Caixinha dos apps que não couberam está aberta. */
+  moreOpen?: boolean;
   onToggle: (id: string) => void;
   /** "+": escolher quais painéis aparecem. */
   onManage: (event: React.MouseEvent) => void;
+  /** "Mais": abre a caixinha com os apps escondidos. */
+  onMore: (anchor: SideMoreAnchor, hidden: SidePanelApp[]) => void;
 }) {
+  const navRef = useRef<HTMLElement | null>(null);
+  const itemHeight = useRef(ITEM_FALLBACK_PX);
+  const [fit, setFit] = useState<number | null>(null);
+
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const measure = () => {
+      const style = getComputedStyle(nav);
+      const gap = parseFloat(style.rowGap) || 0;
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const item = nav.querySelector<HTMLElement>(".side-bar-item.app");
+      if (item?.offsetHeight) itemHeight.current = item.offsetHeight;
+      const fixed = [...nav.querySelectorAll<HTMLElement>("[data-side-fixed]")].reduce(
+        (sum, element) => sum + element.offsetHeight + gap,
+        0,
+      );
+      setFit(
+        sideBarFit(apps.length, {
+          height: nav.clientHeight - padding,
+          fixed,
+          item: itemHeight.current,
+          gap,
+        }),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [apps.length]);
+
+  const shown = fit === null ? apps : apps.slice(0, fit);
+  const hidden = fit === null ? [] : apps.slice(fit);
+  const hiddenOpen = hidden.some((app) => app.id === open);
+
   return (
-    <nav className="side-bar" aria-label="Painéis laterais" onContextMenu={onManage}>
+    <nav ref={navRef} className="side-bar" aria-label="Painéis laterais" onContextMenu={onManage}>
       <button
         type="button"
         className={cn("side-bar-item control", open === CONTROL_PANEL && "on")}
@@ -119,22 +176,25 @@ export function SideBar({
         title="GX Control: CPU, RAM, rede e limpeza"
         aria-label="GX Control"
         aria-pressed={open === CONTROL_PANEL}
+        data-side-fixed
+        {...HOVER_SOUND}
       >
         <span className="side-app-icon gx">
           <Gauge aria-hidden="true" />
         </span>
         <span className="side-bar-name">Control</span>
       </button>
-      <span className="side-bar-divider" aria-hidden="true" />
-      {apps.map((app) => (
+      <span className="side-bar-divider" aria-hidden="true" data-side-fixed />
+      {shown.map((app) => (
         <button
           key={app.id}
           type="button"
-          className={cn("side-bar-item", open === app.id && "on")}
+          className={cn("side-bar-item app", open === app.id && "on")}
           onClick={() => onToggle(app.id)}
           title={app.name}
           aria-label={app.name}
           aria-pressed={open === app.id}
+          {...HOVER_SOUND}
         >
           <SidePanelIcon app={app} />
           <span className="side-bar-name" aria-hidden="true">
@@ -142,16 +202,118 @@ export function SideBar({
           </span>
         </button>
       ))}
+      {hidden.length > 0 && (
+        <button
+          type="button"
+          className={cn("side-bar-item app more", (moreOpen || hiddenOpen) && "on")}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            onMore(
+              {
+                x: Math.round(rect.right),
+                y: Math.round(rect.top),
+                bottom: Math.round(rect.bottom),
+              },
+              hidden,
+            );
+          }}
+          title={hidden.map((app) => app.name).join(", ")}
+          aria-label={`Mais ${hidden.length} ${hidden.length === 1 ? "app" : "apps"}`}
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          data-side-more
+          {...HOVER_SOUND}
+        >
+          <span className="side-app-icon more-icon">
+            <span className="side-more-count">+{hidden.length}</span>
+          </span>
+          <span className="side-bar-name" aria-hidden="true">
+            Mais
+          </span>
+        </button>
+      )}
       <button
         type="button"
         className="side-bar-item add"
         onClick={onManage}
         title="Escolher painéis"
         aria-label="Escolher painéis laterais"
+        data-side-fixed
+        {...HOVER_SOUND}
       >
         <Plus />
       </button>
     </nav>
+  );
+}
+
+/**
+ * Caixinha flutuante com os apps que não couberam na barra (3.1.1). Na app fica na camada
+ * acima da página; clicar fora ou escolher um app fecha.
+ */
+export function SideAppsMenu({
+  apps,
+  open,
+  anchor,
+  onPick,
+  onClose,
+}: {
+  apps: SidePanelApp[];
+  open: string | null;
+  anchor: SideMoreAnchor;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Na casca (web): clique fora fecha (o botão "Mais" alterna sozinho).
+  useEffect(() => {
+    const onDown = (event: globalThis.PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || menuRef.current?.contains(target) || target.closest("[data-side-more]")) {
+        return;
+      }
+      onClose();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [onClose]);
+
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLElement>("button")?.focus();
+  }, []);
+
+  const bottom =
+    typeof window === "undefined" ? 8 : Math.max(8, window.innerHeight - anchor.bottom);
+  return (
+    <div
+      ref={menuRef}
+      className="side-apps-menu glass-panel"
+      role="menu"
+      aria-label="Mais apps da barra lateral"
+      style={{ left: anchor.x + 8, bottom }}
+    >
+      {apps.map((app) => (
+        <button
+          key={app.id}
+          type="button"
+          role="menuitem"
+          className={cn("side-bar-item app", open === app.id && "on")}
+          onClick={() => {
+            onPick(app.id);
+            onClose();
+          }}
+          title={app.name}
+          aria-label={app.name}
+          {...HOVER_SOUND}
+        >
+          <SidePanelIcon app={app} />
+          <span className="side-bar-name" aria-hidden="true">
+            {app.name}
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -206,24 +368,62 @@ export function SidePanel({
     };
   }, [desktop, app.id]);
 
-  // Arrastar a borda direita muda a largura (fica salva nas preferências).
+  // Zoom só deste painel (Ctrl+roda, Ctrl +/−/0 com o foco nele): mostrado no cabeçalho.
+  const [zoom, setZoom] = useState(1);
+  useEffect(() => {
+    if (!desktop) return;
+    let alive = true;
+    void desktop.sidePanelZoomGet(app.id).then((factor) => alive && setZoom(factor));
+    const off = desktop.onSidePanelZoom((payload) => {
+      if (payload.app === app.id) setZoom(payload.factor);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [desktop, app.id]);
+
+  // Arrastar a borda direita aumenta ou diminui a largura (gravada por painel). Por cima
+  // das páginas quem segue o cursor é o main (sidePanelDrag); na casca, o próprio ponteiro.
+  const resizeRef = useRef(onResize);
+  resizeRef.current = onResize;
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     const box = hostRef.current?.parentElement?.getBoundingClientRect();
-    if (!box) return;
+    if (!box || event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
-    const move = (moveEvent: globalThis.PointerEvent) =>
-      onResize(clampPanelWidth(moveEvent.clientX - box.left));
+    const apply = (x: number) => resizeRef.current(dragPanelWidth(x - box.left, window.innerWidth));
+    let finished = false;
+    let offDrag = () => {};
+    const move = (moveEvent: globalThis.PointerEvent) => apply(moveEvent.clientX);
     const up = () => {
+      if (finished) return;
+      finished = true;
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
+      offDrag();
+      void desktop?.sidePanelDrag(false);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", up);
     handle.addEventListener("pointercancel", up);
+    if (desktop) {
+      offDrag = desktop.onSidePanelDrag(({ x, done }) => {
+        if (done) up();
+        else if (typeof x === "number") apply(x);
+      });
+      void desktop.sidePanelDrag(true);
+    }
   };
+  const keyResize = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowRight" ? 24 : event.key === "ArrowLeft" ? -24 : 0;
+    if (!step) return;
+    event.preventDefault();
+    onResize(dragPanelWidth(width + step, window.innerWidth));
+  };
+  const limits = panelWidthLimits(typeof window === "undefined" ? 1280 : window.innerWidth);
 
   return (
     <aside
@@ -235,6 +435,17 @@ export function SidePanel({
       <header className="side-panel-head">
         <SidePanelIcon app={app} />
         <strong>{app.name}</strong>
+        {zoom !== 1 && (
+          <button
+            type="button"
+            className="side-panel-zoom"
+            title="Zoom deste painel (clique para voltar a 100%)"
+            aria-label={`Zoom de ${app.name}: ${Math.round(zoom * 100)}%. Voltar a 100%`}
+            onClick={() => void desktop?.sidePanelZoom(app.id, 0)}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -277,10 +488,12 @@ export function SidePanel({
         role="separator"
         aria-orientation="vertical"
         aria-label="Largura do painel lateral"
-        aria-valuemin={SIDE_PANEL_WIDTH.min}
-        aria-valuemax={SIDE_PANEL_WIDTH.max}
+        aria-valuemin={limits.min}
+        aria-valuemax={limits.max}
         aria-valuenow={width}
+        tabIndex={0}
         onPointerDown={startResize}
+        onKeyDown={keyResize}
       />
     </aside>
   );

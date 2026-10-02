@@ -225,6 +225,7 @@ export const OmniboxField = forwardRef<HTMLInputElement, OmniboxFieldProps>(
       <>
         <input
           ref={inputRef}
+          data-sound="keys"
           value={props.value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}

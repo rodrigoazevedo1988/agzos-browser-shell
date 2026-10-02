@@ -7,6 +7,19 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.1.1",
+    date: "2026-10-02",
+    items: [
+      "Barra lateral mais limpa: a rolagem ficou fina e quase invisível, sem setas no rodapé. Quando os apps não cabem na altura da janela, o último lugar vira o botão Mais, que abre uma caixinha com os outros apps.",
+      "Novo modal para adicionar sites, o mesmo no Discador e no Adicionar da página inicial: nome, endereço, categoria e a prévia do card com o logo do site, que vem sozinho. No Discador, os cards mostram a categoria e dá para filtrar por ela.",
+      "Sons opcionais: um tick discreto ao passar o mouse na barra lateral e nos cards do Discador, e um som de tecla ao digitar na busca, na barra de endereço e nos modais. Em Configurações → Sons você liga ou desliga cada um, escolhe entre três ticks de teclado e ajusta o volume.",
+      "Cada painel da barra lateral tem o seu zoom (Ctrl + roda do mouse ou Ctrl +/−/0 com o foco nele) e a sua largura, guardados mesmo depois de fechar o navegador — sem mudar o zoom das guias do mesmo site nem o dos outros painéis.",
+      "A alça do painel lateral agora aumenta a largura também, até onde a janela permitir.",
+      "Discord e outros apps da barra lateral continuam logados depois de fechar e abrir o navegador: as páginas dos painéis são encerradas direito antes de sair, e o armazenamento é gravado.",
+      "Início e Discador: a página aberta fica marcada no seletor do topo.",
+    ],
+  },
+  {
     version: "3.0.0",
     date: "2026-10-02",
     items: [

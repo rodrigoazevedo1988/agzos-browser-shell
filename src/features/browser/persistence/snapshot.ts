@@ -1,6 +1,12 @@
 import { parseBookmarks } from "../bookmarks";
 import { parseLimits } from "../control/limits";
-import { clampPanelWidth, parseSidePanels, withNewSidePanels } from "../side-panels";
+import {
+  clampPanelWidth,
+  parsePanelWidths,
+  parseSidePanels,
+  withNewSidePanels,
+} from "../side-panels";
+import { parseSoundTick, parseSoundVolume } from "@/features/sounds/sounds";
 import type { HydratePayload } from "../store/reducer";
 import {
   BOOKMARKS_URL,
@@ -171,9 +177,20 @@ export function parseSplit(value: unknown): SplitView | null {
 
 export function parseLinks(value: unknown): QuickLink[] | null {
   if (!Array.isArray(value)) return null;
-  return value.filter(
-    (item): item is QuickLink => isObject(item) && isString(item["name"]) && isString(item["url"]),
-  );
+  return value
+    .filter(
+      (item): item is QuickLink =>
+        isObject(item) && isString(item["name"]) && isString(item["url"]),
+    )
+    .map((link) => quickLinkOf(link));
+}
+
+/** Só os campos conhecidos; a categoria entra quando é um texto não vazio. */
+function quickLinkOf(link: QuickLink): QuickLink {
+  const category = isString(link.category) ? link.category.trim().slice(0, 40) : "";
+  return category
+    ? { name: link.name, url: link.url, category }
+    : { name: link.name, url: link.url };
 }
 
 /** Cards do Discador: só nome e endereço válidos, sem repetir endereço. */
@@ -183,7 +200,7 @@ export function parseDial(value: unknown): QuickLink[] | null {
   const seen = new Set<string>();
   return links
     .filter((link) => link.url.trim() && !seen.has(link.url) && Boolean(seen.add(link.url)))
-    .map((link) => ({ name: link.name, url: link.url }));
+    .map((link) => quickLinkOf(link));
 }
 
 export function parseClosedTabs(value: unknown): ClosedTab[] {
@@ -214,6 +231,12 @@ export function parsePrefs(value: unknown): Prefs {
     ...withNewSidePanels(parseSidePanels(raw["sidePanels"]), raw["sidePanelsSeen"]),
     ...parseLimits(raw),
     sidePanelWidth: clampPanelWidth(raw["sidePanelWidth"]),
+    sidePanelWidths: parsePanelWidths(raw["sidePanelWidths"]),
+    sounds: bool("sounds"),
+    soundHover: bool("soundHover"),
+    soundKeys: bool("soundKeys"),
+    soundTick: parseSoundTick(raw["soundTick"]),
+    soundVolume: parseSoundVolume(raw["soundVolume"], defaultPrefs.soundVolume),
     hibernateMinutes: (HIBERNATE_MINUTES as readonly unknown[]).includes(raw["hibernateMinutes"])
       ? (raw["hibernateMinutes"] as number)
       : defaultPrefs.hibernateMinutes,
