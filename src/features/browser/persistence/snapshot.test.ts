@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_LIMITS } from "../control/limits";
+import { DEFAULT_SIDE_PANELS } from "../side-panels";
 import { browserReducer } from "../store/reducer";
 import { initialState } from "../store/state";
 import {
@@ -94,6 +96,7 @@ describe("snapshot", () => {
         split: null,
       },
       links: null,
+      dial: null,
       closedTabs: [{ title: "a", url: "https://a.com" }],
       bookmarks: null,
     });
@@ -112,6 +115,7 @@ describe("snapshot", () => {
       tabs: null,
       activeId: null,
       links: null,
+      dial: null,
       closedTabs: [],
       bookmarks: null,
       groups: [],
@@ -188,7 +192,9 @@ describe("migração da 1.3", () => {
         hibernate: true,
         hibernateMinutes: 30,
         sidebar: true,
-        sidePanels: ["whatsapp", "telegram", "messenger", "instagram"],
+        sidePanels: DEFAULT_SIDE_PANELS,
+        sidePanelsSeen: DEFAULT_SIDE_PANELS,
+        ...DEFAULT_LIMITS,
         sidePanelWidth: 400,
         accentColor: "#D43420",
         backgroundImage: "",
@@ -205,6 +211,7 @@ describe("migração da 1.3", () => {
         split: null,
       },
       links: [{ name: "Meu", url: "meu.dev" }],
+      dial: null,
       closedTabs: [{ title: "Velha", url: "https://velha.com" }],
       bookmarks: null,
     });

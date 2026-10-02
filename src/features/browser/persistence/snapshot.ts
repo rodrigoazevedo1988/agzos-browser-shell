@@ -1,9 +1,11 @@
 import { parseBookmarks } from "../bookmarks";
-import { clampPanelWidth, parseSidePanels } from "../side-panels";
+import { parseLimits } from "../control/limits";
+import { clampPanelWidth, parseSidePanels, withNewSidePanels } from "../side-panels";
 import type { HydratePayload } from "../store/reducer";
 import {
   BOOKMARKS_URL,
   CLOSED_TABS_LIMIT,
+  DIAL_URL,
   HIBERNATE_MINUTES,
   HISTORY_URL,
   SETTINGS_URL,
@@ -39,6 +41,8 @@ export type Snapshot = {
   };
   /** null = usar os atalhos padrão. */
   links: QuickLink[] | null;
+  /** Cards do Discador (3.0); null/ausente = os padrão. */
+  dial?: QuickLink[] | null;
   closedTabs: ClosedTab[];
   /** null = ainda não existia (antes da 1.6): os favoritos nascem dos atalhos. */
   bookmarks: BookmarkNode[] | null;
@@ -51,9 +55,10 @@ export const SNAPSHOT_SECTIONS = [
   "links",
   "closedTabs",
   "bookmarks",
+  "dial",
 ] as const;
 
-const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL]);
+const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL, DIAL_URL]);
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -171,6 +176,16 @@ export function parseLinks(value: unknown): QuickLink[] | null {
   );
 }
 
+/** Cards do Discador: só nome e endereço válidos, sem repetir endereço. */
+export function parseDial(value: unknown): QuickLink[] | null {
+  const links = parseLinks(value);
+  if (!links) return null;
+  const seen = new Set<string>();
+  return links
+    .filter((link) => link.url.trim() && !seen.has(link.url) && Boolean(seen.add(link.url)))
+    .map((link) => ({ name: link.name, url: link.url }));
+}
+
 export function parseClosedTabs(value: unknown): ClosedTab[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -196,7 +211,8 @@ export function parsePrefs(value: unknown): Prefs {
     keyBarPinned: bool("keyBarPinned"),
     hibernate: bool("hibernate"),
     sidebar: bool("sidebar"),
-    sidePanels: parseSidePanels(raw["sidePanels"]),
+    ...withNewSidePanels(parseSidePanels(raw["sidePanels"]), raw["sidePanelsSeen"]),
+    ...parseLimits(raw),
     sidePanelWidth: clampPanelWidth(raw["sidePanelWidth"]),
     hibernateMinutes: (HIBERNATE_MINUTES as readonly unknown[]).includes(raw["hibernateMinutes"])
       ? (raw["hibernateMinutes"] as number)
@@ -241,6 +257,7 @@ export function parseSnapshot(value: unknown): Snapshot | null {
       split: parseSplit(session["split"]),
     },
     links: parseLinks(value["links"]),
+    dial: parseDial(value["dial"]),
     closedTabs: parseClosedTabs(value["closedTabs"]),
     bookmarks: parseBookmarks(value["bookmarks"]),
   };
@@ -250,7 +267,7 @@ export type PersistedSlice = Pick<
   BrowserState,
   "tabs" | "activeId" | "prefs" | "links" | "closedTabs" | "bookmarks"
 > &
-  Partial<Pick<BrowserState, "groups" | "workspaces" | "split">>;
+  Partial<Pick<BrowserState, "groups" | "workspaces" | "split" | "dial">>;
 
 export function snapshotOf(state: PersistedSlice): Snapshot {
   const tabs = state.tabs.filter((tab) => !tab.private).map(({ private: _private, ...tab }) => tab);
@@ -268,6 +285,7 @@ export function snapshotOf(state: PersistedSlice): Snapshot {
           : null,
     },
     links: state.links,
+    dial: state.dial ?? null,
     closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
     bookmarks: state.bookmarks,
   };
@@ -280,6 +298,7 @@ export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | nu
     tabs: snapshot.session.tabs.length ? snapshot.session.tabs : null,
     activeId: snapshot.session.activeId,
     links: snapshot.links,
+    dial: snapshot.dial ?? null,
     closedTabs: snapshot.closedTabs,
     bookmarks: snapshot.bookmarks,
     groups: snapshot.session.groups ?? [],
@@ -329,6 +348,7 @@ export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
     // A 1.3 abria sempre na primeira aba.
     session: { tabs, activeId: tabs[0]?.id ?? null, groups: [], workspaces: [], split: null },
     links: parseLinks(readJson(storage, "agzos-links")),
+    dial: null,
     // A 1.3 empilhava no fim e reabria o último.
     closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),
     bookmarks: null,

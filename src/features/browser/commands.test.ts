@@ -42,6 +42,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     editGroup: vi.fn(),
     openWorkspaces: vi.fn(),
     toggleSidebar: vi.fn(),
+    toggleControl: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

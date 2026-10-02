@@ -155,6 +155,30 @@ export type DesktopPermissionRequest = {
   mediaTypes: string[];
 };
 
+/** Retrato do GX Control: totais do navegador e cada guia viva desta janela. */
+export type GxStats = {
+  cpuPercent: number;
+  memoryMB: number;
+  processes: number;
+  cores: number;
+  systemMemoryMB: number;
+  freeMemoryMB: number;
+  tabs: {
+    id: number;
+    memoryMB: number;
+    cpuPercent: number;
+    /** Guias que dividem o mesmo processo (o uso é repartido entre elas). */
+    shared: number;
+    /** Desacelerada pelo limitador de CPU. */
+    throttled: boolean;
+  }[];
+  lastAction: { type: "hibernated"; title: string; at: number } | null;
+};
+
+export type SpeedTestResult =
+  | { ok: true; pingMs: number | null; downMbps: number; upMbps: number | null; at: number }
+  | { ok: false; error: string };
+
 export type DesktopBridge = {
   attachTab(
     id: number,
@@ -259,6 +283,14 @@ export type DesktopBridge = {
   pictureInPicture(id: number): Promise<{ ok: boolean; active: boolean; reason?: string }>;
   /** Encerra a página que não responde. */
   killTab(id: number): Promise<void>;
+  /** GX Control (3.0): uso do app e das guias desta janela. */
+  gxStats(): Promise<GxStats>;
+  /** Teste de velocidade da internet (latência, download e upload). */
+  gxSpeedTest(): Promise<SpeedTestResult>;
+  /** Bytes do cache de disco das páginas. */
+  gxCacheSize(): Promise<number>;
+  /** Limpa cache e dados temporários (cookies e logins ficam). */
+  gxClearCache(): Promise<{ freedBytes: number; cacheBytes: number }>;
   /** "Continuar mesmo assim" num certificado inválido (só nesta execução). */
   allowCertificate(id: number): Promise<{ ok: boolean }>;
   /** Aviso de restauração depois de um fechamento inesperado (só a 1ª janela recebe). */

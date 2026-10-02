@@ -1,24 +1,31 @@
 import {
   Bot,
+  BriefcaseBusiness,
   ExternalLink,
   Gamepad2,
+  Gauge,
   Instagram,
   Mail,
   MessageCircle,
   MessagesSquare,
+  Music,
+  Pin,
   Plus,
   RefreshCw,
   Send,
+  Sparkles,
   Twitter,
+  Video,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import type { DesktopBridge } from "../desktop";
+import { faviconSources } from "../favicon";
 import { SIDE_PANEL_WIDTH, clampPanelWidth, type SidePanelApp } from "../side-panels";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -30,18 +37,67 @@ const ICONS: Record<string, LucideIcon> = {
   x: Twitter,
   gmail: Mail,
   chatgpt: Bot,
+  claude: Sparkles,
+  gemini: Sparkles,
+  duckai: Bot,
+  tiktok: Video,
+  kwai: Video,
+  youtube: Video,
+  linkedin: BriefcaseBusiness,
+  reddit: MessagesSquare,
+  spotify: Music,
+  deezer: Music,
+  pinterest: Pin,
 };
 
+/** Logo do app (favicon do site); sem rede, o ícone genérico na cor da marca. */
 export function SidePanelIcon({ app }: { app: SidePanelApp }) {
   const Icon = ICONS[app.id] ?? MessageCircle;
+  // Google primeiro, /favicon.ico do site depois; os dois falhando, o ícone genérico.
+  const sources = faviconSources(app.url, 64);
+  const [attempt, setAttempt] = useState(0);
+  const [ok, setOk] = useState(false);
+  const source = sources[attempt];
+  // O Google devolve 16 px quando só conhece um ícone pequeno: tenta o do site.
+  const settle = (image: HTMLImageElement) => {
+    const minimum = attempt === 0 ? 24 : 1;
+    if (image.naturalWidth >= minimum) setOk(true);
+    else setAttempt(attempt + 1);
+  };
   return (
-    <span className="side-app-icon" style={{ "--app-color": app.color } as CSSProperties}>
-      <Icon aria-hidden="true" />
+    <span
+      className={cn("side-app-icon", ok && "has-logo")}
+      style={{ "--app-color": app.color } as CSSProperties}
+    >
+      {!ok && <Icon aria-hidden="true" />}
+      {source && (
+        <img
+          key={source}
+          src={source}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          referrerPolicy="no-referrer"
+          hidden={!ok}
+          // Renderizada no servidor, a imagem pode carregar antes da hidratação (sem onLoad).
+          ref={(image) => {
+            if (image?.complete && !ok) settle(image);
+          }}
+          onLoad={(event) => settle(event.currentTarget)}
+          onError={() => setAttempt(attempt + 1)}
+        />
+      )}
     </span>
   );
 }
 
-/** Barra lateral (como no Opera): um ícone por painel; clicar abre ou fecha o painel. */
+/** Id do painel do GX Control (da casca, sem página): o primeiro da barra. */
+export const CONTROL_PANEL = "control";
+
+/**
+ * Barra lateral (como no Opera GX): GX Control no topo e um ícone com nome por app; clicar
+ * abre ou fecha o painel do app ao lado da página.
+ */
 export function SideBar({
   apps,
   open,
@@ -56,6 +112,20 @@ export function SideBar({
 }) {
   return (
     <nav className="side-bar" aria-label="Painéis laterais" onContextMenu={onManage}>
+      <button
+        type="button"
+        className={cn("side-bar-item control", open === CONTROL_PANEL && "on")}
+        onClick={() => onToggle(CONTROL_PANEL)}
+        title="GX Control: CPU, RAM, rede e limpeza"
+        aria-label="GX Control"
+        aria-pressed={open === CONTROL_PANEL}
+      >
+        <span className="side-app-icon gx">
+          <Gauge aria-hidden="true" />
+        </span>
+        <span className="side-bar-name">Control</span>
+      </button>
+      <span className="side-bar-divider" aria-hidden="true" />
       {apps.map((app) => (
         <button
           key={app.id}
@@ -67,6 +137,9 @@ export function SideBar({
           aria-pressed={open === app.id}
         >
           <SidePanelIcon app={app} />
+          <span className="side-bar-name" aria-hidden="true">
+            {app.name}
+          </span>
         </button>
       ))}
       <button

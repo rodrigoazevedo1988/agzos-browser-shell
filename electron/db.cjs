@@ -91,7 +91,7 @@ const DOWNLOAD_STATES = ["progressing", "completed", "cancelled", "interrupted"]
 const DOWNLOAD_LIMIT = 200;
 
 // Seções do snapshot da casca que o renderer pode ler e gravar (ver persistence/snapshot.ts).
-const STATE_SECTIONS = ["version", "prefs", "session", "links", "closedTabs", "bookmarks"];
+const STATE_SECTIONS = ["version", "prefs", "session", "links", "closedTabs", "bookmarks", "dial"];
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 
 function migrate(db) {

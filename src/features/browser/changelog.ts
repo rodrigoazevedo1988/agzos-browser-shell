@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.0.0",
+    date: "2026-10-02",
+    items: [
+      "GX Control: um painel no topo da barra lateral com medidores de CPU e memória, limitador de RAM (hiberna as guias mais pesadas acima do teto), limitador de CPU (desacelera as guias em segundo plano) e limitador de rede para download e upload.",
+      "Hot Tabs Killer: veja quanto de CPU e memória cada guia usa, ordene pelas mais pesadas e encerre a guia num clique. O mesmo painel testa a velocidade da internet e limpa o cache sem tirar você das suas contas.",
+      "Discador: uma página nova ao lado do Início, com uma grade de sites com logo. Pesquise nos seus sites ou na web, adicione sites com o +, arraste os cards para reordenar e clique para abrir na mesma guia.",
+      "Barra lateral maior: além de WhatsApp, Telegram, Messenger, Instagram, Discord, X, Gmail e ChatGPT, agora tem Claude, Gemini, Duck.ai, TikTok, Kwai, YouTube, LinkedIn, Reddit, Spotify, Deezer e Pinterest — cada um com logo e nome. Dá para ocultar a barra nas Configurações.",
+      "Os atalhos da página inicial agora mostram o logo de cada site no lugar da inicial.",
+    ],
+  },
+  {
     version: "2.2.8",
     date: "2026-10-02",
     items: [

@@ -3,7 +3,13 @@ import type { Dispatch } from "react";
 import type { DesktopBridge } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
 import { activeTabOf, entryOf, splitShown } from "./store/selectors";
-import { BOOKMARKS_URL, HISTORY_URL, SETTINGS_URL, type BrowserState } from "./store/state";
+import {
+  BOOKMARKS_URL,
+  DIAL_URL,
+  HISTORY_URL,
+  SETTINGS_URL,
+  type BrowserState,
+} from "./store/state";
 
 /**
  * Registro único de comandos do navegador. Atalhos de teclado, o menu de contexto da
@@ -64,6 +70,8 @@ export type CommandId =
   | "workspace.next"
   | "workspace.previous"
   | "sidepanels.toggle"
+  | "control.open"
+  | "dial.open"
   | "history.open"
   | "bookmarks.manager"
   | "bookmarks.toggle-bar";
@@ -105,6 +113,8 @@ export type CommandContext = {
     openWorkspaces: (create?: boolean) => void;
     /** Mostra ou esconde a barra lateral dos painéis (WhatsApp, Telegram…). */
     toggleSidebar: () => void;
+    /** Abre ou fecha o GX Control (painel de CPU, RAM, rede e limpeza). */
+    toggleControl: () => void;
   };
 };
 
@@ -549,6 +559,20 @@ export const commands: Command[] = [
     label: ({ state }) =>
       state.prefs.sidebar ? "Ocultar painéis laterais" : "Mostrar painéis laterais",
     run: ({ ui }) => ui.toggleSidebar(),
+  },
+  {
+    id: "control.open",
+    label: "GX Control (CPU, RAM, rede e limpeza)",
+    run: ({ ui }) => ui.toggleControl(),
+  },
+  {
+    id: "dial.open",
+    label: "Abrir o Discador",
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Discador", url: DIAL_URL, kind: "internal" },
+      }),
   },
   {
     id: "workspace.previous",

@@ -492,7 +492,7 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
       Object.keys(stored)
         .filter((key) => !key.startsWith("meta:"))
         .sort(),
-    ).toEqual(["bookmarks", "closedTabs", "links", "prefs", "version"]);
+    ).toEqual(["bookmarks", "closedTabs", "dial", "links", "prefs", "version"]);
     // 1.7: a sessão (guias) é de cada janela e fica no registro das janelas.
     expect(stored["meta:windows"]).toContain("/salva");
     expect(JSON.stringify(stored)).not.toContain("secreta");
@@ -2517,6 +2517,42 @@ test("2.2.8: com uma pasta aberta, o cursor sobre outra troca o menu (sem hover 
     await cursorAt("Pasta A");
     await window.waitForTimeout(300);
     await expect(bar.locator(".bookmark-chip.open")).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("3.0: GX Control mede as guias de verdade, limpa o cache e fica ao lado da página", async () => {
+  const { app, window } = await launch(tempProfile());
+  const page = `${origin}/principal`;
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Página PRINCIPAL");
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "GX Control" })
+      .click();
+    const panel = window.getByRole("complementary", { name: "GX Control" });
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toContainText("Demonstração");
+    // Números do main (app.getAppMetrics): memória do app e a guia com uso medido.
+    await expect(panel.getByRole("figure", { name: /RAM: \d/ })).toBeVisible();
+    const row = panel.getByRole("list", { name: "Guias por uso" }).getByRole("listitem");
+    await expect(row).toHaveCount(1);
+    await expect(row.getByLabel(/^Memória \d+ MB$/)).toBeVisible();
+    // A página nativa encolhe para o painel da casca caber.
+    const box = (await panel.boundingBox())!;
+    await expect
+      .poll(async () => {
+        const tab = (await nativeChildren(app)).find((view) => view.url === page)?.bounds;
+        return Boolean(tab && tab.x >= Math.floor(box.x + box.width) - 1);
+      })
+      .toBe(true);
+
+    await panel.getByRole("switch", { name: "Ligar limitador de rede" }).click();
+    await expect(panel.getByRole("slider", { name: "Download" })).toBeEnabled();
+    await panel.getByRole("button", { name: "Limpar" }).click();
+    await expect(panel.getByText(/liberados/)).toBeVisible({ timeout: 15_000 });
   } finally {
     await app.close();
   }

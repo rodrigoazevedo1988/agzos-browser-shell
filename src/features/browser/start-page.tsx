@@ -6,10 +6,8 @@ import { Button } from "@/components/ui/button";
 import { engines } from "./engines";
 import type { QuickLink } from "./types";
 import type { Prefs } from "./store/state";
-
-function shortOf(name: string) {
-  return name.trim().charAt(0).toUpperCase() || "?";
-}
+import { HomeNav } from "./ui/home-nav";
+import { SiteIcon } from "./ui/site-icon";
 
 export function StartPage({
   links,
@@ -19,6 +17,7 @@ export function StartPage({
   onOpen,
   onAdd,
   onRemove,
+  onOpenDial,
 }: {
   links: QuickLink[];
   engine: (typeof engines)[number];
@@ -28,6 +27,8 @@ export function StartPage({
   onOpen: (value: string) => void;
   onAdd: (link: QuickLink) => void;
   onRemove: (url: string) => void;
+  /** "Discador" no topo: a grade de sites na mesma guia (3.0). */
+  onOpenDial: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -64,6 +65,7 @@ export function StartPage({
           : undefined
       }
     >
+      <HomeNav current="home" onHome={() => {}} onDial={onOpenDial} />
       {prefs.backgroundImage && (
         <div
           className="start-bg-overlay"
@@ -103,7 +105,7 @@ export function StartPage({
           {links.map((link) => (
             <div className="quick-link" key={link.url}>
               <button type="button" onClick={() => onOpen(link.url)} title={link.url}>
-                <span>{shortOf(link.name)}</span>
+                <SiteIcon url={link.url} name={link.name} />
                 <small>{link.name}</small>
               </button>
               <button

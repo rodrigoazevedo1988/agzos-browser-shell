@@ -634,3 +634,84 @@ test("2.0: Ctrl+K, grupo de guias pelo menu, workspace novo e tela dividida (ver
     "app Agzos para computador",
   );
 });
+
+test("3.0: Discador ao lado do Início, com busca, cards salvos e reordenáveis", async ({
+  page,
+}) => {
+  await page.getByRole("navigation", { name: "Páginas iniciais" }).getByText("Discador").click();
+  await expect(omnibox(page)).toHaveValue("agzos://discador");
+  const grid = page.getByRole("list", { name: "Sites do Discador" });
+  await expect(grid.getByRole("button", { name: /^YouTube/ })).toBeVisible();
+
+  // "+": card novo, salvo depois de recarregar.
+  await page.getByRole("button", { name: "Adicionar site ao Discador" }).click();
+  await page.getByLabel("Nome do site").fill("Exemplo");
+  await page.getByLabel("Endereço do site").fill("example.com");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect(grid.getByRole("button", { name: /^Exemplo/ })).toBeVisible();
+
+  // Ctrl+Shift+← muda o card de lugar.
+  const names = () => grid.locator(".dial-open strong").allTextContents();
+  const before = await names();
+  await grid.getByRole("button", { name: /^Exemplo/ }).focus();
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  // before termina em [..., "Reddit", "Exemplo", "Adicionar"].
+  await expect.poll(names).toEqual([...before.slice(0, -3), "Exemplo", before.at(-3), "Adicionar"]);
+
+  await reload(page);
+  await expect(page.getByRole("button", { name: /^Exemplo/ })).toBeVisible();
+
+  // Busca "Geral" filtra os cards; Enter abre o primeiro na própria guia.
+  await page.getByLabel("Pesquisar no Discador").fill("exem");
+  await expect(grid.locator(".dial-card")).toHaveCount(1);
+  await page.getByLabel("Pesquisar no Discador").press("Enter");
+  await expect(omnibox(page)).toHaveValue("https://example.com");
+  await expect(tabs(page)).toHaveCount(1);
+
+  // Volta ao Discador e pesquisa na web pelo seletor.
+  await go(page, "agzos://discador");
+  await page.getByRole("radio", { name: "Web" }).click();
+  await page.getByLabel("Pesquisar na web").last().fill("agzos browser");
+  await page.getByLabel("Pesquisar na web").last().press("Enter");
+  await expect(omnibox(page)).toHaveValue(/duckduckgo\.com\/\?q=agzos/);
+
+  // Início pelo atalho do topo.
+  await go(page, "agzos://discador");
+  await page.getByRole("navigation", { name: "Páginas iniciais" }).getByText("Início").click();
+  await expect(omnibox(page)).toHaveValue("agzos://inicio");
+});
+
+test("3.0: barra lateral com os apps novos e GX Control com Hot Tabs Killer", async ({ page }) => {
+  const bar = page.getByRole("navigation", { name: "Painéis laterais" });
+  for (const name of ["WhatsApp", "ChatGPT", "Claude", "Gemini", "YouTube", "Pinterest"]) {
+    await expect(bar.getByRole("button", { name, exact: true })).toBeAttached();
+  }
+  await go(page, "example.com");
+  await page.getByRole("button", { name: "Nova aba", exact: true }).first().click();
+  await expect(tabs(page)).toHaveCount(2);
+
+  await bar.getByRole("button", { name: "GX Control" }).click();
+  const panel = page.getByRole("complementary", { name: "GX Control" });
+  await expect(panel).toContainText("Demonstração");
+  await expect(panel.getByRole("figure", { name: /CPU/ })).toBeVisible();
+  await panel.getByRole("switch", { name: "Ligar limitador de RAM" }).click();
+  await expect(panel.getByRole("slider", { name: "Teto de memória" })).toBeEnabled();
+
+  const list = panel.getByRole("list", { name: "Guias por uso" });
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+  await list.getByRole("button", { name: /Encerrar example\.com/ }).click();
+  await expect(tabs(page)).toHaveCount(1);
+
+  // O limitador fica salvo.
+  await reload(page);
+  await bar.getByRole("button", { name: "GX Control" }).click();
+  await expect(page.getByRole("switch", { name: "Ligar limitador de RAM" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+
+  // Ocultar a barra pelas configurações.
+  await go(page, "agzos://configuracoes");
+  await page.getByRole("switch", { name: "Barra lateral" }).first().click();
+  await expect(bar).toHaveCount(0);
+});

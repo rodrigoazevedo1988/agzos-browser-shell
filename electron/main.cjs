@@ -14,6 +14,7 @@ const {
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const { openDatabase } = require("./db.cjs");
 const {
   createAdblock,
@@ -57,6 +58,7 @@ const {
   restorableHistory,
   EDITED_FORM_SOURCE,
 } = require("./hibernate.cjs");
+const { createGxControl, runSpeedTest } = require("./gx-control.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -500,8 +502,11 @@ function applyLayout(ctx) {
     const rect = isShown(ctx, id) ? rectOf(ctx, id) : null;
     entry.view.setBounds(rect ?? HIDDEN_RECT);
     // Hibernação conta o tempo desde que a guia deixou de estar à vista.
-    if (panes.includes(id)) entry.hiddenSince = null;
-    else entry.hiddenSince ??= now;
+    if (panes.includes(id)) {
+      entry.hiddenSince = null;
+      // GX Control: guia à vista sai da desaceleração de CPU.
+      if (!entry.view.webContents.isDestroyed()) gxControl.visible(entry.view.webContents.id);
+    } else entry.hiddenSince ??= now;
   }
 }
 
@@ -1803,6 +1808,77 @@ async function checkHibernation() {
   }
 }
 
+// --- GX Control (3.0): uso por guia, limites de RAM/CPU/rede (ver gx-control.cjs). ---
+
+/** Guias abertas de todas as janelas, com o que o GX Control precisa de cada uma. */
+function gxTabs() {
+  const now = Date.now();
+  const list = [];
+  for (const ctx of contexts.values()) {
+    const panes = paneIds(ctx);
+    for (const [id, entry] of ctx.views) {
+      const contents = entry.view.webContents;
+      if (contents.isDestroyed()) continue;
+      const visible = panes.includes(id);
+      const devtools = contents.isDevToolsOpened();
+      const candidate = {
+        visible,
+        hiddenSince: entry.hiddenSince,
+        audible: contents.isCurrentlyAudible(),
+        loading: contents.isLoading(),
+        capturing: capturingContents.has(contents) || pipContents.has(contents),
+        pendingPermission: hasPendingPermission(contents),
+        fullscreen: ctx.fullscreenActive && id === ctx.activeTabId,
+        devtools,
+      };
+      list.push({
+        key: contents.id,
+        ctx,
+        id,
+        contents,
+        visible,
+        devtools,
+        title: contents.getTitle(),
+        eligible: canHibernate(candidate, { now, afterMs: 0 }),
+      });
+    }
+  }
+  return list;
+}
+
+const gxControl = createGxControl({
+  cores: Math.max(1, os.cpus().length),
+  metrics: () => app.getAppMetrics(),
+  tabs: gxTabs,
+  hibernate: (ctx, id) => hibernateTab(ctx, id),
+  sessions: () => [session.defaultSession, privateSession()],
+});
+
+/** Cache de disco das sessões das páginas (bytes). */
+async function gxCacheSize() {
+  let total = 0;
+  for (const ses of [session.defaultSession, privateSession()]) {
+    total += await ses.getCacheSize().catch(() => 0);
+  }
+  return total;
+}
+
+/**
+ * Limpeza do GX Control: cache HTTP, código compilado, shaders e Cache Storage dos sites.
+ * Cookies, logins e dados dos sites (localStorage, IndexedDB) ficam.
+ */
+async function gxClearCache() {
+  const before = await gxCacheSize();
+  for (const ses of [session.defaultSession, privateSession()]) {
+    await ses.clearCache().catch(() => {});
+    await ses.clearCodeCaches({}).catch(() => {});
+    await ses.clearHostResolverCache().catch(() => {});
+    await ses.clearStorageData({ storages: ["shadercache", "cachestorage"] }).catch(() => {});
+  }
+  const after = await gxCacheSize();
+  return { freedBytes: Math.max(0, before - after), cacheBytes: after };
+}
+
 /** Guia hibernada volta com o histórico (voltar/avançar e rolagem da página). */
 function restoreHibernated(contents, history, url) {
   const current = history.entries[history.index];
@@ -2354,7 +2430,6 @@ const MAX_SESSION_BYTES = 2 * 1024 * 1024;
 // Rodam no mundo da página (executeJavaScript). Ficam como funções de verdade (lint e
 // testes) e vão para a página por toString().
 
-/* eslint-disable no-undef */
 function fillLoginScript(data) {
   const visible = (el) =>
     el && !el.disabled && !el.readOnly && (el.offsetWidth > 0 || el.offsetHeight > 0);
@@ -2487,7 +2562,6 @@ function readLoginScript() {
     texts.find((i) => i.value);
   return { username: user ? user.value : "", password: pass ? pass.value : "" };
 }
-/* eslint-enable no-undef */
 
 /** Host "do site" para comparar frames: sem www., em minúsculas. */
 function frameHost(url) {
@@ -2843,6 +2917,19 @@ function registerIpc() {
     const ctx = ctxOfEvent(event);
     return { ok: ctx ? await hibernateTab(ctx, id, { force: true }) : false };
   });
+
+  // GX Control: retrato de uso (totais do app, guias desta janela), teste de velocidade e
+  // limpeza de cache.
+  ipcMain.handle("gx:stats", (event) => gxControl.stats(ctxOfEvent(event), os));
+  ipcMain.handle("gx:speedtest", async () => {
+    try {
+      return { ok: true, ...(await runSpeedTest((url, init) => net.fetch(url, init))) };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
+  ipcMain.handle("gx:cache-size", () => gxCacheSize());
+  ipcMain.handle("gx:clear-cache", () => gxClearCache());
 
   // "Encerrar página" (página sem resposta): derruba o processo; a tela de travada assume.
   ipcMain.handle("tab:kill", (event, { id }) => {
@@ -3334,6 +3421,7 @@ function detectUpdate() {
 function applyPrefs(prefs) {
   applyShieldConfig(prefs);
   hibernateConfig = hibernateConfigOf(prefs, HIBERNATE_OVERRIDE);
+  gxControl.configure(prefs);
 }
 
 function openStateDatabase() {

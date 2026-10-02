@@ -17,6 +17,8 @@ import { BookmarksManager, type BookmarkActions } from "@/features/bookmarks/man
 import { batchProgress } from "@/features/downloads/format";
 import { DownloadsPanel } from "@/features/downloads/panel";
 import { profileFor, replyFor } from "@/features/ai/templates";
+import { ControlPanel } from "@/features/control/panel";
+import { DialPage } from "@/features/dial/page";
 import { HistoryPage } from "@/features/history/page";
 import { KeyPanel } from "@/features/key/panel";
 import { AutofillPopup, type AutofillStatus, type QuickLogin } from "@/features/key/autofill-popup";
@@ -44,7 +46,7 @@ import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
 import { SIDE_PANEL_APPS, sidePanelApp } from "./side-panels";
-import { SideBar, SidePanel } from "./ui/side-bar";
+import { CONTROL_PANEL, SideBar, SidePanel } from "./ui/side-bar";
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -65,6 +67,7 @@ import {
 } from "./store/selectors";
 import {
   BOOKMARKS_URL,
+  DIAL_URL,
   HISTORY_URL,
   SETTINGS_URL,
   defaultPrefs,
@@ -1000,6 +1003,14 @@ export function AgzosBrowser() {
         if (prefs.sidebar) setSidePanel(null);
         setPrefs({ sidebar: !prefs.sidebar });
       },
+      toggleControl: () => {
+        if (sidePanel === CONTROL_PANEL) {
+          setSidePanel(null);
+          return;
+        }
+        setPrefs({ sidebar: true });
+        setSidePanel(CONTROL_PANEL);
+      },
     },
   };
   const ctxRef = useRef(ctx);
@@ -1878,6 +1889,27 @@ export function AgzosBrowser() {
               onResize={(width) => setPrefs({ sidePanelWidth: width })}
             />
           )}
+          {sidePanel === CONTROL_PANEL && prefs.sidebar && !state.fullscreen && (
+            <ControlPanel
+              desktop={desktop}
+              tabs={state.tabs.map((tab) => {
+                const entry = entryOf(tab);
+                return {
+                  id: tab.id,
+                  title: entry.kind === "home" ? "Nova aba" : entry.title,
+                  url: entry.url,
+                  favicon: tab.favicon,
+                  active: tab.id === state.activeId,
+                  hibernated: state.hibernated.includes(tab.id),
+                };
+              })}
+              limits={prefs}
+              onLimits={setPrefs}
+              onCloseTab={(id) => dispatch({ type: "tab/close", id })}
+              onActivateTab={(id) => dispatch({ type: "tab/activate", id })}
+              onClose={() => setSidePanel(null)}
+            />
+          )}
           {prefs.orientation === "vertical" && (
             <TabRail
               {...listProps}
@@ -1905,6 +1937,7 @@ export function AgzosBrowser() {
               onOpen={openAddress}
               onAddLink={(link) => dispatch({ type: "links/add", link })}
               onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
+              onOpenDial={() => openInternal(DIAL_URL, "Discador")}
               internal={(pageUrl) =>
                 pageUrl === HISTORY_URL ? (
                   <HistoryPage store={historyStore} onOpen={openUrl} />
@@ -1913,6 +1946,17 @@ export function AgzosBrowser() {
                     nodes={state.bookmarks}
                     actions={bookmarkActions}
                     onOpen={openUrl}
+                  />
+                ) : pageUrl === DIAL_URL ? (
+                  <DialPage
+                    links={state.dial}
+                    engineName={engineOf(prefs.engine).name}
+                    onOpen={openAddress}
+                    onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
+                    onAdd={(link) => dispatch({ type: "dial/add", link })}
+                    onRemove={(url) => dispatch({ type: "dial/remove", url })}
+                    onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
+                    onHome={() => dispatch({ type: "nav/home" })}
                   />
                 ) : pageUrl === SETTINGS_URL ? (
                   <SettingsPage

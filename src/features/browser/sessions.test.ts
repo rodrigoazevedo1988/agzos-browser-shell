@@ -429,7 +429,8 @@ describe("sincronização entre janelas (store desktop)", () => {
     const store = createDesktopStore(bridge, memory());
     const snapshot = (await store.load())!;
     await store.save({ ...snapshot, session: { tabs: [], activeId: null } });
-    expect(saved).toEqual([{ session: { tabs: [], activeId: null } }]);
+    // Só a sessão e o Discador (seção nova da 3.0, ausente no banco): o resto não é regravado.
+    expect(saved).toEqual([{ session: { tabs: [], activeId: null }, dial: null }]);
   });
 
   it("janela aberta só com a sessão (guia movida) usa a sessão e não grava os padrões", async () => {

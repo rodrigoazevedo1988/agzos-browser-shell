@@ -174,6 +174,19 @@ export function SettingsPage(props: SettingsPageProps) {
             ),
           },
           {
+            id: "sidebar",
+            label: "Barra lateral",
+            keywords: "painéis whatsapp telegram gx control atalhos lateral ocultar",
+            node: (
+              <Toggle
+                label="Barra lateral"
+                hint="GX Control e os apps (WhatsApp, Claude, YouTube…) à esquerda da página"
+                checked={prefs.sidebar}
+                onChange={(sidebar) => setPrefs({ sidebar })}
+              />
+            ),
+          },
+          {
             id: "ai",
             label: "Agzos AI visível",
             keywords: "assistente inteligencia artificial lateral",

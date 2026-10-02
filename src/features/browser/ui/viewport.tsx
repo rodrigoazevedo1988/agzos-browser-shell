@@ -35,6 +35,7 @@ export function Viewport({
   onOpen,
   onAddLink,
   onRemoveLink,
+  onOpenDial,
   onRecover,
   errors,
   internal,
@@ -57,6 +58,7 @@ export function Viewport({
   onOpen: (value: string) => void;
   onAddLink: (link: QuickLink) => void;
   onRemoveLink: (url: string) => void;
+  onOpenDial: () => void;
   onRecover: (id: number) => void;
   /** Tela dividida (2.0): arrastar a divisória, clicar num pane, desfazer. */
   onSplitRatio?: (ratio: number) => void;
@@ -125,6 +127,7 @@ export function Viewport({
           onOpen={onOpen}
           onAdd={onAddLink}
           onRemove={onRemoveLink}
+          onOpenDial={onOpenDial}
         />
       );
     }

@@ -10,6 +10,7 @@ export const INTERNAL_PAGES: Record<string, string> = {
   "agzos://historico": "Histórico",
   "agzos://favoritos": "Favoritos",
   "agzos://configuracoes": "Configurações",
+  "agzos://discador": "Discador",
 };
 
 /** Outros nomes que levam às mesmas páginas (como o chrome://settings). */
@@ -18,6 +19,8 @@ const INTERNAL_ALIASES: Record<string, string> = {
   "agzos-settings": "agzos://configuracoes",
   "agzos://history": "agzos://historico",
   "agzos://bookmarks": "agzos://favoritos",
+  "agzos://speed-dial": "agzos://discador",
+  "agzos://speeddial": "agzos://discador",
 };
 
 export function resolveInput(raw: string, engine: EngineId): Entry | null {

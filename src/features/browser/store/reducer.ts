@@ -24,6 +24,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   HOME_URL,
   defaultWorkspaces,
+  defaultDial,
   defaultLinks,
   homeEntry,
   initialState,
@@ -36,6 +37,7 @@ export type HydratePayload = {
   tabs: Tab[] | null;
   activeId: number | null;
   links: QuickLink[] | null;
+  dial?: QuickLink[] | null | undefined;
   closedTabs: ClosedTab[];
   bookmarks: BookmarkNode[] | null;
   groups?: TabGroup[] | undefined;
@@ -47,6 +49,7 @@ export type HydratePayload = {
 export type SyncPayload = {
   prefs?: Prefs;
   links?: QuickLink[] | null;
+  dial?: QuickLink[] | null;
   closedTabs?: ClosedTab[];
   bookmarks?: BookmarkNode[] | null;
 };
@@ -84,10 +87,16 @@ export type BrowserAction =
    * aba atual se ela não tem site aberto, ou abre numa aba nova (a página do site fica).
    */
   | { type: "nav/open-internal"; entry: Entry }
+  /** Volta a guia ativa para a página inicial (atalho "Início" do Discador). */
+  | { type: "nav/home" }
   | { type: "nav/step"; delta: number }
   | { type: "address/set"; value: string }
   | { type: "links/add"; link: QuickLink }
   | { type: "links/remove"; url: string }
+  /** Discador (3.0): card novo no fim, remover e arrastar para outra posição. */
+  | { type: "dial/add"; link: QuickLink }
+  | { type: "dial/remove"; url: string }
+  | { type: "dial/move"; url: string; index: number }
   /** Novos favoritos/pastas, no fim de cada pasta (ou em `index`, quando há um só). */
   | { type: "bookmarks/add"; nodes: BookmarkNode[]; index?: number }
   | { type: "bookmarks/update"; id: string; title?: string; url?: string }
@@ -451,6 +460,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         workspaceActive: { [workspaceOf(active)]: active.id },
         prefs: saved.prefs,
         links: saved.links ?? defaultLinks,
+        dial: saved.dial ?? defaultDial,
         // Antes da 1.6 a estrela salvava nos atalhos: eles viram favoritos da barra.
         bookmarks: saved.bookmarks ?? seedFromLinks(saved.links ?? [], defaultLinks, 0),
         closedTabs: saved.closedTabs.slice(-CLOSED_TABS_LIMIT),
@@ -467,11 +477,12 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "sync": {
-      const { prefs, links, closedTabs, bookmarks } = action.payload;
+      const { prefs, links, dial, closedTabs, bookmarks } = action.payload;
       return {
         ...state,
         ...(prefs ? { prefs } : {}),
         ...(links !== undefined ? { links: links ?? defaultLinks } : {}),
+        ...(dial !== undefined ? { dial: dial ?? defaultDial } : {}),
         ...(closedTabs ? { closedTabs: closedTabs.slice(-CLOSED_TABS_LIMIT) } : {}),
         ...(bookmarks ? { bookmarks } : {}),
       };
@@ -673,6 +684,21 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       return activate({ ...state, tabs, nextId: state.nextId + 1 }, tab);
     }
 
+    case "nav/home": {
+      const next = mapTab(state, state.activeId, (tab) =>
+        entryOf(tab).kind === "home"
+          ? tab
+          : {
+              ...tab,
+              history: [...tab.history.slice(0, tab.index + 1), homeEntry],
+              index: tab.index + 1,
+            },
+      );
+      return next === state
+        ? state
+        : { ...next, address: HOME_URL, addressEdited: false, viewNav: null };
+    }
+
     case "nav/step": {
       let address = state.address;
       const next = mapTab(state, state.activeId, (tab) => {
@@ -692,6 +718,23 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
 
     case "links/remove":
       return { ...state, links: state.links.filter((link) => link.url !== action.url) };
+
+    case "dial/add":
+      if (state.dial.some((link) => link.url === action.link.url)) return state;
+      return { ...state, dial: [...state.dial, action.link] };
+
+    case "dial/remove":
+      return { ...state, dial: state.dial.filter((link) => link.url !== action.url) };
+
+    case "dial/move": {
+      const from = state.dial.findIndex((link) => link.url === action.url);
+      if (from < 0) return state;
+      const dial = state.dial.filter((_, index) => index !== from);
+      const to = Math.max(0, Math.min(dial.length, action.index));
+      if (to === from) return state;
+      dial.splice(to, 0, state.dial[from]!);
+      return { ...state, dial };
+    }
 
     case "bookmarks/add": {
       const known = new Set(state.bookmarks.map((node) => node.id));

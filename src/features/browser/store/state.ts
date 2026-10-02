@@ -18,12 +18,15 @@ import type {
   Workspace,
 } from "../types";
 
+import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
 
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
 export const BOOKMARKS_URL = "agzos://favoritos";
 export const SETTINGS_URL = "agzos://configuracoes";
+/** Discador (3.0): grade de sites ao lado da página inicial. */
+export const DIAL_URL = "agzos://discador";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 /** Workspace de toda guia sem `workspaceId` (o primeiro, que não pode ser apagado). */
@@ -37,6 +40,18 @@ export const defaultLinks: QuickLink[] = [
   { name: "Figma", url: "figma.com" },
   { name: "Notion", url: "notion.so" },
   { name: "Linear", url: "linear.app" },
+];
+
+/** Cards do Discador num perfil novo. */
+export const defaultDial: QuickLink[] = [
+  { name: "YouTube", url: "youtube.com" },
+  { name: "Gmail", url: "mail.google.com" },
+  { name: "WhatsApp", url: "web.whatsapp.com" },
+  { name: "Wikipédia", url: "pt.wikipedia.org" },
+  { name: "GitHub", url: "github.com" },
+  { name: "ChatGPT", url: "chatgpt.com" },
+  { name: "Claude", url: "claude.ai" },
+  { name: "Reddit", url: "reddit.com" },
 ];
 
 export type Prefs = {
@@ -59,6 +74,18 @@ export type Prefs = {
   sidebar: boolean;
   /** Painéis que aparecem na barra lateral (ids de side-panels.ts), na ordem. */
   sidePanels: string[];
+  /** Apps que o perfil já conhece (os novos de uma versão entram uma vez na barra). */
+  sidePanelsSeen: string[];
+  /** GX Control (3.0): teto de memória do navegador (hiberna as guias mais pesadas). */
+  ramLimitOn: boolean;
+  ramLimitMB: number;
+  /** GX Control: teto de CPU (%); acima dele as guias em segundo plano são desaceleradas. */
+  cpuLimitOn: boolean;
+  cpuLimitPercent: number;
+  /** GX Control: limite de rede (kbit/s) das páginas. */
+  netLimitOn: boolean;
+  netDownKbps: number;
+  netUpKbps: number;
   /** Largura do painel lateral aberto (px). */
   sidePanelWidth: number;
   /** Cor de acento (hex). */
@@ -92,6 +119,8 @@ export const defaultPrefs: Prefs = {
   hibernateMinutes: 30,
   sidebar: true,
   sidePanels: DEFAULT_SIDE_PANELS,
+  sidePanelsSeen: DEFAULT_SIDE_PANELS,
+  ...DEFAULT_LIMITS,
   sidePanelWidth: SIDE_PANEL_WIDTH.initial,
   accentColor: "#D43420",
   backgroundImage: "",
@@ -118,6 +147,8 @@ export type BrowserState = {
   split: SplitView | null;
   closedTabs: ClosedTab[];
   links: QuickLink[];
+  /** Cards do Discador (3.0), na ordem do usuário. */
+  dial: QuickLink[];
   bookmarks: BookmarkNode[];
   prefs: Prefs;
   // Só em memória.
@@ -168,6 +199,7 @@ export const initialState: BrowserState = {
   split: null,
   closedTabs: [],
   links: defaultLinks,
+  dial: defaultDial,
   bookmarks: [],
   prefs: defaultPrefs,
   nextId: 2,
