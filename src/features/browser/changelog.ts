@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.0.0",
+    date: "2026-10-03",
+    items: [
+      "Agzos AI de verdade, com a Groq: na primeira abertura o painel pede a sua chave da API (num campo mascarado) e a guarda cifrada pelo cofre do sistema — ela nunca volta para a tela. As respostas chegam em tempo real, dá para escolher o modelo e a conversa fica salva no computador até você apagar.",
+      "Contexto só quando você quer: marque “Enviar contexto da aba” para mandar o endereço, o título e o texto selecionado junto com aquela pergunta. Abra e feche a IA com Ctrl+Shift+A (⌘⇧A no Mac) ou pelo menu ⋯.",
+      "Gestos: deslize dois dedos no trackpad para voltar e avançar, faça pinça para dar zoom só na página ou no painel sob o cursor, use os botões laterais do mouse e desenhe gestos com o botão direito segurado (← voltar, → avançar, ↑↓ recarregar, ↓ nova guia, ↓→ fechar guia). Em Configurações → Gestos você liga, desliga e troca a ação de cada um.",
+      "Terminal de verdade embaixo da página (Ctrl+Alt+T): PowerShell, PowerShell 7 ou Prompt de Comando no Windows, zsh ou bash no macOS, com abas de sessão, cores, Ctrl+C, copiar e colar. Cada aba volta na última pasta usada.",
+      "Vídeos mais leves: o navegador agora força a aceleração pela placa de vídeo, inclusive em GPUs integradas como a Intel UHD, e decodifica o vídeo nela — YouTube em 1080p sem engasgar e com menos CPU. Se a sua placa der problema, o Agzos volta sozinho ao modo padrão; dá para desligar em Configurações → Desempenho.",
+    ],
+  },
+  {
     version: "3.1.1",
     date: "2026-10-02",
     items: [

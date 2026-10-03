@@ -871,3 +871,55 @@ test("3.1.1: Configurações → Sons controla hover, teclado, tick e volume", a
     "false",
   );
 });
+
+test("4.0: Agzos AI na web avisa que a Groq é só no app; Ctrl+Shift+A alterna", async ({
+  page,
+}) => {
+  const panel = page.getByRole("complementary", { name: "Agzos AI" });
+  await expect(panel).toContainText("só no app desktop");
+  // Sem campo de chave na web (ela nunca fica no localStorage).
+  await expect(panel.getByLabel("Chave da API Groq")).toHaveCount(0);
+  await page.keyboard.press("Control+Shift+A");
+  await expect(panel).toHaveCount(0);
+  await page.keyboard.press("Control+Shift+A");
+  await expect(panel).toBeVisible();
+});
+
+test("4.0: Configurações → Gestos liga/desliga e troca a ação; botão lateral volta", async ({
+  page,
+}) => {
+  await go(page, "agzos://configuracoes");
+  await page.getByRole("button", { name: "Gestos" }).first().click();
+  const swipe = page.getByRole("switch", { name: "Deslizar dois dedos para a direita" });
+  await expect(swipe).toHaveAttribute("aria-checked", "true");
+  await page
+    .getByLabel("Ação de Botão direito + arrastar ↓", { exact: true })
+    .selectOption({ label: "Recarregar" });
+  await swipe.click();
+  await reload(page);
+  await page.getByRole("button", { name: "Gestos" }).first().click();
+  await expect(swipe).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByLabel("Ação de Botão direito + arrastar ↓", { exact: true })).toHaveValue(
+    "reload",
+  );
+  // A pinça só liga e desliga (a ação é sempre o zoom).
+  await expect(page.getByLabel("Ação de Pinça")).toHaveCount(0);
+
+  // Botão lateral do mouse (XButton1) numa página interna volta para a anterior.
+  await expect(omnibox(page)).toHaveValue("agzos://configuracoes");
+  await page.locator(".settings-page").dispatchEvent("mouseup", { button: 3, bubbles: true });
+  await expect(omnibox(page)).toHaveValue("agzos://inicio");
+  await page
+    .locator(".start-page, .viewport")
+    .first()
+    .dispatchEvent("mouseup", { button: 4, bubbles: true });
+  await expect(omnibox(page)).toHaveValue("agzos://configuracoes");
+});
+
+test("4.0: terminal fica fora da web (sem node-pty) e sem entrada no menu", async ({ page }) => {
+  await page.keyboard.press("Control+Alt+t");
+  await expect(page.getByRole("region", { name: "Terminal" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Menu do Agzos" }).click();
+  await expect(page.getByRole("menuitem", { name: /Agzos AI/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /^Terminal/ })).toHaveCount(0);
+});

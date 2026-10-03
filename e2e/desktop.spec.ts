@@ -192,9 +192,57 @@ function keyApi(url: string): unknown {
   return null;
 }
 
+// Groq de mentira (4.0): mesma API compatível com OpenAI, respostas em streaming lento.
+const GROQ_KEY = "gsk_e2e_0123456789abcdefghijklmnopqrst";
+const groqCalls: { url: string; auth: string; body: string }[] = [];
+// Linux sem chaveiro (xvfb): o safeStorage só cifra com a senha básica do Chromium.
+const GROQ_ENV = (_profile: string) => ({
+  AGZOS_GROQ_BASE_URL: `${origin}/groq`,
+  AGZOS_TEST_BASIC_KEYRING: "1",
+});
+function groq(request: http.IncomingMessage, response: http.ServerResponse, url: string) {
+  let body = "";
+  request.on("data", (chunk) => (body += chunk));
+  request.on("end", () => {
+    const auth = String(request.headers.authorization ?? "");
+    groqCalls.push({ url, auth, body });
+    if (auth !== `Bearer ${GROQ_KEY}`) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { code: "invalid_api_key", message: "Invalid" } }));
+      return;
+    }
+    if (url === "/groq/models") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          data: [{ id: "llama-3.3-70b-versatile" }, { id: "llama-3.1-8b-instant" }],
+        }),
+      );
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const parts = ["Olá ", "do Groq", " em streaming."];
+    let index = 0;
+    const timer = setInterval(() => {
+      const text = parts[index++];
+      if (text === undefined) {
+        clearInterval(timer);
+        response.end("data: [DONE]\n\n");
+        return;
+      }
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+    }, 700);
+    response.on("close", () => clearInterval(timer));
+  });
+}
+
 test.beforeAll(async () => {
   server = http.createServer((request, response) => {
     const url = request.url ?? "/";
+    if (url.startsWith("/groq/")) {
+      groq(request, response, url);
+      return;
+    }
     if (url.startsWith("/api/integration/")) {
       request.resume();
       request.on("end", () => {
@@ -2398,6 +2446,10 @@ test("2.2.8: chave e estrela na ponta da omnibox; Preencher sem formulário avis
     // Chave, estrela e link juntos na ponta direita, sem buraco dos ícones escondidos.
     const star = window.getByRole("button", { name: "Favoritar página" });
     const link = window.getByRole("button", { name: "Copiar link" });
+    // A chave entra com animação (a largura cresce até a da estrela): mede depois dela.
+    await expect
+      .poll(async () => (await key.boundingBox())!.width)
+      .toBe((await star.boundingBox())!.width);
     const [k, s, l] = await Promise.all(
       [key, star, link].map(async (b) => (await b.boundingBox())!),
     );
@@ -2671,5 +2723,236 @@ test("3.1.1: painel com zoom e largura próprios; a sessão dele volta depois de
     expect(JSON.parse(exit ?? "{}")).toEqual({ whatsapp: 1.1 });
   } finally {
     await second.app.close();
+  }
+});
+
+/** Arquivos do perfil (para conferir que a chave não ficou em texto puro). */
+function profileFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) return profileFiles(file);
+    return entry.isFile() && fs.statSync(file).size < 20_000_000 ? [file] : [];
+  });
+}
+
+test("4.0: Agzos AI pede a chave, guarda cifrada e responde em streaming", async () => {
+  const profile = tempProfile();
+  const page = `${origin}/principal`;
+  groqCalls.length = 0;
+  const { app, window } = await launch(profile, GROQ_ENV(profile));
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Página PRINCIPAL");
+    const panel = window.getByRole("complementary", { name: "Agzos AI" });
+    // Sem chave: só o campo mascarado, nenhuma chamada à API.
+    const field = panel.getByLabel("Chave da API Groq");
+    await expect(field).toHaveAttribute("type", "password");
+    expect(groqCalls).toEqual([]);
+
+    await field.fill("gsk_errada_0123456789abcdefghijkl");
+    await panel.getByRole("button", { name: "Salvar chave" }).click();
+    await expect(panel.getByRole("alert")).toContainText("A Groq recusou a chave");
+    await field.fill(GROQ_KEY);
+    await panel.getByRole("button", { name: "Salvar chave" }).click();
+    const input = panel.getByLabel("Mensagem para Agzos AI");
+    await expect(input).toBeVisible();
+    await expect(panel.getByLabel("Modelo")).toContainText("llama 3.3 70b versatile");
+
+    // Resposta chega aos pedaços.
+    await input.fill("Quem é você?");
+    await input.press("Enter");
+    const answer = panel.locator('.chat-bubble[data-role="assistant"]').last();
+    await expect(answer).toContainText("Olá");
+    await expect(answer).not.toContainText("streaming.");
+    await expect(answer).toContainText("Olá do Groq em streaming.", { timeout: 10_000 });
+    const first = JSON.parse(groqCalls.at(-1)!.body) as {
+      stream: boolean;
+      model: string;
+      messages: { content: string }[];
+    };
+    expect(first.stream).toBe(true);
+    expect(JSON.stringify(first.messages)).not.toContain(page);
+
+    // Contexto só com o consentimento, e só naquele envio.
+    await panel.getByRole("checkbox", { name: /Enviar contexto da aba/ }).check();
+    await input.fill("Resuma esta página");
+    await input.press("Enter");
+    await expect(panel.locator(".ai-context-chip").last()).toContainText("Página PRINCIPAL");
+    await expect(panel.locator('.chat-bubble[data-role="assistant"]')).toHaveCount(2);
+    await expect(panel.locator('.chat-bubble[data-role="assistant"]').last()).toContainText(
+      "streaming.",
+      { timeout: 10_000 },
+    );
+    expect(groqCalls.at(-1)!.body).toContain(`URL: ${page}`);
+    await expect(panel.getByRole("checkbox", { name: /Enviar contexto da aba/ })).not.toBeChecked();
+
+    // A chave não aparece em nenhum arquivo do perfil nem na casca.
+    for (const file of profileFiles(profile)) {
+      expect(fs.readFileSync(file).includes(GROQ_KEY), file).toBe(false);
+    }
+    expect(await window.content()).not.toContain(GROQ_KEY);
+  } finally {
+    await app.close();
+  }
+
+  // Reabriu: a chave continua (cifrada) e a conversa volta do histórico local; apagar limpa.
+  const again = await launch(profile, GROQ_ENV(profile));
+  try {
+    const panel = again.window.getByRole("complementary", { name: "Agzos AI" });
+    await expect(panel.getByLabel("Mensagem para Agzos AI")).toBeVisible();
+    await expect(panel.locator(".chat-bubble")).toHaveCount(4);
+    await panel.getByRole("button", { name: "Apagar conversa" }).click();
+    await expect(panel.locator(".chat-bubble")).toHaveCount(0);
+  } finally {
+    await again.app.close();
+  }
+});
+
+/** Texto que o xterm desenhou (renderizador DOM). */
+const terminalText = (window: Page) =>
+  window.locator(".terminal-screen:not([hidden]) .xterm-rows").innerText();
+
+test("4.0: terminal de verdade: atalho, cd que persiste, Ctrl+C, resize e última pasta", async () => {
+  test.skip(process.platform === "win32", "o e2e usa bash");
+  const profile = tempProfile();
+  const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agzos-pasta-")));
+  const first = await launch(profile);
+  try {
+    await first.window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await first.window.keyboard.press("Control+Alt+t");
+    const dock = first.window.getByRole("region", { name: "Terminal" });
+    await expect(dock).toBeVisible();
+    await expect(dock.getByRole("tab")).toHaveCount(1);
+    // Nada roda sozinho: só o prompt.
+    await expect.poll(() => terminalText(first.window)).toMatch(/\S/);
+
+    const type = async (text: string) => {
+      await first.window.keyboard.type(text);
+      await first.window.keyboard.press("Enter");
+    };
+    await type(`cd ${folder}`);
+    await type("echo PASTA=$(pwd) SOMA=$((6*7))");
+    await expect.poll(() => terminalText(first.window)).toContain(`PASTA=${folder} SOMA=42`);
+    await expect(dock.getByRole("tab")).toContainText(path.basename(folder));
+
+    // Ctrl+C interrompe o processo; Ctrl+W é do shell (a guia do navegador fica).
+    await type("sleep 30");
+    await first.window.waitForTimeout(300);
+    await first.window.keyboard.press("Control+c");
+    await type("echo CODIGO=$?");
+    await expect.poll(() => terminalText(first.window)).toContain("CODIGO=130");
+    await first.window.keyboard.press("Control+w");
+    await expect(tabs(first.window)).toHaveCount(1);
+
+    // Alça mais alta → mais linhas no PTY.
+    await type("clear; echo ANTES=$(stty size)");
+    await expect.poll(() => terminalText(first.window)).toMatch(/ANTES=\d+ \d+/);
+    const before = Number(/ANTES=(\d+)/.exec(await terminalText(first.window))![1]);
+    const handle = first.window.getByRole("separator", { name: "Altura do terminal" });
+    await handle.focus();
+    for (let step = 0; step < 5; step += 1) await handle.press("ArrowUp");
+    await dock.locator(".xterm").click();
+    await type("clear; echo DEPOIS=$(stty size)");
+    await expect
+      .poll(async () => Number(/DEPOIS=(\d+)/.exec(await terminalText(first.window))?.[1] ?? 0))
+      .toBeGreaterThan(before);
+    await first.window.waitForTimeout(500);
+  } finally {
+    await first.app.close();
+  }
+
+  // Reabriu: a sessão volta na última pasta.
+  const second = await launch(profile);
+  try {
+    const dock = second.window.getByRole("region", { name: "Terminal" });
+    await expect(dock).toBeVisible();
+    await expect(dock.getByRole("tab")).toContainText(path.basename(folder));
+    await dock.locator(".xterm").click();
+    await second.window.keyboard.type("echo AQUI=$(pwd)");
+    await second.window.keyboard.press("Enter");
+    await expect.poll(() => terminalText(second.window)).toContain(`AQUI=${folder}`);
+  } finally {
+    await second.app.close();
+  }
+});
+
+/** Eventos de mouse de verdade na página (passam pelo page-preload). */
+async function mouseInTab(app: ElectronApplication, url: string, events: object[]) {
+  await app.evaluate(
+    ({ webContents }, [target, list]) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      for (const event of list as Electron.MouseInputEvent[]) contents.sendInputEvent(event);
+    },
+    [url, events] as const,
+  );
+}
+
+test("4.0: gestos: traço com o botão direito, botões laterais, deslizar e pinça", async () => {
+  const { app, window } = await launch(tempProfile());
+  const a = `${origin}/gesto-a`;
+  const b = `${origin}/gesto-b`;
+  try {
+    await go(window, a);
+    await expect(tabs(window).first()).toContainText("Página GESTO-A");
+    await go(window, b);
+    await expect(tabs(window).first()).toContainText("Página GESTO-B");
+
+    // Botão direito segurado + arrastar para a esquerda = voltar (sem menu de contexto).
+    const drag = [
+      { type: "mouseDown", x: 400, y: 300, button: "right", clickCount: 1 },
+      ...[360, 320, 280, 240, 200].map((x) => ({
+        type: "mouseMove",
+        x,
+        y: 302,
+        modifiers: ["rightButtonDown"],
+      })),
+      { type: "mouseUp", x: 200, y: 302, button: "right", clickCount: 1 },
+    ];
+    await mouseInTab(app, b, drag);
+    await expect(omnibox(window)).toHaveValue(a);
+
+    // Botão lateral "avançar" (XButton2) na página.
+    await inTab(app, a, `window.dispatchEvent(new MouseEvent("mouseup", { button: 4 }))`);
+    await expect(omnibox(window)).toHaveValue(b);
+
+    // Dois dedos no trackpad: rolagem horizontal precisa vira voltar.
+    const swipe = Array.from({ length: 12 }, () => ({
+      type: "mouseWheel",
+      x: 400,
+      y: 300,
+      deltaX: 30,
+      deltaY: 0,
+      hasPreciseScrollingDeltas: true,
+      canScroll: true,
+    }));
+    await mouseInTab(app, b, swipe);
+    await expect(omnibox(window)).toHaveValue(a);
+
+    // Pinça (Ctrl + roda fina): zoom só desta guia.
+    const pinch = Array.from({ length: 8 }, () => ({
+      type: "mouseWheel",
+      x: 400,
+      y: 300,
+      deltaX: 0,
+      deltaY: 12.5,
+      modifiers: ["control"],
+      hasPreciseScrollingDeltas: true,
+      canScroll: true,
+    }));
+    await mouseInTab(app, a, pinch);
+    await expect
+      .poll(() =>
+        app.evaluate(
+          ({ webContents }, url) =>
+            webContents
+              .getAllWebContents()
+              .find((contents) => contents.getURL() === url)!
+              .getZoomFactor(),
+          a,
+        ),
+      )
+      .toBeGreaterThan(1);
+  } finally {
+    await app.close();
   }
 });

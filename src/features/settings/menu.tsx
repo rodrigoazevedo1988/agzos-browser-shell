@@ -13,6 +13,8 @@ import {
   Star,
   VenetianMask,
   AppWindow,
+  Sparkles,
+  SquareTerminal,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
@@ -28,6 +30,8 @@ export type AppMenuAction =
   | "downloads.toggle"
   | "bookmarks.manager"
   | "page.find"
+  | "ai.toggle"
+  | "terminal.toggle"
   | "settings.open"
   | "whats-new"
   | "update.install"
@@ -124,6 +128,16 @@ export function AppMenu({
         shortcut: `${mod}F`,
         hidden: !desktop,
         disabled: !canFind,
+      },
+    ],
+    [
+      { action: "ai.toggle", label: "Agzos AI", icon: Sparkles, shortcut: `${mod}${shift}A` },
+      {
+        action: "terminal.toggle",
+        label: "Terminal",
+        icon: SquareTerminal,
+        shortcut: isMac ? "⌘⌥T" : "Ctrl+Alt+T",
+        hidden: !desktop,
       },
     ],
   ];

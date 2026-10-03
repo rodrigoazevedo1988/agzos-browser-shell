@@ -314,6 +314,159 @@ button {
   min-width: 0;
   min-height: 0;
 }
+/* Página em cima, terminal (4.0) embaixo; a IA fica ao lado das duas. */
+.workspace-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-main > .viewport {
+  min-height: 0;
+}
+.terminal-dock {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: #0e0e0e;
+  color: #e8e6e3;
+}
+.terminal-dock[hidden] {
+  display: none;
+}
+.terminal-resize {
+  position: absolute;
+  inset: -3px 0 auto;
+  z-index: 2;
+  height: 6px;
+  cursor: row-resize;
+}
+.terminal-resize:focus-visible {
+  outline: 2px solid var(--primary);
+}
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid #262626;
+}
+.terminal-head button {
+  color: #bdbab6;
+}
+.terminal-head svg {
+  width: 15px;
+  height: 15px;
+}
+.terminal-icon {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+.terminal-tabs {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 26px;
+  padding: 0 4px 0 10px;
+  border-radius: 5px;
+  color: #a8a5a1;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.terminal-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terminal-tab.active {
+  background: #262626;
+  color: #f2f0ed;
+}
+.terminal-tab button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.terminal-tab button:hover {
+  background: #3a3a3a;
+}
+.terminal-tab button svg {
+  width: 12px;
+  height: 12px;
+}
+.terminal-actions {
+  display: flex;
+  align-items: center;
+}
+.terminal-shell-menu {
+  position: relative;
+}
+.terminal-shell-menu ul {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  z-index: 5;
+  min-width: 180px;
+  margin: 0 0 4px;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1a1a1a;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 40%);
+}
+.terminal-shell-menu li button {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e3;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.terminal-shell-menu li button:hover {
+  background: #2a2a2a;
+}
+.terminal-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 8px;
+}
+.terminal-screen {
+  width: 100%;
+  height: 100%;
+}
+.terminal-screen[hidden] {
+  display: none;
+}
+.terminal-message {
+  margin: 12px 4px;
+  color: #bdbab6;
+  font-size: 12px;
+}
 .viewport {
   position: relative;
   flex: 1;
@@ -759,6 +912,189 @@ button {
   text-align: center;
   color: var(--muted-foreground);
   font-size: 10.5px;
+}
+/* Agzos AI (4.0): chave, modelo, conversa em streaming e contexto por envio. */
+.ai-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 160px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.ai-empty svg {
+  width: 22px;
+  height: 22px;
+  color: var(--primary);
+}
+.ai-key-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ai-key-form label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ai-key-form input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.ai-key-form input:focus {
+  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 0;
+}
+.ai-key-form p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ai-key-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ai-error,
+.ai-warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ai-error {
+  background: color-mix(in oklab, var(--destructive, #d43420) 12%, transparent);
+  color: var(--destructive, #d43420);
+}
+.ai-warning {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.ai-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.ai-model-row label {
+  color: var(--muted-foreground);
+}
+.ai-model-row select {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 11px;
+}
+.ai-body.ai-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+.ai-chat .chat-bubble {
+  max-width: 92%;
+  white-space: normal;
+  user-select: text;
+}
+.ai-chat .chat-bubble p {
+  margin: 0;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-chat .chat-bubble p + p,
+.ai-chat .chat-bubble pre + p,
+.ai-chat .chat-bubble p + pre {
+  margin-top: 8px;
+}
+.ai-chat .chat-bubble svg {
+  width: 14px;
+  height: 14px;
+}
+.ai-code {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-radius: 5px;
+  background: var(--background);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ai-context-chip {
+  display: block;
+  margin-bottom: 4px;
+  overflow: hidden;
+  opacity: 0.8;
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ai-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.ai-context-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 16px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-context-toggle input {
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+.ai-context-toggle span {
+  display: flex;
+  flex-direction: column;
+}
+.ai-context-toggle small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.ai-context-toggle.disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ai-composer .chat-input {
+  height: auto;
+  align-items: flex-end;
+}
+.ai-composer textarea {
+  min-width: 0;
+  flex: 1;
+  max-height: 140px;
+  padding: 7px 5px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
 }
 
 .key-panel {
@@ -5485,4 +5821,71 @@ button.download-name:hover {
 .settings-range input {
   width: 100%;
   accent-color: var(--primary);
+}
+
+/* 4.0: Agzos AI, gestos e terminal nas Configurações. */
+.settings-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ai-settings {
+  gap: 10px;
+}
+.ai-settings-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.ai-settings-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.gesture-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gesture-row > .setting-row {
+  flex: 1;
+  min-width: 0;
+}
+.gesture-row select {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+.gesture-row select:disabled {
+  opacity: 0.5;
+}
+.settings-text span {
+  display: flex;
+  flex-direction: column;
+  color: var(--foreground);
+}
+.settings-text small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.settings-text input {
+  width: min(320px, 50%);
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .gesture-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

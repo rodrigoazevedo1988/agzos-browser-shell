@@ -11,12 +11,15 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import { AiSidebar, type ChatMessage, initialChat } from "@/features/ai/sidebar";
+import { AiPanel } from "@/features/ai/panel";
+import { runGesture } from "@/features/gestures/run";
+import { useGestures } from "@/features/gestures/use-gestures";
+import { TerminalDock } from "@/features/terminal/dock";
+import { terminalKeepsBrowserKey } from "@/features/terminal/model";
 import { BookmarkEditor } from "@/features/bookmarks/editor";
 import { BookmarksManager, type BookmarkActions } from "@/features/bookmarks/manager";
 import { batchProgress } from "@/features/downloads/format";
 import { DownloadsPanel } from "@/features/downloads/panel";
-import { profileFor, replyFor } from "@/features/ai/templates";
 import { ControlPanel } from "@/features/control/panel";
 import { categoriesOf } from "@/features/dial/dial";
 import { LinkDialog } from "@/features/dial/link-dialog";
@@ -35,10 +38,18 @@ import { useUiSounds } from "@/features/sounds/use-ui-sounds";
 import { cn } from "@/lib/utils";
 
 import { childrenOf, newBookmarkId } from "./bookmarks";
-import { commandForKey, isEnabled, runCommand, type CommandContext } from "./commands";
+import {
+  commandForKey,
+  isEnabled,
+  runCommand,
+  shortcutCombo,
+  shortcutKey,
+  type CommandContext,
+} from "./commands";
 import {
   desktopBridge,
   type DesktopPermissionRequest,
+  type GestureEvent,
   type NativeMenuItem,
   type SitePermission,
   type StartupInfo,
@@ -151,7 +162,6 @@ export function AgzosBrowser() {
   const isMac = useMemo(isMacPlatform, []);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [chat, setChat] = useState<ChatMessage[]>(initialChat);
   const [loading, setLoading] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState<number | null>(null);
   const [permission, setPermission] = useState<DesktopPermissionRequest | null>(null);
@@ -504,6 +514,12 @@ export function AgzosBrowser() {
     );
     return () => window.clearTimeout(timer);
   }, [keyBar?.copiedAt, prefs.keyBarPinned]);
+
+  // Terminal (4.0): montado na primeira abertura e mantido (esconder não mata os shells).
+  const [terminalMounted, setTerminalMounted] = useState(false);
+  useEffect(() => {
+    if (prefs.terminalOpen && desktop) setTerminalMounted(true);
+  }, [prefs.terminalOpen, desktop]);
 
   const setPrefs = useCallback(
     (patch: Partial<Prefs>) => dispatch({ type: "prefs/set", patch }),
@@ -1025,6 +1041,26 @@ export function AgzosBrowser() {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
 
+  // Gestos (4.0): a ação de cada gesto vem das preferências; a superfície, do main.
+  const gestureRef = useRef<(event: GestureEvent) => void>(() => {});
+  gestureRef.current = (event) => {
+    const now = ctxRef.current;
+    runGesture(event, now.state.prefs.gestures, {
+      activeId: now.state.activeId,
+      step: (delta) => now.ui.step(delta),
+      navigate: (tabId, delta) =>
+        void (delta < 0 ? desktop?.goBack(tabId) : desktop?.goForward(tabId)),
+      zoom: (tabId, direction) => {
+        const tab = now.state.tabs.find((item) => item.id === tabId);
+        if (desktop && tab && entryOf(tab).kind === "page") void desktop.zoom(tabId, direction);
+      },
+      panelZoom: (app, direction) => void desktop?.sidePanelZoom(app, direction),
+      panelNav: (app, action) => void desktop?.sidePanelNav(app, action),
+      command: (id, tabId) => runCommand(now, id, tabId, "keyboard"),
+    });
+  };
+  useGestures(desktop, prefs.gestures, gestureRef);
+
   const runCommandRef = useRef((id: string, tabId: number | null) => {
     // Ações com parâmetro do menu da guia (2.0): "group.add:3", "workspace.move:2".
     const [name, value] = id.split(":");
@@ -1060,14 +1096,31 @@ export function AgzosBrowser() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const command = commandForKey({
+      const input = {
         key: event.key,
         code: event.code,
         ctrl: event.ctrlKey,
         meta: event.metaKey,
         shift: event.shiftKey,
         alt: event.altKey,
-      });
+      };
+      // Terminal com o foco: as teclas são do shell, menos as do navegador (Ctrl+Tab…).
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".terminal-dock") &&
+        !terminalKeepsBrowserKey(
+          shortcutCombo({
+            key: shortcutKey(input),
+            shift: input.shift,
+            alt: input.alt,
+            mod: input.ctrl || input.meta,
+          }),
+          { mac: isMacPlatform(), meta: input.meta },
+        )
+      ) {
+        return;
+      }
+      const command = commandForKey(input);
       // Atalho desabilitado (ex.: Ctrl+F na web) fica com o navegador.
       if (!command || !isEnabled(ctxRef.current, command)) return;
       event.preventDefault();
@@ -1179,20 +1232,6 @@ export function AgzosBrowser() {
     }
     dispatch({ type: "nav/step", delta });
   }
-
-  const handleSend = useCallback(
-    (text: string) => {
-      const clean = text.trim();
-      if (!clean) return;
-      const profile = profileFor(current.url, current.title);
-      setChat((list) => [
-        ...list,
-        { role: "user", text: clean },
-        { role: "ai", text: replyFor(clean, profile) },
-      ]);
-    },
-    [current.title, current.url],
-  );
 
   const openTabMenu = (event: MouseEvent, tab: Tab) => {
     event.preventDefault();
@@ -1951,96 +1990,116 @@ export function AgzosBrowser() {
             />
           )}
           <div className="workspace">
-            <Viewport
-              state={state}
-              tab={activeTab}
-              loading={loading}
-              blockedToday={blockedToday}
-              snapshot={viewHidden ? snapshot : null}
-              desktop={desktop}
-              layoutSignature={[
-                prefs.bookmarksBar ? "b" : "",
-                permission ? "p" : "",
-                saveCandidate ? "sv" : "",
-                state.find && state.find.id === activeTab.id ? "f" : "",
-                startupInfo ? "s" : "",
-                state.unresponsive.includes(activeTab.id) ? "u" : "",
-                prefs.orientation,
-              ].join("|")}
-              onOpen={openAddress}
-              onRequestAddLink={() => setLinkDialog("home")}
-              onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
-              onOpenDial={() => openInternal(DIAL_URL, "Discador")}
-              internal={(pageUrl) =>
-                pageUrl === HISTORY_URL ? (
-                  <HistoryPage store={historyStore} onOpen={openUrl} />
-                ) : pageUrl === BOOKMARKS_URL ? (
-                  <BookmarksManager
-                    nodes={state.bookmarks}
-                    actions={bookmarkActions}
-                    onOpen={openUrl}
-                  />
-                ) : pageUrl === DIAL_URL ? (
-                  <DialPage
-                    links={state.dial}
-                    engineName={engineOf(prefs.engine).name}
-                    onOpen={openAddress}
-                    onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
-                    onRequestAdd={() => setLinkDialog("dial")}
-                    onRemove={(url) => dispatch({ type: "dial/remove", url })}
-                    onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
-                    onHome={() => dispatch({ type: "nav/home" })}
-                  />
-                ) : pageUrl === SETTINGS_URL ? (
-                  <SettingsPage
-                    prefs={prefs}
-                    setPrefs={setPrefs}
-                    onUnpauseHost={(host) =>
-                      dispatch({ type: "prefs/pause-host", host, pause: false })
-                    }
-                    desktop={desktop !== null}
-                    isMac={isMac}
-                    permissions={desktop ? sitePermissions : null}
-                    onPermissionChange={(origin, type, value) => {
-                      if (!desktop) return;
-                      void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
-                    }}
-                    update={update}
-                    onCheckUpdate={() => void desktop?.updateCheck()}
-                    onInstallUpdate={() => void desktop?.updateInstall()}
-                    appVersion={appVersion}
-                    onShowWhatsNew={
-                      appVersion
-                        ? () => setWhatsNew({ from: null, to: appVersion, celebrate: false })
-                        : null
-                    }
-                    downloadsDir={downloadsDir}
-                    onOpenDownloadsDir={desktop ? () => void desktop.openDownloadsDir() : null}
-                    onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
-                    onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
-                    onReset={() => dispatch({ type: "tabs/reset" })}
-                  />
-                ) : null
-              }
-              errors={errorActions}
-              onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
-              onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
-              onCloseSplit={() => dispatch({ type: "split/close" })}
-              onRecover={(id) => {
-                dispatch({ type: "view/recovered", id });
-                void desktop?.reload(id);
-                void desktop?.activateTab(id);
-                flash();
-              }}
-            />
-            {prefs.aiOpen && (
-              <AiSidebar
-                url={current.url}
-                title={current.title}
-                chat={chat}
-                onSend={handleSend}
-                onClear={() => setChat(initialChat)}
+            <div className="workspace-main">
+              <Viewport
+                state={state}
+                tab={activeTab}
+                loading={loading}
+                blockedToday={blockedToday}
+                snapshot={viewHidden ? snapshot : null}
+                desktop={desktop}
+                layoutSignature={[
+                  prefs.bookmarksBar ? "b" : "",
+                  permission ? "p" : "",
+                  saveCandidate ? "sv" : "",
+                  state.find && state.find.id === activeTab.id ? "f" : "",
+                  startupInfo ? "s" : "",
+                  state.unresponsive.includes(activeTab.id) ? "u" : "",
+                  prefs.orientation,
+                ].join("|")}
+                onOpen={openAddress}
+                onRequestAddLink={() => setLinkDialog("home")}
+                onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
+                onOpenDial={() => openInternal(DIAL_URL, "Discador")}
+                internal={(pageUrl) =>
+                  pageUrl === HISTORY_URL ? (
+                    <HistoryPage store={historyStore} onOpen={openUrl} />
+                  ) : pageUrl === BOOKMARKS_URL ? (
+                    <BookmarksManager
+                      nodes={state.bookmarks}
+                      actions={bookmarkActions}
+                      onOpen={openUrl}
+                    />
+                  ) : pageUrl === DIAL_URL ? (
+                    <DialPage
+                      links={state.dial}
+                      engineName={engineOf(prefs.engine).name}
+                      onOpen={openAddress}
+                      onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
+                      onRequestAdd={() => setLinkDialog("dial")}
+                      onRemove={(url) => dispatch({ type: "dial/remove", url })}
+                      onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
+                      onHome={() => dispatch({ type: "nav/home" })}
+                    />
+                  ) : pageUrl === SETTINGS_URL ? (
+                    <SettingsPage
+                      prefs={prefs}
+                      setPrefs={setPrefs}
+                      onUnpauseHost={(host) =>
+                        dispatch({ type: "prefs/pause-host", host, pause: false })
+                      }
+                      desktop={desktop !== null}
+                      isMac={isMac}
+                      permissions={desktop ? sitePermissions : null}
+                      onPermissionChange={(origin, type, value) => {
+                        if (!desktop) return;
+                        void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+                      }}
+                      update={update}
+                      onCheckUpdate={() => void desktop?.updateCheck()}
+                      onInstallUpdate={() => void desktop?.updateInstall()}
+                      appVersion={appVersion}
+                      onShowWhatsNew={
+                        appVersion
+                          ? () => setWhatsNew({ from: null, to: appVersion, celebrate: false })
+                          : null
+                      }
+                      downloadsDir={downloadsDir}
+                      onOpenDownloadsDir={desktop ? () => void desktop.openDownloadsDir() : null}
+                      onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
+                      onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
+                      onReset={() => dispatch({ type: "tabs/reset" })}
+                    />
+                  ) : null
+                }
+                errors={errorActions}
+                onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
+                onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
+                onCloseSplit={() => dispatch({ type: "split/close" })}
+                onRecover={(id) => {
+                  dispatch({ type: "view/recovered", id });
+                  void desktop?.reload(id);
+                  void desktop?.activateTab(id);
+                  flash();
+                }}
+              />
+              {desktop && terminalMounted && (
+                <TerminalDock
+                  desktop={desktop}
+                  hidden={!prefs.terminalOpen || state.fullscreen}
+                  height={prefs.terminalHeight}
+                  onHeight={(terminalHeight) => setPrefs({ terminalHeight })}
+                  defaultShell={prefs.terminalShell}
+                  defaultCwd={prefs.terminalCwd}
+                  isMac={isMac}
+                  onClose={() => setPrefs({ terminalOpen: false })}
+                />
+              )}
+            </div>
+            {prefs.aiOpen && !state.fullscreen && (
+              <AiPanel
+                desktop={desktop}
+                tab={{
+                  id: activeTab.id,
+                  url: current.url,
+                  title: current.title,
+                  private: Boolean(activeTab.private),
+                  page: current.kind === "page",
+                }}
+                model={prefs.aiModel}
+                onModel={(aiModel) => setPrefs({ aiModel })}
                 onClose={() => setPrefs({ aiOpen: false })}
+                onOpenUrl={(url) => openUrl(url, true)}
               />
             )}
           </div>

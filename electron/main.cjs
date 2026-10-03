@@ -68,6 +68,9 @@ const {
   EDITED_FORM_SOURCE,
 } = require("./hibernate.cjs");
 const { createGxControl, runSpeedTest } = require("./gx-control.cjs");
+const { createAi } = require("./ai.cjs");
+const { createTerminals, cwdReader, terminalKeepsBrowserKey } = require("./terminal.cjs");
+const { applyGpuFlags, watchGpuCrashes, setGpuEnabled, gpuStatus } = require("./gpu-flags.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -85,6 +88,11 @@ if (process.platform === "win32") app.setAppUserModelId("br.agzos.browser");
 
 // Testes e2e isolam o perfil numa pasta temporária.
 if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_DATA);
+
+// Aceleração de hardware (4.0): flags da GPU e do decode de vídeo antes do ready (depois
+// dele o processo da GPU já subiu). Precisa do userData definido (estado em disco).
+const gpuRunMode = applyGpuFlags(app);
+watchGpuCrashes(app, gpuRunMode);
 
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
 const developmentUrl = process.argv
@@ -953,6 +961,8 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+[",
   "mod+]",
   "mod+shift+g",
+  "mod+shift+a",
+  "mod+alt+t",
   "mod+alt+shift+s",
   "mod+alt+arrowup",
   "mod+alt+arrowdown",
@@ -1062,6 +1072,17 @@ function wireShortcuts(contents, { page = false, zoom = null } = {}) {
       return;
     }
     if (input.type !== "keyDown") return;
+    // Terminal (4.0) com o foco: Ctrl+W, Ctrl+R, Ctrl+L… são do shell, não do navegador.
+    if (
+      ctx?.terminalFocused &&
+      contents === ctx.window.webContents &&
+      !terminalKeepsBrowserKey(shortcutCombo(input), {
+        mac: process.platform === "darwin",
+        meta: Boolean(input.meta),
+      })
+    ) {
+      return;
+    }
     if (page && ctx?.switcherOpen && SWITCHER_KEYS.has(input.key)) {
       event.preventDefault();
       send(ctx, "agzos:switcher-key", { key: input.key });
@@ -1387,6 +1408,66 @@ function clearLoadFailed(contents) {
   send(where.ctx, "agzos:tab-event", { type: "load-failed", id: where.id, failure: null });
 }
 
+// --- Gestos (4.0) ---
+// A detecção roda nas páginas (page-preload) e na casca; aqui só se descobre a superfície
+// (guia, painel ou a guia ativa) e a casca decide a ação pelas preferências.
+const GESTURE_NAMES = new Set([
+  "swipe-right",
+  "swipe-left",
+  "pinch",
+  "mouse-back",
+  "mouse-forward",
+  "draw-left",
+  "draw-right",
+  "draw-up-down",
+  "draw-down",
+  "draw-down-right",
+]);
+let gestureConfig = { swipe: true, pinch: true, draw: true, mouse: true };
+
+function emitGesture(ctx, gesture, surface, extra = {}) {
+  if (!ctx || !GESTURE_NAMES.has(gesture)) return;
+  if (gesture.startsWith("mouse-")) ctx.lastMouseGesture = { gesture, at: Date.now() };
+  send(ctx, "agzos:gesture", { gesture, surface, ...extra });
+}
+
+/**
+ * Botão lateral visto pelo sistema (app-command). A página (ou a casca) também manda o
+ * mesmo clique com a superfície certa; espera um pouco e só vale se ela não mandou.
+ */
+function windowGesture(ctx, gesture) {
+  setTimeout(() => {
+    const last = ctx.lastMouseGesture;
+    if (last && last.gesture === gesture && Date.now() - last.at < 400) return;
+    emitGesture(ctx, gesture, { kind: "active" });
+  }, 120);
+}
+
+/** Superfície de quem mandou o gesto: guia, painel lateral ou a casca (guia ativa). */
+function gestureSurface(contents) {
+  const where = tabOfContents.get(contents.id);
+  if (where) return { ctx: where.ctx, surface: { kind: "tab", id: where.id } };
+  const shell = contexts.get(contents.id);
+  if (shell) return { ctx: shell, surface: { kind: "active" } };
+  const owner = sidePanelOwner.get(contents.id);
+  if (owner) {
+    for (const [app, entry] of owner.sidePanels) {
+      if (entry.view.webContents === contents)
+        return { ctx: owner, surface: { kind: "panel", app } };
+    }
+  }
+  return null;
+}
+
+function gestureTargets() {
+  const list = [];
+  for (const ctx of contexts.values()) {
+    for (const entry of ctx.views.values()) list.push(entry.view.webContents);
+    for (const entry of ctx.sidePanels.values()) list.push(entry.view.webContents);
+  }
+  return list.filter((contents) => contents && !contents.isDestroyed());
+}
+
 function wireView(view) {
   const contents = view.webContents;
   const ctxNow = () => tabOfContents.get(contents.id)?.ctx ?? null;
@@ -1638,6 +1719,16 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   window.on("maximize", saveBoundsSoon);
   window.on("unmaximize", saveBoundsSoon);
   window.on("leave-full-screen", () => setTimeout(() => applyLayout(ctx), 50));
+  // Gestos (4.0): botões laterais do mouse no Windows/Linux (WM_APPCOMMAND) e o deslizar
+  // de três dedos do macOS. O page-preload também vê os botões; ver windowGesture.
+  window.on("app-command", (_event, command) => {
+    if (command === "browser-backward") windowGesture(ctx, "mouse-back");
+    else if (command === "browser-forward") windowGesture(ctx, "mouse-forward");
+  });
+  window.on("swipe", (_event, direction) => {
+    if (direction === "right") emitGesture(ctx, "swipe-right", { kind: "active" });
+    else if (direction === "left") emitGesture(ctx, "swipe-left", { kind: "active" });
+  });
   // Windows desligando: as janelas fecham uma a uma, mas todas voltam no próximo início.
   window.on("session-end", () => {
     quitting = true;
@@ -1663,6 +1754,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.switcherOpen) send(ctx, "agzos:modifier-up", { key: "Control" });
   });
   window.on("closed", () => {
+    terminals?.killAll(ctx);
     if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
     if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) {
       ctx.switcherView.webContents.close();
@@ -2424,14 +2516,18 @@ function setPanelZoom(ctx, app, direction) {
 function sidePanelView(ctx, app, url) {
   const known = ctx.sidePanels.get(app);
   if (known && !known.view.webContents.isDestroyed()) return known;
-  // Mesma sessão das guias (login compartilhado), isolado e sem preload. Zoom "isolated":
+  // Mesma sessão das guias (login compartilhado), isolado. Zoom "isolated":
   // o do painel não muda o de uma guia do mesmo site, nem o de outro painel.
+  // O preload das páginas entra só pelos gestos (4.0): com --agzos-surface=panel ele não
+  // observa login.
   const view = new WebContentsView({
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       zoomMode: "isolated",
+      preload: PAGE_PRELOAD,
+      additionalArguments: ["--agzos-surface=panel"],
     },
   });
   view.setBackgroundColor("#FFFFFF");
@@ -2526,16 +2622,19 @@ function stopPanelDrag(ctx) {
 function startPanelDrag(ctx) {
   stopPanelDrag(ctx);
   if (ctx.window.isDestroyed()) return;
-  const drag = { timer: null, limit: null, lastX: null, listeners: new Map() };
+  const drag = { timer: null, limit: null, lastX: null, lastY: null, listeners: new Map() };
   ctx.panelDrag = drag;
   const tick = () => {
     if (ctx.window.isDestroyed()) return stopPanelDrag(ctx);
     const point = screen.getCursorScreenPoint();
     const content = ctx.window.getContentBounds();
     const x = Math.round(point.x - content.x);
-    if (x === drag.lastX) return;
+    // y: alça do terminal (4.0), que arrasta na vertical.
+    const y = Math.round(point.y - content.y);
+    if (x === drag.lastX && y === drag.lastY) return;
     drag.lastX = x;
-    send(ctx, "agzos:side-panel-drag", { x });
+    drag.lastY = y;
+    send(ctx, "agzos:side-panel-drag", { x, y });
   };
   drag.timer = setInterval(tick, 16);
   // Soltou o botão em cima de uma página (ou ela recebeu movimento sem o botão).
@@ -3124,6 +3223,129 @@ function registerIpc() {
   });
   ipcMain.handle("gx:cache-size", () => gxCacheSize());
   ipcMain.handle("gx:clear-cache", () => gxClearCache());
+  // --- Agzos AI (4.0): a chave e as chamadas à Groq ficam aqui; a casca só vê o texto. ---
+  ipcMain.handle("ai:state", () => aiService().state());
+  ipcMain.handle("ai:set-key", (_event, { key } = {}) => aiService().setKey(key));
+  ipcMain.handle("ai:remove-key", () => aiService().removeKey());
+  ipcMain.handle("ai:models", (_event, { refresh } = {}) =>
+    aiService().models({ refresh: Boolean(refresh) }),
+  );
+  ipcMain.handle("ai:history", () => aiService().history());
+  ipcMain.handle("ai:clear-history", () => {
+    const result = aiService().clearHistory();
+    broadcast("agzos:ai-history", []);
+    return result;
+  });
+  ipcMain.handle("ai:abort", (_event, { requestId } = {}) => aiService().abort(requestId));
+  ipcMain.handle("ai:chat", async (event, payload = {}) => {
+    const sender = event.sender;
+    const requestId = String(payload.requestId ?? "");
+    const result = await aiService().chat(
+      { requestId, model: payload.model, text: payload.text, context: payload.context },
+      (delta) => {
+        if (!sender.isDestroyed()) sender.send("agzos:ai-delta", { requestId, delta });
+      },
+    );
+    if (result.ok) broadcast("agzos:ai-history", aiService().history());
+    return result;
+  });
+  // Texto selecionado na guia: só lido quando o usuário marca "enviar contexto" e envia.
+  ipcMain.handle("tab:selection", (event, { id } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed()) return "";
+    return contents
+      .executeJavaScript("String(window.getSelection ? window.getSelection() : '')", true)
+      .then((text) => (typeof text === "string" ? text.slice(0, 8000) : ""))
+      .catch(() => "");
+  });
+  // --- Terminal (4.0): cada janela só vê e escreve nas sessões dela. ---
+  ipcMain.handle("terminal:available", () => terminalService().available());
+  ipcMain.handle("terminal:open", (event, options = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return { ok: false, error: "window" };
+    return terminalService().open(ctx, options);
+  });
+  ipcMain.on("terminal:write", (event, { id, data } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) terminals?.write(ctx, id, data);
+  });
+  ipcMain.handle("terminal:resize", (event, { id, cols, rows } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? Boolean(terminals?.resize(ctx, id, cols, rows)) : false;
+  });
+  ipcMain.handle("terminal:kill", (event, { id } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? Boolean(terminals?.kill(ctx, id)) : false;
+  });
+  ipcMain.handle("terminal:focus", (event, { focused } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (ctx) ctx.terminalFocused = Boolean(focused);
+  });
+  // Abas e pastas das sessões (para reabrir no último cwd); a casca grava a lista dela.
+  ipcMain.handle("terminal:saved", () => {
+    const list = database?.getMeta("terminalSessions");
+    return Array.isArray(list) ? list.slice(0, 12) : [];
+  });
+  ipcMain.handle("terminal:save", (_event, list) => {
+    if (!Array.isArray(list)) return { ok: false };
+    const clean = list
+      .slice(0, 12)
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        shell: typeof item.shell === "string" ? item.shell.slice(0, 40) : "",
+        cwd: typeof item.cwd === "string" ? item.cwd.slice(0, 1024) : "",
+      }));
+    database?.setMeta("terminalSessions", clean);
+    return { ok: true };
+  });
+  ipcMain.handle("terminal:clipboard-read", () => clipboard.readText());
+  ipcMain.handle("terminal:clipboard-write", (_event, { text } = {}) => {
+    if (typeof text === "string") clipboard.writeText(text);
+  });
+  ipcMain.handle("gestures:get", () => gestureConfig);
+  ipcMain.handle("gestures:config", (_event, config) => {
+    const value = config && typeof config === "object" ? config : {};
+    gestureConfig = {
+      swipe: value.swipe !== false,
+      pinch: value.pinch !== false,
+      draw: value.draw !== false,
+      mouse: value.mouse !== false,
+    };
+    for (const contents of gestureTargets()) contents.send("agzos:gestures-config", gestureConfig);
+  });
+  ipcMain.on("agzos:gesture", (event, payload) => {
+    const found = gestureSurface(event.sender);
+    if (!found || !payload || typeof payload.gesture !== "string") return;
+    const extra =
+      payload.gesture === "pinch" ? { direction: payload.direction === -1 ? -1 : 1 } : {};
+    emitGesture(found.ctx, payload.gesture, found.surface, extra);
+  });
+  // Clique direito sem gesto: o page-preload segurou o menu; repete o clique para ele abrir.
+  ipcMain.on("agzos:context-menu-replay", (event, payload) => {
+    const contents = event.sender;
+    if (!payload || !gestureSurface(contents) || contents.isDestroyed()) return;
+    const zoom = contents.getZoomFactor() || 1;
+    const x = Math.round(Number(payload.x) * zoom);
+    const y = Math.round(Number(payload.y) * zoom);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    contents.sendInputEvent({ type: "mouseDown", x, y, button: "right", clickCount: 1 });
+    contents.sendInputEvent({ type: "mouseUp", x, y, button: "right", clickCount: 1 });
+  });
+  // Voltar/avançar/recarregar do painel lateral (gestos com o cursor sobre ele).
+  ipcMain.handle("sidepanel:nav", (event, { app: appId, action } = {}) => {
+    const contents = ctxOfEvent(event)?.sidePanels.get(appId)?.view.webContents;
+    if (!contents || contents.isDestroyed()) return { ok: false };
+    const history = contents.navigationHistory;
+    if (action === "back" && history.canGoBack()) history.goBack();
+    else if (action === "forward" && history.canGoForward()) history.goForward();
+    else if (action === "reload") contents.reload();
+    else return { ok: false };
+    return { ok: true };
+  });
+  ipcMain.handle("gpu:status", () => gpuStatus(app, gpuRunMode));
+  ipcMain.handle("gpu:set", (_event, { enabled } = {}) => ({
+    ok: setGpuEnabled(app, enabled !== false),
+  }));
 
   // "Encerrar página" (página sem resposta): derruba o processo; a tela de travada assume.
   ipcMain.handle("tab:kill", (event, { id }) => {
@@ -3505,6 +3727,39 @@ function registerIpc() {
 
 app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");
 
+let terminals = null;
+/** Terminais (4.0): o node-pty carrega na primeira sessão (falha vira "indisponível"). */
+function terminalService() {
+  terminals ??= createTerminals({
+    loadPty: () => require("node-pty"),
+    homedir: os.homedir(),
+    readCwd: cwdReader(process.platform, require("node:child_process").execFile),
+    onData: (ctx, id, data) => send(ctx, "agzos:terminal-data", { id, data }),
+    onExit: (ctx, id, info) => send(ctx, "agzos:terminal-exit", { id, ...info }),
+    onCwd: (ctx, id, cwd) => send(ctx, "agzos:terminal-cwd", { id, cwd }),
+  });
+  return terminals;
+}
+
+let ai = null;
+/** Serviço da IA, criado na primeira chamada (depois do ready: safeStorage e banco). */
+function aiService() {
+  // A API de teste (servidor local dos e2e) só vale fora do app empacotado.
+  const testUrl = app.isPackaged ? null : process.env.AGZOS_GROQ_BASE_URL;
+  // e2e no Linux sem chaveiro: a cifra básica do Chromium (nunca no app empacotado).
+  if (!ai && !app.isPackaged && process.env.AGZOS_TEST_BASIC_KEYRING === "1") {
+    safeStorage.setUsePlainTextEncryption?.(true);
+  }
+  ai ??= createAi({
+    userDataDir: app.getPath("userData"),
+    safeStorage,
+    fetch: (url, init) => net.fetch(url, init),
+    database,
+    ...(testUrl ? { baseUrl: testUrl } : {}),
+  });
+  return ai;
+}
+
 app.on("web-contents-created", (_event, contents) => {
   // Antes da primeira navegação de qualquer guia ou popup (inclusive OAuth).
   applyChromeIdentity(contents);
@@ -3733,6 +3988,8 @@ function macMenuTemplate() {
         command("Diminuir zoom", "zoom.out", "Cmd+-"),
         { type: "separator" },
         command("Picture-in-picture", "page.pip", "Shift+Cmd+P"),
+        command("Agzos AI", "ai.toggle", "Shift+Cmd+A"),
+        command("Terminal", "terminal.toggle", "Alt+Cmd+T"),
         command("Mostrar/ocultar barra de favoritos", "bookmarks.toggle-bar", "Shift+Cmd+B"),
         command("Guias na vertical", "tabs.vertical"),
         command("Guias na horizontal", "tabs.horizontal"),
@@ -3875,6 +4132,7 @@ app.on("before-quit", (event) => {
     return;
   }
   quitting = true;
+  terminals?.killAll();
   downloads?.cancelAll();
   updater?.stop();
   // Atualização já baixada entra ao fechar (como no Chrome); abre na versão nova.

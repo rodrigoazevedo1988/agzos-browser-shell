@@ -21,6 +21,8 @@ import type {
 import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
 import { DEFAULT_SOUND_TICK, type SoundTick } from "@/features/sounds/sounds";
+import { DEFAULT_GESTURES, type GesturePrefs } from "@/features/gestures/gestures";
+import { TERMINAL_HEIGHT } from "@/features/terminal/model";
 
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
@@ -109,6 +111,15 @@ export type Prefs = {
   uiBlur: boolean;
   /** Barra do Agzos Key (código MFA) fixada pela tachinha: não some depois de copiar. */
   keyBarPinned: boolean;
+  /** Agzos AI (4.0): modelo da Groq escolhido ("" = automático). */
+  aiModel: string;
+  /** Gestos de trackpad e mouse (4.0): ligado e ação de cada um. */
+  gestures: GesturePrefs;
+  /** Terminal (4.0): painel aberto, altura (px), shell e pasta inicial ("" = padrão). */
+  terminalOpen: boolean;
+  terminalHeight: number;
+  terminalShell: string;
+  terminalCwd: string;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -143,6 +154,12 @@ export const defaultPrefs: Prefs = {
   backgroundOpacity: 100,
   uiBlur: true,
   keyBarPinned: false,
+  aiModel: "",
+  gestures: DEFAULT_GESTURES,
+  terminalOpen: false,
+  terminalHeight: TERMINAL_HEIGHT.initial,
+  terminalShell: "",
+  terminalCwd: "",
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };

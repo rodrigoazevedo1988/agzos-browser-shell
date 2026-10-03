@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS } from "../side-panels";
+import { DEFAULT_GESTURES } from "@/features/gestures/gestures";
 import { browserReducer } from "../store/reducer";
 import { initialState } from "../store/state";
 import {
@@ -208,6 +209,12 @@ describe("migração da 1.3", () => {
         backgroundOpacity: 100,
         uiBlur: true,
         keyBarPinned: false,
+        aiModel: "",
+        gestures: DEFAULT_GESTURES,
+        terminalOpen: false,
+        terminalHeight: 280,
+        terminalShell: "",
+        terminalCwd: "",
       },
       session: {
         tabs: legacyTabs,

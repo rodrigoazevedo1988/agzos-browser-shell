@@ -99,7 +99,7 @@ describe("atalhos", () => {
   });
 
   it("ignora Alt, teclas sem modificador e Shift onde não existe", () => {
-    expect(commandForKey(key("t", { alt: true }))).toBeUndefined();
+    expect(commandForKey(key("w", { alt: true }))).toBeUndefined();
     expect(
       commandForKey({ key: "t", ctrl: false, meta: false, shift: false, alt: false }),
     ).toBeUndefined();

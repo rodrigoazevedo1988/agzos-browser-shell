@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-VERSION="3.1.1"
+VERSION="4.0.0"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs terminal.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -15,6 +15,28 @@ bun run desktop:build
 for f in "${ELECTRON_FILES[@]}"; do
   [ -f "electron/$f" ] || { echo "electron/$f ausente depois do desktop:build" >&2; exit 1; }
 done
+
+# Terminal (4.0): o node-pty é o único módulo nativo (N-API: o mesmo binário serve ao
+# Electron). Vai só o lib/ e o binário da plataforma, em resources/app/node_modules.
+PTY_SRC=/var/www/agzos-browser/node_modules/node-pty
+[ -f "$PTY_SRC/lib/index.js" ] || { echo "node-pty ausente (bun install)" >&2; exit 1; }
+copy_pty() { # destino (resources/app), plataforma-arquitetura (win32-x64, darwin-arm64, linux-x64)
+  mkdir -p "$1/node_modules/node-pty"
+  local dest
+  dest="$(cd "$1/node_modules/node-pty" && pwd)"
+  cp "$PTY_SRC/package.json" "$PTY_SRC/LICENSE" "$dest/"
+  (cd "$PTY_SRC" && find lib -name '*.js' ! -name '*.test.js' -print0 | xargs -0 cp --parents -t "$dest")
+  if [ "$2" = "linux-x64" ]; then
+    # Sem prebuild de Linux: o binário compilado pelo bun install.
+    mkdir -p "$dest/build/Release" && cp "$PTY_SRC/build/Release/pty.node" "$dest/build/Release/"
+  else
+    mkdir -p "$dest/prebuilds" && cp -r "$PTY_SRC/prebuilds/$2" "$dest/prebuilds/"
+    # Símbolos de depuração do Windows (.pdb, ~27 MB) não vão no app.
+    find "$dest/prebuilds" -name '*.pdb' -delete
+  fi
+  # O pacote do npm traz o spawn-helper do macOS sem permissão de execução.
+  if [ -f "$dest/prebuilds/$2/spawn-helper" ]; then chmod +x "$dest/prebuilds/$2/spawn-helper"; fi
+}
 
 SCRATCH="/tmp/electron-build"
 mkdir -p "$SCRATCH"
@@ -43,6 +65,7 @@ mkdir -p win/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" win/resources/app/electron/; done
 mkdir -p win/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png win/resources/app/electron/icons/
 cp -r /var/www/agzos-browser/dist win/resources/app/dist
+copy_pty win/resources/app win32-x64
 printf '%s\n' "$APPJSON" > win/resources/app/package.json
 rm -f win/resources/default_app.asar
 mv win/electron.exe win/AgzosBrowser.exe
@@ -59,6 +82,7 @@ mkdir -p linux/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" linux/resources/app/electron/; done
 mkdir -p linux/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png linux/resources/app/electron/icons/
 cp -r /var/www/agzos-browser/dist linux/resources/app/dist
+copy_pty linux/resources/app linux-x64
 printf '%s\n' "$APPJSON" > linux/resources/app/package.json
 rm -f linux/resources/default_app.asar
 mv linux/electron linux/agzos-browser
@@ -98,6 +122,7 @@ PY
   mkdir -p "$APP/Contents/Resources/app/electron"
   for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" "$APP/Contents/Resources/app/electron/"; done
   cp -r /var/www/agzos-browser/dist "$APP/Contents/Resources/app/dist"
+  copy_pty "$APP/Contents/Resources/app" darwin-$arch
   printf '%s\n' "$APPJSON" > "$APP/Contents/Resources/app/package.json"
   rm -f "$APP/Contents/Resources/default_app.asar"
   (cd "$APP/Contents/Resources" && ls -d *.lproj | grep -v -E '^(en|pt-BR)\.lproj$' | xargs rm -rf)
@@ -124,4 +149,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "3.1.1: barra lateral com o botão Mais, modal de novo site (Discador e home), sons opcionais, zoom e largura por painel e sessão do Discord mantida ao reiniciar."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.0.0: Agzos AI com a Groq (chave no cofre do sistema), gestos de trackpad e mouse, terminal de verdade e aceleração de vídeo pela GPU."

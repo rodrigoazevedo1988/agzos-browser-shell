@@ -71,6 +71,8 @@ export type CommandId =
   | "workspace.previous"
   | "sidepanels.toggle"
   | "control.open"
+  | "ai.toggle"
+  | "terminal.toggle"
   | "dial.open"
   | "history.open"
   | "bookmarks.manager"
@@ -564,6 +566,24 @@ export const commands: Command[] = [
     id: "control.open",
     label: "GX Control (CPU, RAM, rede e limpeza)",
     run: ({ ui }) => ui.toggleControl(),
+  },
+  {
+    id: "ai.toggle",
+    label: ({ state }) => (state.prefs.aiOpen ? "Fechar o Agzos AI" : "Abrir o Agzos AI"),
+    shortcuts: [{ key: "a", shift: true }],
+    run: ({ state, dispatch }) =>
+      dispatch({ type: "prefs/set", patch: { aiOpen: !state.prefs.aiOpen } }),
+  },
+  {
+    id: "terminal.toggle",
+    label: ({ state }) => (state.prefs.terminalOpen ? "Fechar o terminal" : "Abrir o terminal"),
+    // Ctrl+Alt+T como nos terminais do Linux (o Ctrl+` é tecla morta no ABNT2).
+    shortcuts: [{ key: "t", alt: true }],
+    // Shell de verdade só no app (node-pty no processo principal).
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ state, dispatch }) =>
+      dispatch({ type: "prefs/set", patch: { terminalOpen: !state.prefs.terminalOpen } }),
   },
   {
     id: "dial.open",

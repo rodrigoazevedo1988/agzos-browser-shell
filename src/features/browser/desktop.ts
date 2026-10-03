@@ -1,3 +1,4 @@
+import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
 import type { PanelKind } from "./overlay/panels";
 import type { TabCard } from "./tab-preview";
@@ -179,6 +180,59 @@ export type SpeedTestResult =
   | { ok: true; pingMs: number | null; downMbps: number; upMbps: number | null; at: number }
   | { ok: false; error: string };
 
+/** Agzos AI (4.0): erros em código curto (a casca escolhe o texto). */
+export type AiError =
+  | "no-key"
+  | "invalid-key"
+  | "insecure"
+  | "storage"
+  | "rate-limit"
+  | "network"
+  | "model-unavailable"
+  | "server"
+  | "request"
+  | "aborted";
+export type AiFailure = { ok: false; error: AiError; retryAfter?: number | null; partial?: string };
+export type AiState = { hasKey: boolean; encryption: boolean; weakStorage: boolean };
+export type AiContext = { url: string; title: string; selection: string };
+export type AiHistoryItem = {
+  role: "user" | "assistant";
+  text: string;
+  at: number;
+  context?: { url: string; title: string; selection: boolean };
+  model?: string;
+};
+export type AiChatResult =
+  | {
+      ok: true;
+      text: string;
+      model: string;
+      fallbackFrom: string | null;
+      aborted: boolean;
+    }
+  | AiFailure;
+
+export type TerminalShell = { id: string; label: string };
+/** Sessão lembrada: shell e a última pasta. */
+export type SavedTerminal = { shell: string; cwd: string };
+
+/** Gesto vindo do main, com a superfície onde aconteceu. */
+export type GestureEvent = {
+  gesture: GestureId;
+  surface: { kind: "tab"; id: number } | { kind: "panel"; app: string } | { kind: "active" };
+  /** Pinça: 1 aproxima, -1 afasta. */
+  direction?: 1 | -1;
+};
+
+/** Aceleração de hardware (4.0): pedido, modo desta execução e status do Chromium. */
+export type GpuStatus = {
+  enabled: boolean;
+  forced: boolean;
+  reason: "env" | "user" | "crash" | null;
+  videoDecode: string | null;
+  rasterization: string | null;
+};
+
 export type DesktopBridge = {
   attachTab(
     id: number,
@@ -202,7 +256,10 @@ export type DesktopBridge = {
   /** Arraste da largura: o main acompanha o cursor por cima das páginas. */
   sidePanelDrag(active: boolean): Promise<void>;
   onSidePanelZoom(callback: (payload: { app: string; factor: number }) => void): () => void;
-  onSidePanelDrag(callback: (payload: { x?: number; done?: boolean }) => void): () => void;
+  /** Posição do cursor na janela durante o arraste (x: painel lateral; y: terminal). */
+  onSidePanelDrag(
+    callback: (payload: { x?: number; y?: number; done?: boolean }) => void,
+  ): () => void;
   navigate(id: number, url: string): Promise<void>;
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;
@@ -298,6 +355,59 @@ export type DesktopBridge = {
   gxCacheSize(): Promise<number>;
   /** Limpa cache e dados temporários (cookies e logins ficam). */
   gxClearCache(): Promise<{ freedBytes: number; cacheBytes: number }>;
+  /** Agzos AI: a chave vai uma vez para o main (safeStorage) e nunca volta. */
+  aiState(): Promise<AiState>;
+  aiSetKey(key: string): Promise<{ ok: true; models: string[] } | AiFailure>;
+  aiRemoveKey(): Promise<{ ok: boolean }>;
+  aiModels(refresh?: boolean): Promise<{ ok: true; models: string[] } | AiFailure>;
+  aiHistory(): Promise<AiHistoryItem[]>;
+  aiClearHistory(): Promise<{ ok: boolean }>;
+  aiChat(payload: {
+    requestId: string;
+    model: string | null;
+    text: string;
+    context: AiContext | null;
+  }): Promise<AiChatResult>;
+  aiAbort(requestId: string): Promise<{ ok: boolean }>;
+  onAiDelta(callback: (payload: { requestId: string; delta: string }) => void): () => void;
+  /** A conversa mudou (outra janela perguntou ou apagou). */
+  onAiHistory(callback: (history: AiHistoryItem[]) => void): () => void;
+  /** Texto selecionado na guia (só lido quando o usuário manda o contexto). */
+  tabSelection(id: number): Promise<string>;
+  /** Terminal (4.0): shells num PTY do main (node-pty). */
+  terminalAvailable(): Promise<{ ok: boolean; shells: TerminalShell[] }>;
+  terminalOpen(options: {
+    shell?: string;
+    cwd?: string;
+    cols: number;
+    rows: number;
+  }): Promise<
+    | { ok: true; id: number; shell: string; label: string; cwd: string }
+    | { ok: false; error: string }
+  >;
+  terminalWrite(id: number, data: string): void;
+  terminalResize(id: number, cols: number, rows: number): Promise<boolean>;
+  terminalKill(id: number): Promise<boolean>;
+  /** O terminal ganhou/perdeu o foco (o main deixa Ctrl+W, Ctrl+R… para o shell). */
+  terminalFocus(focused: boolean): Promise<void>;
+  terminalSaved(): Promise<SavedTerminal[]>;
+  terminalSave(list: SavedTerminal[]): Promise<{ ok: boolean }>;
+  clipboardRead(): Promise<string>;
+  clipboardWrite(text: string): Promise<void>;
+  onTerminalData(callback: (payload: { id: number; data: string }) => void): () => void;
+  onTerminalExit(
+    callback: (payload: { id: number; exitCode: number; signal: number | null }) => void,
+  ): () => void;
+  onTerminalCwd(callback: (payload: { id: number; cwd: string }) => void): () => void;
+  /** Gestos (4.0): o que as páginas detectam (repassado a cada guia e painel). */
+  gesturesConfig(config: GestureConfig): Promise<void>;
+  /** Gesto visto na casca (botão lateral numa página interna, deslizar). */
+  gesture(gesture: GestureId): void;
+  onGesture(callback: (payload: GestureEvent) => void): () => void;
+  sidePanelNav(app: string, action: "back" | "forward" | "reload"): Promise<{ ok: boolean }>;
+  gpuStatus(): Promise<GpuStatus>;
+  /** Liga/desliga a aceleração forçada (vale ao reiniciar). */
+  gpuSet(enabled: boolean): Promise<{ ok: boolean }>;
   /** "Continuar mesmo assim" num certificado inválido (só nesta execução). */
   allowCertificate(id: number): Promise<{ ok: boolean }>;
   /** Aviso de restauração depois de um fechamento inesperado (só a 1ª janela recebe). */

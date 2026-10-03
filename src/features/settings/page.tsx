@@ -7,8 +7,11 @@ import {
   Palette,
   PartyPopper,
   Power,
+  Hand,
   Search,
   ShieldCheck,
+  Sparkles,
+  SquareTerminal,
   Volume2,
   Wand2,
   X,
@@ -32,6 +35,8 @@ import { PERMISSION_LABELS } from "@/features/site/permissions";
 import { playSound } from "@/features/sounds/player";
 import { SOUND_TICKS, soundGain, type SoundTick } from "@/features/sounds/sounds";
 import { Toggle } from "@/features/ui/toggle";
+import { ACTION_LABELS, GESTURES } from "@/features/gestures/gestures";
+import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
 import { ColorPicker } from "@/features/browser/ui/color-picker";
 import { cn } from "@/lib/utils";
 
@@ -58,7 +63,10 @@ export type SettingsSectionId =
   | "personalizacao"
   | "sons"
   | "pesquisa"
+  | "ia"
+  | "gestos"
   | "privacidade"
+  | "terminal"
   | "desempenho"
   | "inicializacao"
   | "downloads"
@@ -197,7 +205,7 @@ export function SettingsPage(props: SettingsPageProps) {
             node: (
               <Toggle
                 label="Agzos AI visível"
-                hint="Barra lateral de IA"
+                hint="Painel do Agzos AI ao lado da página (Ctrl+Shift+A)"
                 checked={prefs.aiOpen}
                 onChange={(aiOpen) => setPrefs({ aiOpen })}
               />
@@ -450,6 +458,43 @@ export function SettingsPage(props: SettingsPageProps) {
         ],
       },
       {
+        id: "ia",
+        label: "Agzos AI",
+        icon: Sparkles,
+        rows: [
+          {
+            id: "ia-chave",
+            label: "Chave da API Groq",
+            keywords: "groq api chave key modelo llama inteligencia artificial assistente",
+            node: (
+              <AiKeySettings model={prefs.aiModel} onModel={(aiModel) => setPrefs({ aiModel })} />
+            ),
+          },
+        ],
+      },
+      {
+        id: "gestos",
+        label: "Gestos",
+        icon: Hand,
+        rows: GESTURES.map((gesture) => ({
+          id: `gesto-${gesture.id}`,
+          label: gesture.label,
+          keywords: `gestos trackpad mouse ${gesture.hint} ${ACTION_LABELS[prefs.gestures[gesture.id].action]}`,
+          node: (
+            <GestureRow
+              id={gesture.id}
+              label={gesture.label}
+              hint={gesture.hint}
+              fixed={Boolean(gesture.fixed)}
+              setting={prefs.gestures[gesture.id]}
+              onChange={(setting) =>
+                setPrefs({ gestures: { ...prefs.gestures, [gesture.id]: setting } })
+              }
+            />
+          ),
+        })),
+      },
+      {
         id: "privacidade",
         label: "Privacidade e segurança",
         icon: ShieldCheck,
@@ -563,6 +608,12 @@ export function SettingsPage(props: SettingsPageProps) {
         icon: Cpu,
         rows: [
           {
+            id: "gpu",
+            label: "Aceleração de hardware forçada",
+            keywords: "gpu video placa youtube travando decodificacao hardware",
+            node: <GpuSettings />,
+          },
+          {
             id: "hibernar",
             label: "Hibernar guias sem uso",
             keywords: "memoria ram economia dormir",
@@ -603,6 +654,47 @@ export function SettingsPage(props: SettingsPageProps) {
                 },
               ]
             : []),
+        ],
+      });
+    }
+
+    if (desktop) {
+      list.push({
+        id: "terminal",
+        label: "Terminal",
+        icon: SquareTerminal,
+        rows: [
+          {
+            id: "terminal-shell",
+            label: "Shell padrão",
+            keywords: "terminal powershell pwsh cmd zsh bash console",
+            node: (
+              <TerminalShellSelect
+                value={prefs.terminalShell}
+                onChange={(terminalShell) => setPrefs({ terminalShell })}
+              />
+            ),
+          },
+          {
+            id: "terminal-pasta",
+            label: "Pasta inicial",
+            keywords: "terminal diretorio pasta cwd inicial",
+            node: (
+              <label className="settings-select settings-text">
+                <span>
+                  Pasta inicial
+                  <small>Vazio: a pasta do usuário. Cada aba volta na última pasta dela.</small>
+                </span>
+                <input
+                  type="text"
+                  spellCheck={false}
+                  placeholder="Pasta do usuário"
+                  defaultValue={prefs.terminalCwd}
+                  onBlur={(event) => setPrefs({ terminalCwd: event.target.value.trim() })}
+                />
+              </label>
+            ),
+          },
         ],
       });
     }
