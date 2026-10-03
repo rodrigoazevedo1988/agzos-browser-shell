@@ -158,4 +158,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.1.1: abas do terminal com nome, CLIs de IA instaladas no PATH, modo ls lateral, snippets, skills e modo agente em canvas, qualquer arquivo no navegador, visualizador de imagens e PWA instalável."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.1.3: Agzos AI no estilo do Claude (conversas em guias, projetos, markdown e artifacts) e instalação de PWA em muito mais sites (Grok, Gemini, Canva)."
