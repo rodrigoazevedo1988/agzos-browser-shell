@@ -231,7 +231,7 @@ function createTerminals({
      * Abre uma sessão. `shell`: id da lista (ou vazio = padrão); `cwd` inválido → início.
      * `ssh`: argumentos já validados (terminal-launch.cjs sshArgs) para uma sessão SSH.
      */
-    open(owner, { shell, cwd, cols, rows, ssh = null, title = null } = {}) {
+    open(owner, { shell, cwd, cols, rows, ssh = null, title = null, program = null } = {}) {
       const module = ptyModule();
       if (!module) return { ok: false, error: "unavailable" };
       const owned = [...sessions.values()].filter((item) => item.owner === owner).length;
@@ -239,7 +239,12 @@ function createTerminals({
       const list = shells();
       let chosen = list.find((item) => item.id === shell) ?? list[0];
       let launch;
-      if (ssh) {
+      if (program) {
+        // 4.1.1: programa montado pelo main (instalação das CLIs, nó de agente), nunca
+        // vindo da casca.
+        chosen = { id: "program", label: "programa", file: program.file, args: program.args };
+        launch = { args: program.args, env: program.env ?? {} };
+      } else if (ssh) {
         const file = sshBinary();
         if (!file) return { ok: false, error: "no-ssh" };
         chosen = { id: "ssh", label: "ssh", file, args: ssh };
@@ -306,6 +311,15 @@ function createTerminals({
       return { ok: true, id, shell: chosen.id, label: session.label, cwd: dir };
     },
 
+    /** Nome da aba (4.1.1): vale para todas as vistas; vazio volta ao nome do shell. */
+    rename(owner, id, title) {
+      const session = sessions.get(id);
+      if (!session || session.owner !== owner) return false;
+      const text = typeof title === "string" ? title.replace(/[\r\n\t]+/g, " ").trim() : "";
+      session.custom = text ? text.slice(0, 60) : null;
+      return true;
+    },
+
     write(owner, id, data) {
       const session = sessions.get(id);
       if (!session || session.owner !== owner || typeof data !== "string") return false;
@@ -355,10 +369,11 @@ function createTerminals({
     list(owner) {
       return [...sessions.values()]
         .filter((session) => session.owner === owner)
-        .map(({ id, shell, label, cwd, history, buffer }) => ({
+        .map(({ id, shell, label, custom, cwd, history, buffer }) => ({
           id,
           shell,
           label,
+          title: custom ?? null,
           cwd,
           // O que ainda está no lote vai junto (sem chegar duas vezes depois).
           history: history.slice(0, history.length - buffer.length),

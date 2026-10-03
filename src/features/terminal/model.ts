@@ -75,3 +75,24 @@ export function clipboardKey(
   if (key === "v" && platform === "windows") return "paste";
   return null;
 }
+
+/** Caminho entre aspas para o shell da sessão (4.1.1: inserir caminho, cd). */
+export function quotePath(shell: string, file: string) {
+  if (shell === "cmd") return `"${file.replace(/"/g, "")}"`;
+  // bash, zsh, sh e PowerShell: aspas simples (no PowerShell '' escapa a aspa).
+  if (shell === "powershell" || shell === "pwsh") return `'${file.replace(/'/g, "''")}'`;
+  return `'${file.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Comando que entra na pasta (modo ls lateral). Nos shells POSIX o Ctrl+U antes limpa o
+ * que estava digitado. SSH: null (a pasta é local, a sessão é remota).
+ */
+export function cdCommand(shell: string, dir: string): string | null {
+  if (shell === "ssh" || shell === "program") return null;
+  if (shell === "cmd") return `cd /d ${quotePath(shell, dir)}\r`;
+  if (shell === "powershell" || shell === "pwsh") {
+    return `Set-Location -LiteralPath ${quotePath(shell, dir)}\r`;
+  }
+  return `\x15cd -- ${quotePath(shell, dir)}\r`;
+}

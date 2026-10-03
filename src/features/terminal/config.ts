@@ -12,6 +12,18 @@ export type TerminalAlias = { name: string; command: string };
 export type TerminalSnippet = { id: string; name: string; command: string; run: boolean };
 export type TerminalTool = { id: string; name: string; command: string; on: boolean };
 export type VoiceLanguage = "pt" | "en" | "es" | "auto";
+/** Nó do modo agente (4.1.1): uma etapa feita por uma CLI de IA ou pela Groq. */
+export type AgentNode = {
+  id: string;
+  title: string;
+  tool: string;
+  prompt: string;
+  x: number;
+  y: number;
+};
+/** Ligação: a saída de `from` entra no prompt de `to`. */
+export type AgentEdge = { from: string; to: string };
+export type AgentGraph = { nodes: AgentNode[]; edges: AgentEdge[] };
 
 export type TerminalSettings = {
   dock: TerminalDockMode;
@@ -29,6 +41,12 @@ export type TerminalSettings = {
   voice: { language: VoiceLanguage; enter: boolean };
   /** Exporta a chave da Groq do Agzos AI como GROQ_API_KEY nas sessões. */
   groqEnv: boolean;
+  /** 4.1.1: a preparação das CLIs de IA já foi oferecida ao abrir o terminal. */
+  cliSetup: "pending" | "done";
+  /** Arquivos ocultos no navegador de arquivos do terminal. */
+  showHidden: boolean;
+  /** Canvas do modo agente. */
+  agent: AgentGraph;
 };
 
 export const TERMINAL_WIDTH = { min: 320, max: 1200, initial: 520 } as const;
@@ -96,6 +114,17 @@ export const DEFAULT_TOOLS: TerminalTool[] = [
   { id: "gemini", name: "Gemini CLI", command: "gemini", on: true },
 ];
 
+/** CLIs de IA da instalação inicial (ids de electron/cli-install.cjs). */
+export const CLI_SETUP: { id: string; name: string; command: string; note?: string }[] = [
+  { id: "claude", name: "Claude Code", command: "claude" },
+  { id: "codex", name: "Codex", command: "codex", note: "npm" },
+  { id: "kiro", name: "Kiro CLI", command: "kiro-cli" },
+  { id: "opencode", name: "OpenCode", command: "opencode" },
+  { id: "gemini", name: "Gemini CLI", command: "gemini", note: "npm" },
+  { id: "freebuff", name: "Freebuff", command: "freebuff", note: "npm" },
+  { id: "agy", name: "Antigravity", command: "agy", note: "instalação manual (app)" },
+];
+
 /** Variáveis de API mais usadas por essas ferramentas (dá para pôr qualquer outra). */
 export const API_PROVIDERS: { name: string; label: string }[] = [
   { name: "ANTHROPIC_API_KEY", label: "Anthropic (Claude Code, OpenCode)" },
@@ -132,6 +161,9 @@ export const DEFAULT_TERMINAL: TerminalSettings = {
   ssh: [],
   voice: { language: "pt", enter: false },
   groqEnv: false,
+  cliSetup: "pending",
+  showHidden: false,
+  agent: { nodes: [], edges: [] },
 };
 
 /** Atalhos com o foco no terminal (⌘ no lugar do Ctrl no Mac). */
@@ -144,7 +176,10 @@ export type TerminalAction =
   | "launcher"
   | "font-up"
   | "font-down"
-  | "font-reset";
+  | "font-reset"
+  | "rename"
+  | "files"
+  | "agent";
 
 export const TERMINAL_SHORTCUTS: { action: TerminalAction; keys: string; label: string }[] = [
   { action: "new", keys: "Ctrl+Shift+E", label: "Nova sessão" },
@@ -156,6 +191,9 @@ export const TERMINAL_SHORTCUTS: { action: TerminalAction; keys: string; label: 
   { action: "font-up", keys: "Ctrl+=", label: "Aumentar a fonte" },
   { action: "font-down", keys: "Ctrl+-", label: "Diminuir a fonte" },
   { action: "font-reset", keys: "Ctrl+0", label: "Fonte no tamanho padrão" },
+  { action: "rename", keys: "F2", label: "Renomear a aba" },
+  { action: "files", keys: "Ctrl+Shift+O", label: "Arquivos (modo ls lateral)" },
+  { action: "agent", keys: "Ctrl+Shift+G", label: "Modo agente (canvas)" },
 ];
 
 /** Tecla → atalho do terminal (null: segue para o shell). */
@@ -171,6 +209,9 @@ export function terminalAction(
   mac: boolean,
 ): TerminalAction | null {
   const mod = mac ? event.metaKey : event.ctrlKey;
+  if (event.key === "F2" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    return "rename";
+  }
   if (!mod || event.altKey || (mac ? event.ctrlKey : event.metaKey)) return null;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (event.shiftKey) {
@@ -187,6 +228,10 @@ export function terminalAction(
         return "voice";
       case "k":
         return "launcher";
+      case "o":
+        return "files";
+      case "g":
+        return "agent";
       default:
         return null;
     }
@@ -296,6 +341,9 @@ export function parseTerminalSettings(value: unknown): TerminalSettings {
     : DEFAULT_TERMINAL.voice.language;
 
   return {
+    cliSetup: raw["cliSetup"] === "done" ? "done" : "pending",
+    showHidden: raw["showHidden"] === true,
+    agent: parseAgentGraph(raw["agent"]),
     dock: raw["dock"] === "right" || raw["dock"] === "window" ? raw["dock"] : "bottom",
     width: number("width", TERMINAL_WIDTH.min, TERMINAL_WIDTH.max, TERMINAL_WIDTH.initial),
     themeId: text(raw["themeId"], 40) || DEFAULT_TERMINAL.themeId,
@@ -310,6 +358,57 @@ export function parseTerminalSettings(value: unknown): TerminalSettings {
     voice: { language, enter: voice["enter"] === true },
     groqEnv: raw["groqEnv"] === true,
   };
+}
+
+const NODE_LIMIT = 40;
+
+/** Canvas do modo agente vindo do disco: nós válidos e ligações entre eles, sem ciclo. */
+export function parseAgentGraph(value: unknown): AgentGraph {
+  const raw = isObject(value) ? value : {};
+  const nodes: AgentNode[] = [];
+  for (const item of Array.isArray(raw["nodes"]) ? (raw["nodes"] as unknown[]) : []) {
+    if (!isObject(item) || nodes.length >= NODE_LIMIT) continue;
+    const id = text(item["id"], 40).trim();
+    if (!id || nodes.some((node) => node.id === id)) continue;
+    const coord = (key: string) =>
+      typeof item[key] === "number" && Number.isFinite(item[key])
+        ? Math.round(Math.max(-5000, Math.min(5000, item[key] as number)))
+        : 0;
+    nodes.push({
+      id,
+      title: text(item["title"], 60).trim() || "Etapa",
+      tool: text(item["tool"], 40).trim() || "groq",
+      prompt: text(item["prompt"], 8000),
+      x: coord("x"),
+      y: coord("y"),
+    });
+  }
+  const ids = new Set(nodes.map((node) => node.id));
+  const edges: AgentEdge[] = [];
+  for (const item of Array.isArray(raw["edges"]) ? (raw["edges"] as unknown[]) : []) {
+    if (!isObject(item)) continue;
+    const from = text(item["from"], 40);
+    const to = text(item["to"], 40);
+    if (!ids.has(from) || !ids.has(to) || from === to) continue;
+    if (edges.some((edge) => edge.from === from && edge.to === to)) continue;
+    if (reaches(edges, to, from)) continue;
+    edges.push({ from, to });
+  }
+  return { nodes, edges };
+}
+
+/** Há caminho de `start` até `target` seguindo as ligações? (evita ciclo) */
+export function reaches(edges: AgentEdge[], start: string, target: string): boolean {
+  const seen = new Set<string>();
+  const stack = [start];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (id === target) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const edge of edges) if (edge.from === id) stack.push(edge.to);
+  }
+  return false;
 }
 
 /** Largura máxima à direita que ainda deixa `keep` px de página. */

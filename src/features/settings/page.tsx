@@ -7,6 +7,7 @@ import {
   Palette,
   PartyPopper,
   Power,
+  AppWindow,
   Bot,
   Hand,
   Search,
@@ -37,6 +38,7 @@ import { playSound } from "@/features/sounds/player";
 import { SOUND_TICKS, soundGain, type SoundTick } from "@/features/sounds/sounds";
 import { Toggle } from "@/features/ui/toggle";
 import { ACTION_LABELS, GESTURES } from "@/features/gestures/gestures";
+import { InstalledAppsSetting } from "./apps-rows";
 import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
 import {
   SshConnectionsSetting,
@@ -82,6 +84,7 @@ export type SettingsSectionId =
   | "privacidade"
   | "terminal"
   | "terminal-avancado"
+  | "apps"
   | "desempenho"
   | "inicializacao"
   | "downloads"
@@ -785,6 +788,19 @@ export function SettingsPage(props: SettingsPageProps) {
             label: "Conexões SSH",
             keywords: "ssh servidor conexao host usuario porta",
             node: <SshConnectionsSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+        ],
+      });
+      list.push({
+        id: "apps",
+        label: "Apps instalados",
+        icon: AppWindow,
+        rows: [
+          {
+            id: "apps-pwa",
+            label: "Apps instalados (PWA)",
+            keywords: "pwa app instalar desinstalar janela atalho manifesto service worker",
+            node: <InstalledAppsSetting />,
           },
         ],
       });

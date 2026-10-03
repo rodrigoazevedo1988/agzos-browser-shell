@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.1.1",
+    date: "2026-10-03",
+    items: [
+      "Instale sites como apps: quando a página tem manifesto e service worker, aparece o ícone de instalar na barra de endereço. O app abre em janela própria, sem a barra de guias, ganha ícone no menu Iniciar, no Dock (Aplicativos › Agzos Apps) ou no menu de aplicativos, e tem login, zoom e permissões separados da guia normal. Desinstale em Configurações → Apps instalados ou pelo menu do próprio app.",
+      "Abra qualquer arquivo no navegador: Ctrl+O (⌘O), digitando o caminho na barra de endereço ou pelo terminal. HTML, SVG, PDF, vídeo e áudio abrem direto; código e texto viram uma página de leitura com números de linha; os outros tipos mostram os detalhes e o botão para abrir no app do sistema.",
+      "Visualizador de imagens completo: zoom no cursor, arrastar, girar, espelhar, brilho, contraste, saturação, fundo escuro, claro ou xadrez, informações e tela cheia. No modo Canvas você desenha, marca, faz retângulos, setas e textos e exporta a imagem anotada em PNG.",
+      "Terminal com abas que você renomeia (duplo clique ou F2) e um painel lateral: o modo ls (Ctrl+Shift+O) navega pelas pastas e, ao escolher uma, abre ela no terminal; os snippets rodam ou só digitam comandos; as skills do Claude Code, Codex, OpenCode e Gemini entram no prompt com um clique, e dá para criar uma skill nova.",
+      "Modo agente (Ctrl+Shift+G): um canvas de nós ligados, no estilo do ComfyUI. Descreva um objetivo e a IA monta as etapas com os agentes (Claude Code, Codex, OpenCode, Gemini, Kiro ou a própria Groq); cada etapa roda numa aba do terminal, as independentes em paralelo, e a saída de uma segue para a próxima.",
+      "Na primeira abertura, o terminal oferece instalar as CLIs de IA (Claude Code, Codex, Kiro CLI, OpenCode, Gemini CLI, Freebuff) no Windows, macOS e Linux, numa aba à vista, e põe as pastas delas no PATH. Também pelo lançador: Instalar CLIs de IA.",
+    ],
+  },
+  {
     version: "4.1.0",
     date: "2026-10-03",
     items: [

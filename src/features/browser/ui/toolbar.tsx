@@ -13,6 +13,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Star,
+  AppWindow,
+  MonitorDown,
   Sun,
   VenetianMask,
 } from "lucide-react";
@@ -50,6 +52,8 @@ export type ToolbarProps = {
    * login salvo (`saved`) ou com formulário de login; abre o popup do site. null = some.
    */
   siteKey: { saved: boolean; open: boolean; onToggle: () => void } | null;
+  /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
+  pwa?: { name: string; installed: boolean; onClick: () => void } | null;
   dark: boolean;
   aiOpen: boolean;
   isMac: boolean;
@@ -201,6 +205,21 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 <ShieldCheck />
               </button>
             </div>
+            {props.pwa && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "pwa-button", props.pwa.installed && "on")}
+                onClick={props.pwa.onClick}
+                title={
+                  props.pwa.installed
+                    ? `Abrir o app ${props.pwa.name}`
+                    : `Instalar ${props.pwa.name} como app`
+                }
+                aria-label={props.pwa.installed ? "Abrir o app instalado" : "Instalar o app"}
+              >
+                {props.pwa.installed ? <AppWindow /> : <MonitorDown />}
+              </button>
+            )}
             {props.siteKey && (
               <button
                 type="button"

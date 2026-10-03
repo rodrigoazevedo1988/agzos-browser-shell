@@ -51,6 +51,7 @@ import {
   type DesktopPermissionRequest,
   type GestureEvent,
   type NativeMenuItem,
+  type PwaTabState,
   type SitePermission,
   type StartupInfo,
   type UpdateState,
@@ -514,6 +515,14 @@ export function AgzosBrowser() {
     );
     return () => window.clearTimeout(timer);
   }, [keyBar?.copiedAt, prefs.keyBarPinned]);
+
+  // PWA (4.1.1): o main avisa quando a guia tem manifesto + service worker.
+  const [pwaTabs, setPwaTabs] = useState<Record<number, PwaTabState>>({});
+  useEffect(
+    () => desktop?.onPwaState(({ tabId, pwa }) => setPwaTabs((map) => ({ ...map, [tabId]: pwa }))),
+    [desktop],
+  );
+  const activePwa = activeTab.private ? null : (pwaTabs[activeTab.id] ?? null);
 
   // Terminal (4.0): montado na primeira abertura e mantido (esconder não mata os shells).
   const [terminalMounted, setTerminalMounted] = useState(false);
@@ -1862,6 +1871,18 @@ export function AgzosBrowser() {
           siteKey={
             siteKeyVisible
               ? { saved: vaultMatches.length > 0, open: panel === "login", onToggle: toggleSiteKey }
+              : null
+          }
+          pwa={
+            activePwa && desktop
+              ? {
+                  name: activePwa.name,
+                  installed: activePwa.installed,
+                  onClick: () =>
+                    void (activePwa.installed
+                      ? desktop.pwaOpen(activePwa.id)
+                      : desktop.pwaInstall(activeTab.id)),
+                }
               : null
           }
           dark={prefs.dark}

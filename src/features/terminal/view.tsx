@@ -4,6 +4,8 @@ import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal } from "@xterm/xterm";
 import {
   Bot,
+  Download,
+  FolderTree,
   Loader2,
   Mic,
   PanelBottom,
@@ -12,9 +14,11 @@ import {
   Plus,
   Rocket,
   Server,
+  Sparkles,
   Square,
   SquareTerminal,
   TerminalSquare,
+  Workflow,
   X,
   Zap,
 } from "lucide-react";
@@ -32,10 +36,21 @@ import {
   type TerminalDockMode,
   type TerminalSettings,
 } from "./config";
-import { clipboardKey, sessionTitle } from "./model";
+import { AgentCanvas } from "./agent-canvas";
+import { cdCommand, clipboardKey, quotePath, sessionTitle } from "./model";
+import { CliSetup } from "./setup";
+import { TerminalSidePanel, type SideMode } from "./side-panel";
 import { useVoice } from "./voice";
 
-type Session = { id: number; shell: string; label: string; cwd: string; ssh: boolean };
+type Session = {
+  id: number;
+  shell: string;
+  label: string;
+  cwd: string;
+  ssh: boolean;
+  /** Nome dado pelo usuário (4.1.1). */
+  title: string | null;
+};
 type Live = { term: Terminal; fit: FitAddon; host: HTMLDivElement };
 
 function platformOf(isMac: boolean): "mac" | "windows" | "linux" {
@@ -94,6 +109,12 @@ export function TerminalView({
   const [active, setActive] = useState<number | null>(null);
   const [launcher, setLauncher] = useState(false);
   const [tools, setTools] = useState<Record<string, boolean>>({});
+  // 4.1.1: aba sendo renomeada, painel lateral, modo agente e preparação das CLIs.
+  const [editing, setEditing] = useState<{ id: number; value: string } | null>(null);
+  const [side, setSide] = useState<SideMode | null>(null);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentMounted, setAgentMounted] = useState(false);
+  const [setup, setSetup] = useState<"first" | "manual" | null>(null);
   const live = useRef(new Map<number, Live>());
   // Saída que chega antes de o xterm da sessão existir (inclui a saída recente).
   const pending = useRef(new Map<number, string>());
@@ -106,12 +127,12 @@ export function TerminalView({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  function addSession(session: Session, history = "") {
+  function addSession(session: Session, history = "", focus = true) {
     if (history) pending.current.set(session.id, history + (pending.current.get(session.id) ?? ""));
     setSessions((list) =>
       list.some((item) => item.id === session.id) ? list : [...list, session],
     );
-    setActive(session.id);
+    if (focus) setActive(session.id);
   }
 
   async function openSession(shell: string, cwd: string) {
@@ -130,6 +151,7 @@ export function TerminalView({
       label: result.label,
       cwd: result.cwd,
       ssh: false,
+      title: null,
     });
     return result.id;
   }
@@ -144,7 +166,65 @@ export function TerminalView({
       );
       return;
     }
-    addSession({ id: result.id, shell: "ssh", label: result.label, cwd: result.cwd, ssh: true });
+    addSession({
+      id: result.id,
+      shell: "ssh",
+      label: result.label,
+      cwd: result.cwd,
+      ssh: true,
+      title: null,
+    });
+  }
+
+  /** CLIs de IA escolhidas: aba nova que instala e põe no PATH. */
+  async function installTools(ids: string[]) {
+    setSetup(null);
+    if (settingsRef.current.cliSetup !== "done") onSettings({ cliSetup: "done" });
+    const result = await desktop.terminalInstallTools(ids, 100, 28);
+    if (!result.ok) {
+      setUnavailable("Não foi possível abrir a instalação das CLIs.");
+      return;
+    }
+    addSession({
+      id: result.id,
+      shell: result.shell,
+      label: result.label,
+      cwd: result.cwd,
+      ssh: false,
+      title: null,
+    });
+  }
+
+  function commitRename() {
+    if (!editing) return;
+    const title = editing.value.trim().slice(0, 60);
+    setSessions((list) =>
+      list.map((item) => (item.id === editing.id ? { ...item, title: title || null } : item)),
+    );
+    void desktop.terminalRename(editing.id, title);
+    setEditing(null);
+    live.current.get(editing.id)?.term.focus();
+  }
+
+  const activeSession = sessions.find((item) => item.id === active) ?? null;
+  const canType = Boolean(activeSession && !activeSession.ssh && activeSession.shell !== "program");
+
+  /** Texto no prompt da sessão ativa (modo ls, snippets, skills). */
+  function typeText(text: string, run: boolean) {
+    if (active === null) return;
+    desktop.terminalWrite(active, run ? `${text}\r` : text);
+    live.current.get(active)?.term.focus();
+  }
+
+  function cdTo(dir: string) {
+    if (!activeSession) return;
+    const command = cdCommand(activeSession.shell, dir);
+    if (command) desktop.terminalWrite(activeSession.id, command);
+  }
+
+  function toggleAgent() {
+    setAgentMounted(true);
+    setAgentOpen((open) => !open);
   }
 
   /** Ferramenta de IA: sessão nova no shell padrão com o comando digitado (você pediu). */
@@ -181,6 +261,7 @@ export function TerminalView({
               label: item.label,
               cwd: item.cwd,
               ssh: item.shell === "ssh",
+              title: item.title ?? null,
             },
             item.history,
           );
@@ -191,6 +272,8 @@ export function TerminalView({
         for (const item of list) await openSession(item.shell, item.cwd || defaultCwd);
       }
       setReady(true);
+      // 4.1.1: primeira abertura do terminal → preparar as CLIs de IA.
+      if (settingsRef.current.cliSetup === "pending") setSetup("first");
     })();
     // Só na montagem: depois disso as sessões são do usuário.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,6 +287,12 @@ export function TerminalView({
     });
     const offCwd = desktop.onTerminalCwd(({ id, cwd }) =>
       setSessions((list) => list.map((item) => (item.id === id ? { ...item, cwd } : item))),
+    );
+    // Renomeada em outra vista (terminal flutuante ↔ janela).
+    const offTitle = desktop.onTerminalTitle(({ id, title }) =>
+      setSessions((list) =>
+        list.map((item) => (item.id === id ? { ...item, title: title || null } : item)),
+      ),
     );
     // Shell encerrado (exit): a aba sai; sem nenhuma, o terminal esconde.
     const offExit = desktop.onTerminalExit(({ id }) => {
@@ -219,6 +308,7 @@ export function TerminalView({
     return () => {
       offData();
       offCwd();
+      offTitle();
       offExit();
     };
   }, [desktop]);
@@ -349,6 +439,17 @@ export function TerminalView({
         return;
       case "font-reset":
         onSettings({ fontSize: FONT_SIZE.initial });
+        return;
+      case "rename": {
+        const session = sessions.find((item) => item.id === active);
+        if (session) setEditing({ id: session.id, value: session.title ?? titleOf(session) });
+        return;
+      }
+      case "files":
+        setSide((current) => (current === "files" ? null : "files"));
+        return;
+      case "agent":
+        toggleAgent();
     }
   }
   const actionRef = useRef(runAction);
@@ -413,8 +514,12 @@ export function TerminalView({
 
   const recording = voice.state.status === "recording";
   const enabledTools = settings.tools.filter((tool) => tool.on);
-  const titleOf = (session: Session) =>
-    session.ssh ? session.label : sessionTitle(session.label, session.cwd);
+  function titleOf(session: Session) {
+    if (session.title) return session.title;
+    return session.ssh || session.shell === "program"
+      ? session.label
+      : sessionTitle(session.label, session.cwd);
+  }
 
   return (
     <div
@@ -440,10 +545,40 @@ export function TerminalView({
               onClick={() => setActive(session.id)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") setActive(session.id);
+                if (event.key === "F2") setEditing({ id: session.id, value: titleOf(session) });
               }}
             >
               {session.ssh && <Server className="terminal-tab-icon" />}
-              <span>{titleOf(session)}</span>
+              {editing?.id === session.id ? (
+                <input
+                  className="terminal-tab-input"
+                  value={editing.value}
+                  autoFocus
+                  aria-label="Nome da aba"
+                  maxLength={60}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setEditing({ id: session.id, value: event.target.value })}
+                  onBlur={commitRename}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") commitRename();
+                    if (event.key === "Escape") {
+                      setEditing(null);
+                      live.current.get(session.id)?.term.focus();
+                    }
+                  }}
+                />
+              ) : (
+                <span
+                  title="Duplo clique (ou F2) para renomear"
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    setEditing({ id: session.id, value: titleOf(session) });
+                  }}
+                >
+                  {titleOf(session)}
+                </span>
+              )}
               <button
                 type="button"
                 aria-label={`Fechar ${titleOf(session)}`}
@@ -487,6 +622,41 @@ export function TerminalView({
             onClick={() => setLauncher((open) => !open)}
           >
             <Rocket />
+          </Button>
+          {(
+            [
+              [
+                "files",
+                FolderTree,
+                `Arquivos — modo ls lateral (${shortcutText("Ctrl+Shift+O", isMac)})`,
+              ],
+              ["snippets", Zap, "Snippets (comandos rápidos)"],
+              ["skills", Sparkles, "Skills das CLIs de IA"],
+            ] as const
+          ).map(([item, Icon, label]) => (
+            <Button
+              key={item}
+              variant="ghost"
+              size="icon"
+              title={label}
+              aria-label={label}
+              aria-pressed={side === item}
+              className={cn(side === item && "terminal-dock-on")}
+              onClick={() => setSide((current) => (current === item ? null : item))}
+            >
+              <Icon />
+            </Button>
+          ))}
+          <Button
+            variant="ghost"
+            size="icon"
+            title={`Modo agente — canvas com multiagentes (${shortcutText("Ctrl+Shift+G", isMac)})`}
+            aria-label="Modo agente"
+            aria-pressed={agentOpen}
+            className={cn(agentOpen && "terminal-dock-on")}
+            onClick={toggleAgent}
+          >
+            <Workflow />
           </Button>
           <Button
             variant="ghost"
@@ -532,128 +702,199 @@ export function TerminalView({
           </Button>
         </div>
       </header>
-      <div className="terminal-body" ref={bodyRef}>
-        {unavailable && <p className="terminal-message">{unavailable}</p>}
-        {voice.state.status === "error" && (
-          <p className="terminal-message terminal-voice-error" role="alert">
-            {voice.state.message}{" "}
-            <button type="button" className="link-button" onClick={voice.dismiss}>
-              Fechar
-            </button>
-          </p>
-        )}
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            className="terminal-screen"
-            hidden={session.id !== active}
-            ref={(host) => attach(session, host)}
+      <div className="terminal-body">
+        {side && (
+          <TerminalSidePanel
+            mode={side}
+            desktop={desktop}
+            settings={settings}
+            cwd={activeSession?.cwd || defaultCwd}
+            canType={canType}
+            quote={(file) => quotePath(activeSession?.shell ?? "", file)}
+            onSettings={onSettings}
+            onCd={cdTo}
+            onType={typeText}
+            onClose={() => setSide(null)}
           />
-        ))}
-        {launcher && (
-          <div
-            className="terminal-launcher"
-            role="dialog"
-            aria-label="Lançador do terminal"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setLauncher(false);
-                if (active !== null) live.current.get(active)?.term.focus();
-              }
-            }}
-          >
-            <section>
-              <h3>
-                <TerminalSquare /> Shells
-              </h3>
-              {(shells ?? []).map((shell) => (
+        )}
+        <div className="terminal-screens" ref={bodyRef}>
+          {unavailable && <p className="terminal-message">{unavailable}</p>}
+          {voice.state.status === "error" && (
+            <p className="terminal-message terminal-voice-error" role="alert">
+              {voice.state.message}{" "}
+              <button type="button" className="link-button" onClick={voice.dismiss}>
+                Fechar
+              </button>
+            </p>
+          )}
+          {sessions.map((session) => (
+            <div
+              key={session.id}
+              className="terminal-screen"
+              hidden={session.id !== active}
+              ref={(host) => attach(session, host)}
+            />
+          ))}
+          {launcher && (
+            <div
+              className="terminal-launcher"
+              role="dialog"
+              aria-label="Lançador do terminal"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setLauncher(false);
+                  if (active !== null) live.current.get(active)?.term.focus();
+                }
+              }}
+            >
+              <section>
+                <h3>
+                  <TerminalSquare /> Shells
+                </h3>
+                {(shells ?? []).map((shell) => (
+                  <button
+                    key={shell.id}
+                    type="button"
+                    onClick={() => {
+                      setLauncher(false);
+                      void openSession(shell.id, defaultCwd);
+                    }}
+                  >
+                    {shell.label}
+                  </button>
+                ))}
+              </section>
+              {enabledTools.length > 0 && (
+                <section>
+                  <h3>
+                    <Bot /> Ferramentas de IA
+                  </h3>
+                  {enabledTools.map((tool) => {
+                    const name = tool.command.split(/\s+/)[0]!;
+                    const found = tools[name];
+                    return (
+                      <button
+                        key={tool.id}
+                        type="button"
+                        title={tool.command}
+                        onClick={() => {
+                          setLauncher(false);
+                          void launchTool(tool.command);
+                        }}
+                      >
+                        {tool.name}
+                        <small>{found === false ? "não encontrado no PATH" : tool.command}</small>
+                      </button>
+                    );
+                  })}
+                </section>
+              )}
+              {settings.ssh.length > 0 && (
+                <section>
+                  <h3>
+                    <Server /> SSH
+                  </h3>
+                  {settings.ssh.map((connection) => (
+                    <button
+                      key={connection.id}
+                      type="button"
+                      onClick={() => {
+                        setLauncher(false);
+                        void openSsh(connection);
+                      }}
+                    >
+                      {connection.name || connection.host}
+                      <small>
+                        {connection.user ? `${connection.user}@` : ""}
+                        {connection.host}
+                        {connection.port !== 22 ? `:${connection.port}` : ""}
+                      </small>
+                    </button>
+                  ))}
+                </section>
+              )}
+              {settings.snippets.length > 0 && (
+                <section>
+                  <h3>
+                    <Zap /> Comandos rápidos
+                  </h3>
+                  {settings.snippets.map((snippet) => (
+                    <button
+                      key={snippet.id}
+                      type="button"
+                      title={snippet.command}
+                      disabled={active === null}
+                      onClick={() => {
+                        setLauncher(false);
+                        runSnippet(snippet.command, snippet.run);
+                      }}
+                    >
+                      {snippet.name}
+                      <small>{snippet.run ? "executa" : "só digita"}</small>
+                    </button>
+                  ))}
+                </section>
+              )}
+              <section>
                 <button
-                  key={shell.id}
                   type="button"
                   onClick={() => {
                     setLauncher(false);
-                    void openSession(shell.id, defaultCwd);
+                    setSetup("manual");
                   }}
                 >
-                  {shell.label}
+                  <span>
+                    <Download className="terminal-inline-icon" /> Instalar CLIs de IA
+                  </span>
+                  <small>claude, codex, kiro-cli, opencode…</small>
                 </button>
-              ))}
-            </section>
-            {enabledTools.length > 0 && (
-              <section>
-                <h3>
-                  <Bot /> Ferramentas de IA
-                </h3>
-                {enabledTools.map((tool) => {
-                  const name = tool.command.split(/\s+/)[0]!;
-                  const found = tools[name];
-                  return (
-                    <button
-                      key={tool.id}
-                      type="button"
-                      title={tool.command}
-                      onClick={() => {
-                        setLauncher(false);
-                        void launchTool(tool.command);
-                      }}
-                    >
-                      {tool.name}
-                      <small>{found === false ? "não encontrado no PATH" : tool.command}</small>
-                    </button>
-                  );
-                })}
               </section>
-            )}
-            {settings.ssh.length > 0 && (
-              <section>
-                <h3>
-                  <Server /> SSH
-                </h3>
-                {settings.ssh.map((connection) => (
-                  <button
-                    key={connection.id}
-                    type="button"
-                    onClick={() => {
-                      setLauncher(false);
-                      void openSsh(connection);
-                    }}
-                  >
-                    {connection.name || connection.host}
-                    <small>
-                      {connection.user ? `${connection.user}@` : ""}
-                      {connection.host}
-                      {connection.port !== 22 ? `:${connection.port}` : ""}
-                    </small>
-                  </button>
-                ))}
-              </section>
-            )}
-            {settings.snippets.length > 0 && (
-              <section>
-                <h3>
-                  <Zap /> Comandos rápidos
-                </h3>
-                {settings.snippets.map((snippet) => (
-                  <button
-                    key={snippet.id}
-                    type="button"
-                    title={snippet.command}
-                    disabled={active === null}
-                    onClick={() => {
-                      setLauncher(false);
-                      runSnippet(snippet.command, snippet.run);
-                    }}
-                  >
-                    {snippet.name}
-                    <small>{snippet.run ? "executa" : "só digita"}</small>
-                  </button>
-                ))}
-              </section>
-            )}
-            <p className="terminal-launcher-hint">
-              Edite as listas em Configurações → Terminal avançado.
-            </p>
-          </div>
+              <p className="terminal-launcher-hint">
+                Edite as listas em Configurações → Terminal avançado.
+              </p>
+            </div>
+          )}
+          {setup && (
+            <CliSetup
+              desktop={desktop}
+              first={setup === "first"}
+              onInstall={(ids) => void installTools(ids)}
+              onClose={() => {
+                setSetup(null);
+                if (settingsRef.current.cliSetup !== "done") onSettings({ cliSetup: "done" });
+                // O foco volta para o prompt (o cartão não pode engolir a digitação).
+                if (active !== null) live.current.get(active)?.term.focus();
+              }}
+            />
+          )}
+        </div>
+        {agentMounted && (
+          <AgentCanvas
+            desktop={desktop}
+            graph={settings.agent}
+            cwd={activeSession?.cwd || defaultCwd}
+            hidden={!agentOpen}
+            onGraph={(agent) => onSettings({ agent })}
+            onSession={(result, title) =>
+              addSession(
+                {
+                  id: result.id,
+                  shell: result.shell,
+                  label: result.label,
+                  cwd: result.cwd,
+                  ssh: false,
+                  title: `⚙ ${title}`,
+                },
+                "",
+                false,
+              )
+            }
+            onFocusSession={(id) => {
+              setAgentOpen(false);
+              setActive(id);
+            }}
+            onClose={() => setAgentOpen(false)}
+          />
         )}
       </div>
     </div>

@@ -194,6 +194,11 @@ function keyApi(url: string): unknown {
 
 // Groq de mentira (4.0): mesma API compatível com OpenAI, respostas em streaming lento.
 const GROQ_KEY = "gsk_e2e_0123456789abcdefghijklmnopqrst";
+// PNG 4×4 vermelho (ícone do PWA e imagem do visualizador).
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGO4YqIARwzEcQDsgxKBAWEG3AAAAABJRU5ErkJggg==",
+  "base64",
+);
 const groqCalls: { url: string; auth: string; body: string }[] = [];
 // Linux sem chaveiro (xvfb): o safeStorage só cifra com a senha básica do Chromium.
 const GROQ_ENV = (_profile: string) => ({
@@ -228,6 +233,30 @@ function groq(request: http.IncomingMessage, response: http.ServerResponse, url:
           data: [{ id: "llama-3.3-70b-versatile" }, { id: "llama-3.1-8b-instant" }],
         }),
       );
+      return;
+    }
+    // 4.1.1: modo agente (sem streaming): plano em JSON ou o resultado de uma etapa.
+    let parsed: { stream?: boolean; response_format?: unknown; messages?: { content: string }[] } =
+      {};
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = {};
+    }
+    if (url === "/groq/chat/completions" && !parsed.stream) {
+      const last = parsed.messages?.at(-1)?.content ?? "";
+      const content = parsed.response_format
+        ? JSON.stringify({
+            steps: [
+              { id: "s1", title: "Pesquisar", tool: "groq", prompt: "pesquise o tema", after: [] },
+              { id: "s2", title: "Resumir", tool: "groq", prompt: "resuma", after: ["s1"] },
+            ],
+          })
+        : last.includes("RESULTADO-1")
+          ? "RESULTADO-2 (recebeu a etapa anterior)"
+          : "RESULTADO-1";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content } }] }));
       return;
     }
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -315,6 +344,40 @@ test.beforeAll(async () => {
       const target = decodeURIComponent(url.slice("/com-link?para=".length));
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(PAGES["/com-link"]!.replace("LINK", target));
+      return;
+    }
+    // 4.1.1: PWA instalável (manifesto + service worker em 127.0.0.1, que conta como seguro).
+    if (url === "/pwa/" || url === "/pwa/index.html") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        '<!doctype html><title>App PWA</title><link rel="manifest" href="/pwa/manifest.json">' +
+          "<h1>PWA</h1><script>navigator.serviceWorker.register('/pwa/sw.js', { scope: '/pwa/' })</script>",
+      );
+      return;
+    }
+    if (url === "/pwa/manifest.json") {
+      response.writeHead(200, { "content-type": "application/manifest+json" });
+      response.end(
+        JSON.stringify({
+          name: "Agzos Teste PWA",
+          short_name: "Teste",
+          start_url: "/pwa/",
+          scope: "/pwa/",
+          display: "standalone",
+          theme_color: "#d43420",
+          icons: [{ src: "/pwa/icon.png", sizes: "192x192", type: "image/png" }],
+        }),
+      );
+      return;
+    }
+    if (url === "/pwa/sw.js") {
+      response.writeHead(200, { "content-type": "text/javascript" });
+      response.end("self.addEventListener('fetch', () => {});");
+      return;
+    }
+    if (url === "/pwa/icon.png") {
+      response.writeHead(200, { "content-type": "image/png" });
+      response.end(TINY_PNG);
       return;
     }
     if (url === "/instavel" && unstableDown) {
@@ -2823,6 +2886,13 @@ test("4.0: Agzos AI pede a chave, guarda cifrada e responde em streaming", async
 const terminalText = (window: Page) =>
   window.locator(".terminal-screen:not([hidden]) .xterm-rows").innerText();
 
+/** 4.1.1: a primeira abertura do terminal oferece instalar as CLIs; os testes pulam. */
+async function skipCliSetup(window: Page) {
+  const setup = window.getByRole("dialog", { name: "Preparar as CLIs de IA" });
+  await setup.getByRole("button", { name: "Agora não" }).click();
+  await expect(setup).toHaveCount(0);
+}
+
 test("4.0: terminal de verdade: atalho, cd que persiste, Ctrl+C, resize e última pasta", async () => {
   test.skip(process.platform === "win32", "o e2e usa bash");
   const profile = tempProfile();
@@ -2831,6 +2901,7 @@ test("4.0: terminal de verdade: atalho, cd que persiste, Ctrl+C, resize e últim
   try {
     await first.window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
     await first.window.keyboard.press("Control+Alt+t");
+    await skipCliSetup(first.window);
     const dock = first.window.getByRole("region", { name: "Terminal" });
     await expect(dock).toBeVisible();
     await expect(dock.getByRole("tab")).toHaveCount(1);
@@ -2979,6 +3050,7 @@ test("4.1: terminal embaixo, à direita e flutuante sem perder as sessões; tema
   try {
     await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
     await window.keyboard.press("Control+Alt+t");
+    await skipCliSetup(window);
     const dock = window.getByRole("region", { name: "Terminal" });
     await expect(dock).toBeVisible();
     await expect.poll(() => terminalText(window)).toMatch(/\S/);
@@ -3081,6 +3153,7 @@ test("4.1: modo voz grava, transcreve com a Groq e cola o comando no prompt", as
 
     await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
     await window.keyboard.press("Control+Alt+t");
+    await skipCliSetup(window);
     const dock = window.getByRole("region", { name: "Terminal" });
     await expect.poll(() => terminalText(window)).toMatch(/\S/);
     await dock.getByRole("button", { name: "Falar um comando (modo voz)" }).click();
@@ -3094,6 +3167,215 @@ test("4.1: modo voz grava, transcreve com a Groq e cola o comando no prompt", as
     await window.keyboard.press("Enter");
     await expect.poll(() => terminalText(window)).toContain("VOZ-23");
     expect(groqCalls.some((call) => call.url === "/groq/audio/transcriptions")).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1.1: aba renomeada, modo ls lateral, snippets, skills e arquivos abertos no navegador", async () => {
+  test.skip(process.platform === "win32", "o e2e usa bash");
+  const profile = tempProfile();
+  const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agzos-arquivos-")));
+  fs.mkdirSync(path.join(folder, "sub"));
+  fs.writeFileSync(path.join(folder, "codigo.ts"), "const tag = '<b>negrito</b>';\n");
+  fs.writeFileSync(path.join(folder, "foto.png"), TINY_PNG);
+  fs.mkdirSync(path.join(folder, ".claude", "skills", "revisar"), { recursive: true });
+  fs.writeFileSync(
+    path.join(folder, ".claude", "skills", "revisar", "SKILL.md"),
+    "---\nname: revisar\ndescription: Revisa o código do projeto\n---\n",
+  );
+  const { app, window } = await launch(profile);
+  const type = async (text: string) => {
+    await window.keyboard.type(text);
+    await window.keyboard.press("Enter");
+  };
+  try {
+    await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await window.keyboard.press("Control+Alt+t");
+    // Primeira abertura: oferece instalar as CLIs de IA (kiro-cli e codex entre elas).
+    const setup = window.getByRole("dialog", { name: "Preparar as CLIs de IA" });
+    await expect(setup).toContainText("Kiro CLI");
+    await expect(setup).toContainText("Codex");
+    await setup.getByRole("button", { name: "Agora não" }).click();
+    const dock = window.getByRole("region", { name: "Terminal" });
+    await expect.poll(() => terminalText(window)).toMatch(/\S/);
+    await window.locator(".terminal-dock .xterm").click();
+    await type(`cd '${folder}'`);
+
+    // Nome da aba: duplo clique, digita, Enter.
+    await dock.getByRole("tab").locator("span").first().dblclick();
+    await dock.getByLabel("Nome da aba").fill("meu-build");
+    await dock.getByLabel("Nome da aba").press("Enter");
+    await expect(dock.getByRole("tab")).toHaveText(/meu-build/);
+
+    // Modo ls: a pasta da sessão; escolher uma pasta faz o cd no terminal.
+    await dock.getByRole("button", { name: /Arquivos — modo ls lateral/ }).click();
+    const list = dock.getByRole("listbox", { name: "Arquivos da pasta" });
+    await expect(list).toContainText("codigo.ts");
+    await expect(list).not.toContainText(".claude");
+    await list.getByRole("option", { name: /^sub/ }).click();
+    await expect(dock.locator(".terminal-files-path")).toHaveText(path.join(folder, "sub"));
+    await window.locator(".terminal-dock .xterm").click();
+    await type("echo ONDE=$(basename $PWD)");
+    await expect.poll(() => terminalText(window)).toContain("ONDE=sub");
+    await dock.getByRole("button", { name: "Pasta acima" }).click();
+    await expect(list).toContainText("codigo.ts");
+
+    // Código abre numa página de leitura (agzos-file), escapado.
+    const code = list.getByRole("option", { name: /codigo\.ts/ });
+    await code.hover();
+    await code.getByRole("button", { name: "Abrir codigo.ts no navegador" }).click();
+    await expect.poll(() => liveViews(app, "agzos-file:")).toHaveLength(1);
+    const codeUrl = (await liveViews(app, "agzos-file:"))[0]!;
+    expect(codeUrl).toContain("codigo.ts?k=");
+    await expect
+      .poll(() => inTab<string>(app, codeUrl, "document.querySelector('pre')?.innerText ?? ''"))
+      .toContain("<b>negrito</b>");
+
+    // Imagem abre no visualizador (título com as dimensões).
+    const photo = list.getByRole("option", { name: /foto\.png/ });
+    await photo.hover();
+    await photo.getByRole("button", { name: "Abrir foto.png no navegador" }).click();
+    const photoUrl = `file://${path.join(folder, "foto.png")}`;
+    await expect.poll(() => liveViews(app, "foto.png")).toEqual([photoUrl]);
+    await expect.poll(() => inTab<string>(app, photoUrl, "document.title")).toBe("foto.png (4×4)");
+
+    // Snippets: cria e roda.
+    await dock.getByRole("button", { name: "Snippets (comandos rápidos)" }).click();
+    await dock.getByLabel("Nome do snippet").fill("resposta");
+    await dock.getByLabel("Comando do snippet").fill("echo SNIP=$((6*7))");
+    await dock.getByRole("button", { name: "Adicionar snippet" }).click();
+    await dock
+      .getByRole("button", { name: /resposta/ })
+      .first()
+      .click();
+    await expect.poll(() => terminalText(window)).toContain("SNIP=42");
+
+    // Skills do projeto entram no prompt.
+    await dock.getByRole("button", { name: "Skills das CLIs de IA" }).click();
+    await dock.getByRole("button", { name: /\/revisar/ }).click();
+    await expect.poll(() => terminalText(window)).toContain("/revisar");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1.1: modo agente planeja com a Groq e roda as etapas em ordem, levando a saída adiante", async () => {
+  const profile = tempProfile();
+  const { app, window } = await launch(profile, GROQ_ENV(profile));
+  try {
+    const panel = window.getByRole("complementary", { name: "Agzos AI" });
+    await panel.getByLabel("Chave da API Groq").fill(GROQ_KEY);
+    await panel.getByRole("button", { name: "Salvar chave" }).click();
+    await expect(panel.getByLabel("Mensagem para Agzos AI")).toBeVisible();
+
+    await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await window.keyboard.press("Control+Alt+t");
+    await skipCliSetup(window);
+    const dock = window.getByRole("region", { name: "Terminal" });
+    await dock.getByRole("button", { name: "Modo agente" }).click();
+    const canvas = dock.getByRole("region", { name: "Modo agente" });
+    await canvas.getByLabel("Objetivo para os agentes").fill("Pesquisar e resumir um tema");
+    await canvas.getByRole("button", { name: "Planejar com IA" }).click();
+    await expect(canvas.getByRole("article")).toHaveCount(2);
+    await expect(canvas.getByLabel("Nome da etapa").first()).toHaveValue("Pesquisar");
+    await expect(canvas.locator(".agent-edge")).toHaveCount(1);
+    await canvas.getByRole("button", { name: "Executar" }).click();
+    await expect(canvas.getByRole("status")).toContainText("Fluxo concluído.");
+    await expect(canvas.getByRole("article", { name: "Etapa Resumir" })).toContainText(
+      "RESULTADO-2 (recebeu a etapa anterior)",
+    );
+    const plan = groqCalls.find((call) => call.body.includes("json_object"));
+    expect(plan?.body).toContain("Pesquisar e resumir um tema");
+
+    // O canvas fica salvo nas preferências.
+    await canvas.getByRole("button", { name: "Fechar o modo agente" }).click();
+    await expect(canvas).toBeHidden();
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada e desinstala", async () => {
+  const profile = tempProfile();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-home-"));
+  const env = { AGZOS_TEST_PWA_CONFIRM: "1", AGZOS_TEST_HOME: home };
+  const pwaWindows = (app: ElectronApplication) =>
+    app.evaluate(({ webContents }) =>
+      webContents
+        .getAllWebContents()
+        .filter((contents) => contents.session.getStoragePath()?.includes("pwa-"))
+        .map((contents) => contents.getURL()),
+    );
+  let { app, window } = await launch(profile, env);
+  let appId = "";
+  try {
+    await go(window, `${origin}/pwa/`);
+    const install = window.getByRole("button", { name: "Instalar o app" });
+    await expect(install).toBeVisible({ timeout: 20_000 });
+    await install.click();
+    await expect.poll(() => pwaWindows(app)).toEqual([`${origin}/pwa/`]);
+    await expect(window.getByRole("button", { name: "Abrir o app instalado" })).toBeVisible();
+    // Atalho do sistema (menu de aplicativos do Linux) e ícone do app.
+    const shortcuts = fs.readdirSync(path.join(home, ".local", "share", "applications"));
+    expect(shortcuts).toHaveLength(1);
+    appId = /^agzos-pwa-([a-f0-9]{16})\.desktop$/.exec(shortcuts[0]!)![1]!;
+    const entry = fs.readFileSync(
+      path.join(home, ".local", "share", "applications", shortcuts[0]!),
+      "utf8",
+    );
+    expect(entry).toContain(`--agzos-pwa=${appId}`);
+    expect(entry).toContain("Name=Agzos Teste PWA");
+    expect(fs.existsSync(path.join(profile, "pwa", appId, "icon.png"))).toBe(true);
+    // Sem barra de guias: a janela do app carrega o site direto, em outra session.
+    const isolated = await app.evaluate(async ({ webContents, session }, url) => {
+      const pwa = webContents
+        .getAllWebContents()
+        .find(
+          (contents) => contents.getURL() === url && contents.session !== session.defaultSession,
+        )!;
+      await pwa.executeJavaScript("document.cookie = 'quem=pwa; path=/'");
+      const tab = webContents
+        .getAllWebContents()
+        .find(
+          (contents) => contents.getURL() === url && contents.session === session.defaultSession,
+        )!;
+      return tab.executeJavaScript("document.cookie");
+    }, `${origin}/pwa/`);
+    expect(isolated).not.toContain("quem=pwa");
+  } finally {
+    await app.close();
+  }
+
+  // O atalho (--agzos-pwa=<id>) abre só a janela do app.
+  const direct = await electron.launch({
+    args: ["--no-sandbox", root, `--agzos-pwa=${appId}`],
+    cwd: root,
+    env: { ...process.env, AGZOS_USER_DATA: profile, ...env },
+  });
+  try {
+    await expect.poll(() => pwaWindows(direct)).toEqual([`${origin}/pwa/`]);
+    const shells = await direct.evaluate(
+      ({ webContents }) =>
+        webContents
+          .getAllWebContents()
+          .filter((contents) => /index\.html|--dev-url/.test(contents.getURL())).length,
+    );
+    expect(shells).toBe(0);
+  } finally {
+    await direct.close();
+  }
+
+  ({ app, window } = await launch(profile, env));
+  try {
+    await go(window, "agzos://configuracoes");
+    await window.getByRole("button", { name: "Apps instalados" }).first().click();
+    const list = window.getByRole("list", { name: "Apps instalados" });
+    await expect(list).toContainText("Agzos Teste PWA");
+    await list.getByRole("button", { name: "Desinstalar Agzos Teste PWA" }).click();
+    await expect(list).toContainText("Nenhum app instalado ainda.");
+    expect(fs.readdirSync(path.join(home, ".local", "share", "applications"))).toEqual([]);
+    expect(fs.existsSync(path.join(profile, "pwa", appId))).toBe(false);
   } finally {
     await app.close();
   }

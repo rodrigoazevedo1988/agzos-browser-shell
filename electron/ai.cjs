@@ -461,6 +461,54 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
       return { ok: true, text };
     },
 
+    /**
+     * Resposta inteira, sem streaming e sem histórico (4.1.1: planejar e rodar nós de
+     * agente). `json` pede um objeto JSON (response_format).
+     */
+    async complete({ system, user, model, json = false, maxTokens = 2048 }) {
+      const key = readKey();
+      if (!key) return { ok: false, error: "no-key" };
+      const question = typeof user === "string" ? user.trim().slice(0, MESSAGE_LIMIT * 2) : "";
+      if (!question) return { ok: false, error: "request" };
+      let chosen = typeof model === "string" && model ? model : null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!chosen || attempt > 0) {
+          const list = await api.models({ refresh: attempt > 0 });
+          if (!list.ok) return list;
+          chosen = pickModel(
+            null,
+            list.models.filter((id) => id !== chosen || attempt === 0),
+          );
+        }
+        let response;
+        try {
+          response = await request(key, "/chat/completions", {
+            method: "POST",
+            body: JSON.stringify({
+              model: chosen,
+              messages: [
+                ...(system ? [{ role: "system", content: String(system).slice(0, 8000) }] : []),
+                { role: "user", content: question },
+              ],
+              max_tokens: maxTokens,
+              ...(json ? { response_format: { type: "json_object" } } : {}),
+            }),
+          });
+        } catch {
+          return { ok: false, error: "network" };
+        }
+        const body = await readJson(response);
+        if (!response.ok) {
+          const error = errorOfStatus(response.status, body);
+          if (error === "model-unavailable" && attempt === 0) continue;
+          return { ok: false, error, retryAfter: retryAfterOf(response.headers) };
+        }
+        const text = body?.choices?.[0]?.message?.content;
+        return { ok: true, text: typeof text === "string" ? text : "", model: chosen };
+      }
+      return { ok: false, error: "model-unavailable" };
+    },
+
     /** A chave da Groq para o ambiente dos terminais (opção do usuário); nunca para a casca. */
     keyForTerminal() {
       return readKey();
@@ -469,7 +517,51 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
   return api;
 }
 
+/** Pedido do modo agente: o objetivo vira etapas com a ferramenta de cada uma. */
+const AGENT_PLAN_SYSTEM = [
+  "Você planeja trabalho para vários agentes de IA de linha de comando que rodam no",
+  "computador do usuário. Divida o objetivo em 2 a 8 etapas pequenas. Cada etapa usa",
+  "uma ferramenta da lista e recebe a saída das etapas de que depende.",
+  'Responda só com JSON: {"steps":[{"id":"s1","title":"…","tool":"…","prompt":"…","after":["s0"]}]}',
+  "- title: até 40 caracteres; prompt: instrução completa e autossuficiente para a ferramenta;",
+  "- after: ids das etapas anteriores necessárias (vazio = começa já; etapas sem dependência",
+  "  entre si rodam em paralelo);",
+  "- sem ciclos; escreva em português.",
+].join("\n");
+
+/** Resposta do planejador → etapas válidas (ferramentas da lista, sem ciclo). */
+function parseAgentPlan(text, tools) {
+  let value;
+  try {
+    value = JSON.parse(String(text ?? "").replace(/^```(?:json)?\s*|```\s*$/g, ""));
+  } catch {
+    return [];
+  }
+  const raw = Array.isArray(value?.steps) ? value.steps : Array.isArray(value) ? value : [];
+  const allowed = new Set(tools);
+  const steps = [];
+  for (const item of raw.slice(0, 12)) {
+    if (!item || typeof item !== "object") continue;
+    const id = String(item.id ?? `s${steps.length + 1}`).slice(0, 20);
+    if (steps.some((step) => step.id === id)) continue;
+    const prompt = typeof item.prompt === "string" ? item.prompt.trim().slice(0, 4000) : "";
+    if (!prompt) continue;
+    const tool = allowed.has(item.tool) ? item.tool : (tools[0] ?? "groq");
+    const title =
+      (typeof item.title === "string" ? item.title.trim() : "").slice(0, 60) ||
+      `Etapa ${steps.length + 1}`;
+    // Só dependências que já apareceram: sem ciclo por construção.
+    const after = (Array.isArray(item.after) ? item.after : [])
+      .map(String)
+      .filter((dep) => steps.some((step) => step.id === dep));
+    steps.push({ id, title, tool, prompt, after: [...new Set(after)] });
+  }
+  return steps;
+}
+
 module.exports = {
+  AGENT_PLAN_SYSTEM,
+  parseAgentPlan,
   TRANSCRIBE_MODEL,
   transcriptionBody,
   DEFAULT_BASE_URL,

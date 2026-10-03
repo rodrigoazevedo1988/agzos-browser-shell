@@ -12,6 +12,8 @@ const {
   net,
   webContents,
   systemPreferences,
+  dialog,
+  nativeImage,
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -69,11 +71,12 @@ const {
   EDITED_FORM_SOURCE,
 } = require("./hibernate.cjs");
 const { createGxControl, runSpeedTest } = require("./gx-control.cjs");
-const { createAi } = require("./ai.cjs");
+const { createAi, AGENT_PLAN_SYSTEM, parseAgentPlan } = require("./ai.cjs");
 const { createTerminals, cwdReader, terminalKeepsBrowserKey } = require("./terminal.cjs");
 const {
   cleanAliases,
   detectCommands,
+  onPath,
   prepareAliases,
   sshArgs,
   sshBinary,
@@ -81,6 +84,39 @@ const {
 const { createSecrets } = require("./terminal-secrets.cjs");
 const { generateKey, keygenBinary, listKeys } = require("./ssh-keys.cjs");
 const { applyGpuFlags, watchGpuCrashes, setGpuEnabled, gpuStatus } = require("./gpu-flags.cjs");
+const {
+  CLI_TOOLS,
+  agentProgram,
+  cleanToolIds,
+  installProgram,
+  unixInstallScript,
+  windowsInstallLines,
+  withCliPath,
+} = require("./cli-install.cjs");
+const {
+  FILE_SCHEME,
+  createSkill,
+  findSkills,
+  handleFileRequest,
+  listDirectory,
+  pathOfFileUrl,
+  urlForPath,
+  viewableUrl,
+} = require("./files.cjs");
+const {
+  createPwaStore,
+  icnsFromPngs,
+  icoFromPngs,
+  iconCandidates,
+  installability,
+  linuxDesktopEntry,
+  macBundleFiles,
+  parseManifest,
+  pwaArgOf,
+  scopeContains,
+  shortcutPaths,
+  writeMacBundle,
+} = require("./pwa.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -103,6 +139,12 @@ if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_
 // dele o processo da GPU já subiu). Precisa do userData definido (estado em disco).
 const gpuRunMode = applyGpuFlags(app);
 watchGpuCrashes(app, gpuRunMode);
+
+// Uma instância por perfil (4.1.1): o atalho de um PWA instalado ou um segundo clique no
+// ícone chegam à instância aberta (second-instance) em vez de abrir outra com o mesmo
+// banco. O lock é por userData (os e2e usam perfis próprios).
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.exit(0);
 
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
 const developmentUrl = process.argv
@@ -489,7 +531,12 @@ function emitTab(contents, payload) {
 
 function isWebUrl(url) {
   if (url.startsWith("view-source:")) return isWebUrl(url.slice("view-source:".length));
-  return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
+  return (
+    url.startsWith("http://") ||
+    url.startsWith("https://") ||
+    url.startsWith("file://") ||
+    url.startsWith(`${FILE_SCHEME}:`)
+  );
 }
 
 function fullRect(ctx) {
@@ -942,6 +989,7 @@ function handlePageShortcut(ctx, input, event) {
 // Espelha src/features/browser/commands.ts; commands.test.ts confere que não falta nenhum.
 const FORWARDED_SHORTCUTS = new Set([
   "mod+t",
+  "mod+o",
   "mod+n",
   "mod+w",
   "mod+r",
@@ -1308,7 +1356,9 @@ function applyShieldConfig(prefs) {
 // Guias sendo preparadas com about:blank (a casca não vê essa carga).
 const primingContents = new WeakSet();
 
-async function loadWithScriptlets(contents, url) {
+async function loadWithScriptlets(contents, target) {
+  // 4.1.1: arquivo que o Chromium não mostra (código, binário) vai pelo agzos-file.
+  const url = viewableUrl(target, fileToken());
   // Guia nova de um site com scriptlets (ex.: YouTube, inclusive ao restaurar a sessão):
   // o CDP de uma guia que nunca navegou não garante o registro a tempo da primeira carga,
   // e numa SPA isso deixaria a sessão inteira sem os scriptlets. Então a guia passa antes
@@ -1489,8 +1539,17 @@ function wireView(view) {
   const contents = view.webContents;
   const ctxNow = () => tabOfContents.get(contents.id)?.ctx ?? null;
 
+  // Link para um arquivo local (listagem de pasta do file://): o mesmo desvio da carga.
+  contents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("file:")) return;
+    const target = viewableUrl(url, fileToken());
+    if (target === url) return;
+    event.preventDefault();
+    void contents.loadURL(target).catch(() => {});
+  });
   contents.on("did-start-navigation", (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
+    forgetPwa(contents);
     adblock?.resetPage(contents.id);
     ensureScriptlets(contents, details.url, "early");
   });
@@ -2985,6 +3044,7 @@ function registerIpc() {
     // Guia nova já na posição dela (na tela dividida o outro pane não passa por activate).
     applyLayout(ctx);
     wirePermissions(view.webContents.session);
+    ensureFileProtocol(view.webContents.session);
     wireView(view);
     const history = ctx.hibernated.get(id);
     ctx.hibernated.delete(id);
@@ -3362,9 +3422,184 @@ function registerIpc() {
   ipcMain.handle("terminal:tools", (_event, { commands } = {}) =>
     detectCommands(commands, {
       platform: process.platform,
-      env: process.env,
+      env: cliEnv(),
       exists: fs.existsSync,
     }),
+  );
+  // --- 4.1.1: nome da aba, CLIs de IA, arquivos, skills e modo agente. ---
+  ipcMain.handle("terminal:rename", (event, { id, title } = {}) => {
+    const ctx = terminalCtx(event);
+    if (!ctx || !terminals?.rename(ctx, id, title)) return false;
+    sendTerminal(ctx, "agzos:terminal-title", {
+      id,
+      title: typeof title === "string" ? title.trim().slice(0, 60) : "",
+    });
+    return true;
+  });
+  // Instalação das CLIs: aba nova com o script (Linux/macOS) ou os comandos digitados numa
+  // sessão do PowerShell (Windows). Só ids da lista fixa; o usuário vê tudo rodando.
+  ipcMain.handle("terminal:install-tools", (event, { ids, cols, rows } = {}) => {
+    const ctx = terminalCtx(event);
+    if (!ctx) return { ok: false, error: "window" };
+    const list = cleanToolIds(ids);
+    if (!list.length) return { ok: false, error: "empty" };
+    const service = terminalService();
+    if (process.platform === "win32") {
+      const result = service.open(ctx, { cols, rows, title: "Instalar CLIs de IA" });
+      if (!result.ok) return result;
+      const lines = windowsInstallLines(list, { home: os.homedir(), env: process.env });
+      // O PowerShell guarda o que chega antes do prompt; cada linha é um comando.
+      setTimeout(() => terminals?.write(ctx, result.id, `${lines.join("\r")}\r`), 700);
+      return result;
+    }
+    const dir = path.join(app.getPath("userData"), "terminal-init");
+    const file = path.join(dir, "install-clis.sh");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        file,
+        unixInstallScript(list, { home: os.homedir(), platform: process.platform }),
+        { mode: 0o700 },
+      );
+    } catch {
+      return { ok: false, error: "storage" };
+    }
+    return service.open(ctx, {
+      cols,
+      rows,
+      title: "Instalar CLIs de IA",
+      program: installProgram({ file }),
+    });
+  });
+  ipcMain.handle("terminal:open-agent", (event, { tool, prompt, cwd, title, cols, rows } = {}) => {
+    const ctx = terminalCtx(event);
+    if (!ctx) return { ok: false, error: "window" };
+    const recipe = CLI_TOOLS[tool];
+    if (!recipe?.headless) return { ok: false, error: "headless" };
+    const env = cliEnv();
+    const binary = onPathOf(recipe.command, env);
+    if (!binary) return { ok: false, error: "no-tool" };
+    const program = agentProgram({ tool, prompt, binary, platform: process.platform, env });
+    if (!program) return { ok: false, error: "request" };
+    return terminalService().open(ctx, {
+      cwd,
+      cols,
+      rows,
+      title: typeof title === "string" && title.trim() ? title.trim().slice(0, 60) : recipe.name,
+      program,
+    });
+  });
+  ipcMain.handle("agent:groq", async (_event, { prompt } = {}) =>
+    aiService().complete({ system: AGENT_GROQ_SYSTEM, user: prompt, maxTokens: 4096 }),
+  );
+  ipcMain.handle("agent:plan", async (_event, { goal, tools } = {}) => {
+    const allowed = (Array.isArray(tools) ? tools : []).filter(
+      (tool) => tool === "groq" || CLI_TOOLS[tool]?.headless,
+    );
+    if (!allowed.length) allowed.push("groq");
+    const result = await aiService().complete({
+      system: AGENT_PLAN_SYSTEM,
+      user: `Ferramentas disponíveis: ${allowed.join(", ")}\n("groq" responde texto; as outras são CLIs que leem e editam arquivos na pasta do projeto.)\n\nObjetivo: ${String(goal ?? "").slice(0, 4000)}`,
+      json: true,
+    });
+    if (!result.ok) return result;
+    const steps = parseAgentPlan(result.text, allowed);
+    return steps.length ? { ok: true, steps } : { ok: false, error: "plan" };
+  });
+  ipcMain.handle("terminal:skills", (_event, { cwd } = {}) =>
+    findSkills({ home: os.homedir(), cwd: typeof cwd === "string" ? cwd : "" }),
+  );
+  ipcMain.handle("terminal:skill-create", (_event, options = {}) =>
+    createSkill({ ...options, home: os.homedir() }),
+  );
+  ipcMain.handle("files:list", (event, { dir, hidden } = {}) => {
+    if (!isAppInterface(event.sender)) return { ok: false, error: "access" };
+    return listDirectory(typeof dir === "string" && dir ? dir : os.homedir(), {
+      hidden: hidden === true,
+    });
+  });
+  ipcMain.handle("files:home", () => os.homedir());
+  ipcMain.handle("files:open", (event, { file, where } = {}) => {
+    const ctx = terminalCtx(event);
+    if (!ctx || typeof file !== "string" || !path.isAbsolute(file)) return false;
+    if (where === "system") {
+      void shell.openPath(file);
+      return true;
+    }
+    if (where === "folder") {
+      shell.showItemInFolder(file);
+      return true;
+    }
+    openPathsInTabs(ctx, [file]);
+    return true;
+  });
+  // Ctrl+O: escolhe arquivos e abre cada um numa guia.
+  ipcMain.handle("files:pick", async (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return 0;
+    const result = await dialog.showOpenDialog(ctx.window, {
+      title: "Abrir arquivo",
+      properties: ["openFile", "multiSelections"],
+    });
+    if (result.canceled) return 0;
+    openPathsInTabs(ctx, result.filePaths);
+    return result.filePaths.length;
+  });
+  // "Abrir no app do sistema" da página de um arquivo (agzos-file): só o arquivo dela.
+  ipcMain.on("agzos:file-open-external", (event) => {
+    const file = pathOfFileUrl(event.sender.getURL(), fileToken());
+    if (file) void shell.openPath(file);
+  });
+  // Visualizador de imagem: os bytes da própria imagem da guia (exportar com anotações
+  // quando o canvas não pode ler um arquivo local). Só o endereço de quem pede.
+  ipcMain.handle("agzos:image-bytes", async (event) => {
+    if (!tabOfContents.has(event.sender.id)) return null;
+    const url = event.sender.getURL();
+    try {
+      if (url.startsWith("file:")) {
+        const file = require("node:url").fileURLToPath(url);
+        if (fs.statSync(file).size > 200 * 1024 * 1024) return null;
+        return new Uint8Array(fs.readFileSync(file));
+      }
+      if (/^https?:/i.test(url)) {
+        const response = await event.sender.session.fetch(url);
+        return response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  });
+  // --- PWA (4.1.1) ---
+  ipcMain.on("agzos:pwa-detect", (event, payload = {}) => {
+    if (typeof payload.manifestUrl !== "string") return;
+    void detectPwa(event.sender, {
+      manifestUrl: payload.manifestUrl,
+      serviceWorker: payload.serviceWorker === true,
+    }).catch(() => {});
+  });
+  ipcMain.handle("pwa:state", (event, { tabId } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), tabId);
+    return contents ? pwaStateOf(contents) : null;
+  });
+  ipcMain.handle("pwa:install", (event, { tabId } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? installPwa(ctx, tabId) : { ok: false, error: "window" };
+  });
+  ipcMain.handle("pwa:open", (_event, { id } = {}) => openPwaWindow(id));
+  ipcMain.handle("pwa:uninstall", (event, { id } = {}) =>
+    uninstallPwa(id, { parent: ctxOfEvent(event)?.window ?? null }),
+  );
+  ipcMain.handle("pwa:list", () =>
+    (pwaStore?.list() ?? []).map((record) => ({
+      id: record.id,
+      name: record.name,
+      startUrl: record.startUrl,
+      origin: record.origin,
+      installedAt: record.installedAt,
+      icon: pwaIconDataUrl(record.id),
+      open: Boolean(pwaWindows.get(record.id) && !pwaWindows.get(record.id).isDestroyed()),
+    })),
   );
   ipcMain.handle("terminal:secrets", () => ({
     names: terminalSecrets().names(),
@@ -3883,6 +4118,8 @@ function terminalService() {
   terminals ??= createTerminals({
     loadPty: () => require("node-pty"),
     homedir: os.homedir(),
+    // 4.1.1: pastas das CLIs de IA (~/.local/bin, npm global…) no PATH das sessões.
+    env: cliEnv(),
     readCwd: cwdReader(process.platform, require("node:child_process").execFile),
     onData: (ctx, id, data) => sendTerminal(ctx, "agzos:terminal-data", { id, data }),
     onExit: (ctx, id, info) => sendTerminal(ctx, "agzos:terminal-exit", { id, ...info }),
@@ -3985,6 +4222,599 @@ function closeTerminalPip(ctx) {
   // O "close" pode chegar depois desta chamada: o aviso de "fechada pelo usuário" não vale.
   ctx.closingPip = true;
   pip.close();
+}
+
+// --- Arquivos locais (4.1.1): agzos-file://, navegador do terminal e "Abrir arquivo". ---
+
+let fileTokenValue = null;
+/** Token das URLs agzos-file (fica no banco: as guias restauradas continuam abrindo). */
+function fileToken() {
+  if (fileTokenValue) return fileTokenValue;
+  let value = null;
+  try {
+    value = database?.getMeta("fileToken");
+  } catch {
+    value = null;
+  }
+  if (typeof value !== "string" || !/^[a-f0-9]{32}$/.test(value)) {
+    value = require("node:crypto").randomBytes(16).toString("hex");
+    try {
+      database?.setMeta("fileToken", value);
+    } catch {
+      // Sem banco: vale só nesta execução.
+    }
+  }
+  fileTokenValue = value;
+  return value;
+}
+
+const fileProtocolSessions = new WeakSet();
+function ensureFileProtocol(ses) {
+  if (!ses || fileProtocolSessions.has(ses)) return;
+  fileProtocolSessions.add(ses);
+  try {
+    ses.protocol.handle(FILE_SCHEME, (request) => handleFileRequest(request.url, fileToken()));
+  } catch (error) {
+    console.error("Agzos: agzos-file indisponível.", error?.message);
+  }
+}
+
+/** Abre caminhos locais em guias novas da janela (HTML, PDF, imagem, código, qualquer um). */
+function openPathsInTabs(ctx, files) {
+  for (const file of files.slice(0, 20)) {
+    if (typeof file !== "string" || !path.isAbsolute(file)) continue;
+    send(ctx, "agzos:open-request", { url: urlForPath(file, fileToken()) });
+  }
+}
+
+/** Home das integrações com o sistema (os e2e usam uma pasta temporária). */
+function integrationHome() {
+  return (!app.isPackaged && process.env.AGZOS_TEST_HOME) || os.homedir();
+}
+
+/** e2e: instalar/desinstalar PWA sem o diálogo (nunca no app empacotado). */
+function skipPwaConfirm() {
+  return !app.isPackaged && process.env.AGZOS_TEST_PWA_CONFIRM === "1";
+}
+
+/** Ambiente com as pastas das CLIs de IA no PATH (terminais e detecção). */
+function cliEnv() {
+  return withCliPath(process.env, { platform: process.platform, home: os.homedir() });
+}
+
+function onPathOf(command, env) {
+  return onPath(command, { platform: process.platform, env, exists: fs.existsSync });
+}
+
+// --- Modo agente (4.1.1): nós que rodam CLIs sem interação ou a Groq. ---
+
+const AGENT_GROQ_SYSTEM = [
+  "Você é um agente que executa uma etapa de um fluxo com vários agentes.",
+  "Responda só com o resultado da etapa, direto e completo, em português.",
+].join(" ");
+
+// --- PWA (4.1.1) ---
+
+let pwaStore = null;
+/** webContents.id da guia → o que a página anunciou ({ manifest, check, documentUrl }). */
+const pwaDetected = new Map();
+/** id do app → janela aberta. */
+const pwaWindows = new Map();
+const pwaSessions = new WeakSet();
+
+function pwaDir(id) {
+  return path.join(app.getPath("userData"), "pwa", id);
+}
+
+function pwaLaunchArgs(id) {
+  // Em desenvolvimento (electron .) o caminho do app vai antes do argumento.
+  return [...(process.defaultApp ? [app.getAppPath()] : []), `--agzos-pwa=${id}`];
+}
+
+/** Estado do app da guia para a casca: instalável, já instalado ou nada. */
+function pwaStateOf(contents) {
+  const info = pwaDetected.get(contents.id);
+  if (!info?.check.ok) return null;
+  const installed = Boolean(pwaStore?.get(info.manifest.id));
+  return { id: info.manifest.id, name: info.manifest.name, installed };
+}
+
+function emitPwa(contents) {
+  const where = tabOfContents.get(contents.id);
+  if (where) send(where.ctx, "agzos:pwa-state", { tabId: where.id, pwa: pwaStateOf(contents) });
+}
+
+function forgetPwa(contents) {
+  if (!pwaDetected.delete(contents.id)) return;
+  emitPwa(contents);
+}
+
+/** A página tem manifesto (e service worker): lê o manifesto na session da guia. */
+async function detectPwa(contents, { manifestUrl, serviceWorker }) {
+  if (!tabOfContents.has(contents.id) || isPrivateContents(contents)) return;
+  const documentUrl = contents.getURL();
+  let manifestHref;
+  try {
+    const url = new URL(manifestUrl, documentUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return;
+    manifestHref = url.href;
+  } catch {
+    return;
+  }
+  const previous = pwaDetected.get(contents.id);
+  if (
+    previous &&
+    previous.manifestUrl === manifestHref &&
+    previous.serviceWorker === serviceWorker
+  ) {
+    emitPwa(contents);
+    return;
+  }
+  let json = null;
+  try {
+    const response = await contents.session.fetch(manifestHref, { credentials: "include" });
+    if (response.ok) {
+      const text = await response.text();
+      if (text.length < 512 * 1024) json = JSON.parse(text);
+    }
+  } catch {
+    json = null;
+  }
+  if (contents.isDestroyed() || contents.getURL() !== documentUrl) return;
+  const manifest = parseManifest(json, { manifestUrl: manifestHref, documentUrl });
+  const check = installability(manifest, { serviceWorker, documentUrl });
+  pwaDetected.set(contents.id, {
+    manifest,
+    check,
+    documentUrl,
+    manifestUrl: manifestHref,
+    serviceWorker,
+    session: contents.session,
+  });
+  emitPwa(contents);
+}
+
+/** Primeiro ícone do manifesto que o nativeImage consegue abrir. */
+async function fetchPwaIcon(ses, icons) {
+  for (const icon of iconCandidates(icons).slice(0, 6)) {
+    try {
+      const response = await ses.fetch(icon.src);
+      if (!response.ok) continue;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const image = nativeImage.createFromBuffer(buffer);
+      if (!image.isEmpty()) return image;
+    } catch {
+      // Próximo.
+    }
+  }
+  return nativeImage.createFromPath(path.join(__dirname, "icons", "icon.png"));
+}
+
+const pngOf = (image, size) => image.resize({ width: size, height: size, quality: "best" }).toPNG();
+
+/** Atalhos do sistema para o app. Devolve onde ficaram (para desinstalar). */
+function writePwaShortcuts(record, image) {
+  const dir = pwaDir(record.id);
+  fs.mkdirSync(dir, { recursive: true });
+  const png = path.join(dir, "icon.png");
+  fs.writeFileSync(png, pngOf(image, 256));
+  const home = integrationHome();
+  const where = shortcutPaths({
+    platform: process.platform,
+    home,
+    env: process.env,
+    name: record.name,
+    id: record.id,
+  });
+  const args = pwaLaunchArgs(record.id);
+  const written = {};
+  if (process.platform === "win32") {
+    const ico = path.join(dir, "icon.ico");
+    fs.writeFileSync(
+      ico,
+      icoFromPngs([16, 24, 32, 48, 64, 256].map((size) => ({ size, png: pngOf(image, size) }))),
+    );
+    for (const key of ["menu", "desktop"]) {
+      try {
+        fs.mkdirSync(path.dirname(where[key]), { recursive: true });
+        const ok = shell.writeShortcutLink(where[key], "replace", {
+          target: process.execPath,
+          args: args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" "),
+          icon: ico,
+          iconIndex: 0,
+          appUserModelId: `br.agzos.browser.pwa.${record.id}`,
+          description: `${record.name} (Agzos Browser)`,
+        });
+        if (ok) written[key] = where[key];
+      } catch {
+        // Sem área de trabalho, por exemplo: segue com o outro atalho.
+      }
+    }
+  } else if (process.platform === "darwin") {
+    const bundle = where.bundle;
+    const appBundle = /^(.*?\.app)\/Contents\/MacOS\//.exec(process.execPath)?.[1] ?? null;
+    writeMacBundle(
+      bundle,
+      macBundleFiles({ id: record.id, name: record.name, appBundle, exec: process.execPath, args }),
+      icnsFromPngs([32, 64, 128, 256, 512].map((size) => ({ size, png: pngOf(image, size) }))),
+    );
+    written.bundle = bundle;
+  } else {
+    fs.mkdirSync(path.dirname(where.menu), { recursive: true });
+    fs.writeFileSync(
+      where.menu,
+      linuxDesktopEntry({
+        name: record.name,
+        exec: process.env.APPIMAGE || process.execPath,
+        args,
+        icon: png,
+        url: record.origin,
+      }),
+      { mode: 0o755 },
+    );
+    written.menu = where.menu;
+  }
+  return written;
+}
+
+function removePwaShortcuts(record) {
+  for (const file of Object.values(record.shortcuts ?? {})) {
+    if (typeof file !== "string" || !file) continue;
+    try {
+      fs.rmSync(file, { recursive: true, force: true });
+    } catch {
+      // Já saiu.
+    }
+  }
+}
+
+async function installPwa(ctx, tabId) {
+  const contents = tabContents(ctx, tabId);
+  const info = contents ? pwaDetected.get(contents.id) : null;
+  if (!info?.check.ok) return { ok: false, error: "not-installable" };
+  const { manifest } = info;
+  if (pwaStore.get(manifest.id)) {
+    openPwaWindow(manifest.id);
+    return { ok: true, id: manifest.id, opened: true };
+  }
+  const image = await fetchPwaIcon(info.session, manifest.icons);
+  if (!skipPwaConfirm()) {
+    const { response } = await dialog.showMessageBox(ctx.window, {
+      type: "none",
+      icon: image.resize({ width: 64, height: 64 }),
+      buttons: ["Instalar", "Cancelar"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Instalar app",
+      message: `Instalar ${manifest.name}?`,
+      detail:
+        `${manifest.origin}\n\nO app abre em janela própria, sem a barra de guias, e ganha um ` +
+        "ícone no sistema. Login, zoom e permissões dele ficam separados das guias.",
+    });
+    if (response !== 0) return { ok: false, error: "cancelled" };
+  }
+  const record = {
+    id: manifest.id,
+    name: manifest.name,
+    startUrl: manifest.startUrl,
+    scope: manifest.scope,
+    origin: manifest.origin,
+    themeColor: manifest.themeColor,
+    backgroundColor: manifest.backgroundColor,
+    display: manifest.display,
+    installedAt: Date.now(),
+    shortcuts: {},
+    bounds: null,
+    zoom: 0,
+  };
+  try {
+    record.shortcuts = writePwaShortcuts(record, image);
+  } catch (error) {
+    console.error("Agzos: atalho do app não gravado.", error?.message);
+  }
+  pwaStore.put(record);
+  broadcast("agzos:pwa-changed", {});
+  emitPwa(contents);
+  openPwaWindow(record.id);
+  return { ok: true, id: record.id };
+}
+
+async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
+  const record = pwaStore?.get(id);
+  if (!record) return { ok: false, error: "missing" };
+  if (confirm && !skipPwaConfirm()) {
+    const options = {
+      type: "question",
+      buttons: ["Desinstalar", "Cancelar"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Desinstalar app",
+      message: `Desinstalar ${record.name}?`,
+      detail: "O atalho do sistema e os dados do app (login, cache, permissões) saem.",
+    };
+    const { response } = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    if (response !== 0) return { ok: false, error: "cancelled" };
+  }
+  const win = pwaWindows.get(id);
+  if (win && !win.isDestroyed()) win.destroy();
+  pwaWindows.delete(id);
+  removePwaShortcuts(record);
+  try {
+    fs.rmSync(pwaDir(id), { recursive: true, force: true });
+  } catch {
+    // Ícone preso: sai na próxima.
+  }
+  const ses = session.fromPartition(`persist:pwa-${id}`);
+  await ses.clearStorageData().catch(() => {});
+  await ses.clearCache().catch(() => {});
+  try {
+    database?.deleteSiteSettings(record.origin, `pwa:${id}:`);
+  } catch {
+    // Sem banco.
+  }
+  pwaStore.remove(id);
+  broadcast("agzos:pwa-changed", {});
+  for (const ctx of contexts.values()) {
+    for (const { view } of ctx.views.values()) {
+      if (!view.webContents.isDestroyed() && pwaDetected.has(view.webContents.id)) {
+        emitPwa(view.webContents);
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/** Permissões do app: salvas à parte (pwa:<id>:permission:<tipo>), perguntadas na janela dele. */
+function wirePwaSession(ses, id) {
+  if (pwaSessions.has(ses)) return;
+  pwaSessions.add(ses);
+  const keyOf = (type) => `pwa:${id}:permission:${type}`;
+  const saved = (origin, type) => {
+    try {
+      return database?.getSiteSetting(origin, keyOf(type)) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const types = permissionTypesOf(permission, details);
+    if (!types) {
+      callback(AUTO_ALLOWED.includes(permission));
+      return;
+    }
+    const origin = requestOrigin(details);
+    if (!origin) {
+      callback(false);
+      return;
+    }
+    const values = types.map((type) => saved(origin, type));
+    if (values.includes("block")) return callback(false);
+    if (values.every((value) => value === "allow")) return callback(true);
+    const parent = BrowserWindow.fromWebContents(contents);
+    const labels = {
+      camera: "câmera",
+      microphone: "microfone",
+      notifications: "notificações",
+      geolocation: "localização",
+      "clipboard-read": "área de transferência",
+      midi: "MIDI",
+    };
+    const options = {
+      type: "question",
+      buttons: ["Permitir", "Bloquear"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Permissão",
+      message: `${new URL(origin).host} quer usar: ${types.map((type) => labels[type] ?? type).join(", ")}`,
+      checkboxLabel: "Lembrar a decisão neste app",
+      checkboxChecked: true,
+    };
+    const asking = parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+    void asking.then(({ response, checkboxChecked }) => {
+      const allow = response === 0;
+      if (checkboxChecked) {
+        for (const type of types) {
+          try {
+            database?.setSiteSetting(origin, keyOf(type), allow ? "allow" : "block");
+          } catch {
+            // Vale só agora.
+          }
+        }
+      }
+      callback(allow);
+    });
+  });
+  ses.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
+    const types = checkTypesOf(permission, details);
+    if (!types) return true;
+    const origin = requestOrigin({ ...details, requestingOrigin });
+    return !origin || !types.some((type) => saved(origin, type) === "block");
+  });
+}
+
+/** Abre um endereço numa guia do navegador (abre uma janela se só houver apps). */
+function openInBrowser(url) {
+  const ctx = lastFocused ?? [...contexts.values()][0] ?? null;
+  if (ctx) {
+    send(ctx, "agzos:open-request", { url });
+    ctx.window.show();
+    ctx.window.focus();
+    return;
+  }
+  const created = openSavedWindows() ? [...contexts.values()][0] : createWindow();
+  created?.window.webContents.once("did-finish-load", () =>
+    setTimeout(() => send(created, "agzos:open-request", { url }), 800),
+  );
+}
+
+function openPwaWindow(id, url = null) {
+  const record = pwaStore?.get(id);
+  if (!record) return false;
+  const current = pwaWindows.get(id);
+  if (current && !current.isDestroyed()) {
+    if (url) void current.webContents.loadURL(url).catch(() => {});
+    if (current.isMinimized()) current.restore();
+    current.show();
+    current.focus();
+    return true;
+  }
+  const ses = session.fromPartition(`persist:pwa-${id}`);
+  wirePwaSession(ses, id);
+  let bounds = null;
+  try {
+    bounds = fitBounds(
+      record.bounds,
+      screen.getAllDisplays().map((display) => display.workArea),
+    );
+  } catch {
+    bounds = null;
+  }
+  const icon = path.join(pwaDir(id), "icon.png");
+  const win = new BrowserWindow({
+    title: record.name,
+    width: 1100,
+    height: 760,
+    ...(bounds ?? {}),
+    minWidth: 320,
+    minHeight: 240,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: record.backgroundColor ?? "#FFFFFF",
+    ...(process.platform !== "darwin" && fs.existsSync(icon) ? { icon } : {}),
+    webPreferences: {
+      session: ses,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  if (process.platform === "win32") {
+    try {
+      win.setAppDetails({
+        appId: `br.agzos.browser.pwa.${id}`,
+        appIconPath: path.join(pwaDir(id), "icon.ico"),
+        relaunchCommand: [process.execPath, ...pwaLaunchArgs(id)]
+          .map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg))
+          .join(" "),
+        relaunchDisplayName: record.name,
+      });
+    } catch {
+      // Versões sem a API.
+    }
+  }
+  pwaWindows.set(id, win);
+  const contents = win.webContents;
+  applyChromeIdentity(contents);
+  win.once("ready-to-show", () => win.show());
+  // Sem tela em branco se a página demorar.
+  setTimeout(() => !win.isDestroyed() && !win.isVisible() && win.show(), 3000).unref?.();
+  let timer = null;
+  const saveBounds = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isMinimized() && !win.isFullScreen()) {
+        pwaStore?.update(id, { bounds: win.getNormalBounds() });
+      }
+    }, 400);
+  };
+  win.on("resize", saveBounds);
+  win.on("move", saveBounds);
+  win.on("closed", () => {
+    clearTimeout(timer);
+    if (pwaWindows.get(id) === win) pwaWindows.delete(id);
+  });
+  // Zoom do app (isolado das guias do mesmo site).
+  const setZoom = (level) => {
+    contents.setZoomLevel(level);
+    pwaStore?.update(id, { zoom: level });
+  };
+  contents.on("did-navigate", () => contents.setZoomLevel(pwaStore?.get(id)?.zoom ?? 0));
+  contents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const mod = process.platform === "darwin" ? input.meta : input.control;
+    const key = input.key.toLowerCase();
+    const run = (work) => {
+      event.preventDefault();
+      work();
+    };
+    if ((mod && key === "r") || key === "f5") run(() => contents.reload());
+    else if (input.alt && key === "arrowleft") run(() => contents.navigationHistory.goBack());
+    else if (input.alt && key === "arrowright") run(() => contents.navigationHistory.goForward());
+    else if (mod && (key === "=" || key === "+"))
+      run(() => setZoom(Math.min(8, contents.getZoomLevel() + 0.5)));
+    else if (mod && key === "-") run(() => setZoom(Math.max(-8, contents.getZoomLevel() - 0.5)));
+    else if (mod && key === "0") run(() => setZoom(0));
+    else if (key === "f11") run(() => win.setFullScreen(!win.isFullScreen()));
+  });
+  // Links para fora do app vão para o navegador; popups (login OAuth) abrem como popup.
+  contents.setWindowOpenHandler(({ url, features, disposition }) => {
+    if (!/^https?:/i.test(url)) return { action: "deny" };
+    if (features || disposition === "new-window") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: { autoHideMenuBar: true, webPreferences: { session: ses } },
+      };
+    }
+    if (scopeContains(record.scope, url)) void contents.loadURL(url).catch(() => {});
+    else openInBrowser(url);
+    return { action: "deny" };
+  });
+  contents.on("context-menu", (_event, params) => {
+    const items = [];
+    if (params.linkURL && /^https?:/i.test(params.linkURL)) {
+      items.push(
+        { label: "Abrir link no Agzos Browser", click: () => openInBrowser(params.linkURL) },
+        { label: "Copiar endereço do link", click: () => clipboard.writeText(params.linkURL) },
+        { type: "separator" },
+      );
+    }
+    if (params.isEditable) {
+      items.push(
+        { role: "cut", label: "Recortar" },
+        { role: "copy", label: "Copiar" },
+        { role: "paste", label: "Colar" },
+        { type: "separator" },
+      );
+    } else if (params.selectionText) {
+      items.push({ role: "copy", label: "Copiar" }, { type: "separator" });
+    }
+    items.push(
+      {
+        label: "Voltar",
+        enabled: contents.navigationHistory.canGoBack(),
+        click: () => contents.navigationHistory.goBack(),
+      },
+      {
+        label: "Avançar",
+        enabled: contents.navigationHistory.canGoForward(),
+        click: () => contents.navigationHistory.goForward(),
+      },
+      { label: "Recarregar", click: () => contents.reload() },
+      { type: "separator" },
+      { label: "Copiar endereço da página", click: () => clipboard.writeText(contents.getURL()) },
+      { label: "Abrir no Agzos Browser", click: () => openInBrowser(contents.getURL()) },
+      { type: "separator" },
+      {
+        label: `Desinstalar ${record.name}…`,
+        click: () => void uninstallPwa(id, { parent: win }),
+      },
+    );
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
+  void contents.loadURL(url ?? record.startUrl).catch(() => {});
+  return true;
+}
+
+function pwaIconDataUrl(id) {
+  try {
+    const image = nativeImage.createFromPath(path.join(pwaDir(id), "icon.png"));
+    return image.isEmpty() ? null : image.resize({ width: 48, height: 48 }).toDataURL();
+  } catch {
+    return null;
+  }
 }
 
 let ai = null;
@@ -4181,6 +5011,7 @@ function macMenuTemplate() {
       label: "Arquivo",
       submenu: [
         command("Nova guia", "tab.new", "Cmd+T"),
+        command("Abrir arquivo…", "file.open", "Cmd+O"),
         {
           label: "Nova janela",
           accelerator: "Cmd+N",
@@ -4339,14 +5170,33 @@ app.whenReady().then(() => {
   }
   startServices();
   registerIpc();
-  // Modo seguro vale só para a restauração do início (não para o Dock do Mac depois).
-  startup.restoredWindows = openSavedWindows({ safe: startup.early });
-  if (!contexts.size) createWindow();
+  pwaStore = createPwaStore({ database });
+  // Atalho de um PWA instalado: só a janela do app (as janelas do navegador continuam
+  // salvas para a próxima vez que o navegador abrir).
+  const launchPwa = pwaArgOf(process.argv);
+  if (launchPwa && openPwaWindow(launchPwa)) {
+    startup.restoredWindows = 0;
+  } else {
+    // Modo seguro vale só para a restauração do início (não para o Dock do Mac depois).
+    startup.restoredWindows = openSavedWindows({ safe: startup.early });
+    if (!contexts.size) createWindow();
+  }
   startup = { ...startup, early: startup.early && startup.restoredWindows > 0 };
   setInterval(
     () => void checkHibernation(),
     Number(process.env.AGZOS_HIBERNATE_CHECK_MS) || CHECK_INTERVAL_MS,
   ).unref();
+  // Segunda execução (atalho de PWA, ícone do app clicado de novo): vem para esta.
+  app.on("second-instance", (_event, argv) => {
+    const id = pwaArgOf(argv);
+    if (id && openPwaWindow(id)) return;
+    const ctx = lastFocused ?? [...contexts.values()][0] ?? null;
+    if (ctx && !ctx.window.isDestroyed()) {
+      if (ctx.window.isMinimized()) ctx.window.restore();
+      ctx.window.show();
+      ctx.window.focus();
+    } else if (!openSavedWindows()) createWindow();
+  });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && !openSavedWindows()) createWindow();
   });

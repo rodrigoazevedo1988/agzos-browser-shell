@@ -73,6 +73,7 @@ export type CommandId =
   | "control.open"
   | "ai.toggle"
   | "terminal.toggle"
+  | "file.open"
   | "dial.open"
   | "history.open"
   | "bookmarks.manager"
@@ -584,6 +585,15 @@ export const commands: Command[] = [
     visible: ({ desktop }) => desktop !== null,
     run: ({ state, dispatch }) =>
       dispatch({ type: "prefs/set", patch: { terminalOpen: !state.prefs.terminalOpen } }),
+  },
+  {
+    id: "file.open",
+    label: "Abrir arquivo…",
+    // 4.1.1: HTML, SVG, PDF, imagens, código ou qualquer outro arquivo numa guia.
+    shortcuts: [{ key: "o" }],
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ desktop }) => void desktop?.filesPick(),
   },
   {
     id: "dial.open",

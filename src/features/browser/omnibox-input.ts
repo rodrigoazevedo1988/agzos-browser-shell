@@ -2,6 +2,27 @@ import { engineOf } from "./engines";
 import type { EngineId, Entry } from "./types";
 
 const URL_WITH_SCHEME = /^https?:\/\//i;
+/** 4.1.1: arquivo local digitado (file://, /caminho ou C:\caminho). */
+const FILE_URL = /^file:\/\//i;
+const POSIX_PATH = /^\/[^\s/]/;
+const WINDOWS_PATH = /^[a-z]:[\\/]/i;
+
+/** Caminho absoluto → file:// (sem resolver ~: a casca não sabe a pasta pessoal). */
+export function fileUrlOfPath(input: string): string | null {
+  if (FILE_URL.test(input)) return input;
+  if (WINDOWS_PATH.test(input)) {
+    const path = input.replace(/\\/g, "/");
+    return `file:///${path
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/")
+      .replace(/^([a-z])%3A/i, "$1:")}`;
+  }
+  if (POSIX_PATH.test(input) && !input.startsWith("//")) {
+    return `file://${input.split("/").map(encodeURIComponent).join("/")}`;
+  }
+  return null;
+}
 const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)+(:\d+)?(\/|$|\?|#)/;
 const LOCALHOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$|\?|#)/i;
 
@@ -30,6 +51,11 @@ export function resolveInput(raw: string, engine: EngineId): Entry | null {
   const url = INTERNAL_ALIASES[typed] ?? typed;
   const internal = INTERNAL_PAGES[url];
   if (internal) return { title: internal, url, kind: "internal" };
+  const file = fileUrlOfPath(input);
+  if (file) {
+    const name = decodeURIComponent(file.split("/").filter(Boolean).pop() ?? file);
+    return { title: name || file, url: file, kind: "page" };
+  }
   if (URL_WITH_SCHEME.test(input)) {
     const title = input.replace(URL_WITH_SCHEME, "").split(/[/?#]/)[0] || input;
     return { title, url: input, kind: "page" };

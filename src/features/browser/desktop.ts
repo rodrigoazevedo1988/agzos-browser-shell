@@ -217,8 +217,53 @@ export type LiveTerminal = {
   id: number;
   shell: string;
   label: string;
+  /** Nome dado pelo usuário à aba (4.1.1). */
+  title?: string | null;
   cwd: string;
   history: string;
+};
+export type TerminalOpenResult =
+  | { ok: true; id: number; shell: string; label: string; cwd: string }
+  | { ok: false; error: string };
+/** Item do navegador de arquivos do terminal (4.1.1). */
+export type FileEntry = {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number | null;
+  modified: number | null;
+  image: boolean;
+};
+export type FileListing =
+  | { ok: true; path: string; parent: string | null; truncated: boolean; entries: FileEntry[] }
+  | { ok: false; error: string; path?: string };
+/** Skill ou comando de uma CLI de IA (Claude Code, Codex, OpenCode, Gemini). */
+export type CliSkill = {
+  tool: string;
+  kind: "skill" | "command";
+  scope: "user" | "project";
+  name: string;
+  description: string;
+  invoke: string;
+  file: string;
+};
+export type AgentPlanStep = {
+  id: string;
+  title: string;
+  tool: string;
+  prompt: string;
+  after: string[];
+};
+/** PWA da guia: instalável (ou já instalado). */
+export type PwaTabState = { id: string; name: string; installed: boolean } | null;
+export type InstalledPwa = {
+  id: string;
+  name: string;
+  startUrl: string;
+  origin: string;
+  installedAt: number;
+  icon: string | null;
+  open: boolean;
 };
 export type SshConnection = {
   id: string;
@@ -469,6 +514,48 @@ export type DesktopBridge = {
     callback: (payload: { id: number; exitCode: number; signal: number | null }) => void,
   ): () => void;
   onTerminalCwd(callback: (payload: { id: number; cwd: string }) => void): () => void;
+  /** 4.1.1: nome da aba do terminal (vazio volta ao nome do shell). */
+  terminalRename(id: number, title: string): Promise<boolean>;
+  onTerminalTitle(callback: (payload: { id: number; title: string }) => void): () => void;
+  /** Aba nova que instala as CLIs escolhidas (ids de CLI_TOOLS) e põe no PATH. */
+  terminalInstallTools(ids: string[], cols: number, rows: number): Promise<TerminalOpenResult>;
+  /** Nó de agente: a CLI roda sem interação numa aba própria. */
+  terminalOpenAgent(options: {
+    tool: string;
+    prompt: string;
+    cwd: string;
+    title: string;
+    cols: number;
+    rows: number;
+  }): Promise<TerminalOpenResult>;
+  terminalSkills(cwd: string): Promise<CliSkill[]>;
+  terminalSkillCreate(options: {
+    name: string;
+    description: string;
+    body: string;
+    scope: "user" | "project";
+    cwd: string;
+  }): Promise<{ ok: true; file: string } | { ok: false; error: string }>;
+  /** Nó "Agzos AI" do modo agente (Groq, sem histórico). */
+  agentGroq(prompt: string): Promise<{ ok: true; text: string; model: string } | AiFailure>;
+  /** Objetivo → etapas com ferramenta e dependências (planejado pela Groq). */
+  agentPlan(
+    goal: string,
+    tools: string[],
+  ): Promise<{ ok: true; steps: AgentPlanStep[] } | AiFailure | { ok: false; error: "plan" }>;
+  filesList(dir: string, hidden?: boolean): Promise<FileListing>;
+  filesHome(): Promise<string>;
+  /** Abre o arquivo numa guia, no app do sistema ou mostra na pasta. */
+  filesOpen(file: string, where: "tab" | "system" | "folder"): Promise<boolean>;
+  /** Ctrl+O: escolher arquivos e abrir em guias. */
+  filesPick(): Promise<number>;
+  pwaState(tabId: number): Promise<PwaTabState>;
+  pwaInstall(tabId: number): Promise<{ ok: boolean; id?: string; error?: string }>;
+  pwaOpen(id: string): Promise<boolean>;
+  pwaUninstall(id: string): Promise<{ ok: boolean; error?: string }>;
+  pwaList(): Promise<InstalledPwa[]>;
+  onPwaState(callback: (payload: { tabId: number; pwa: PwaTabState }) => void): () => void;
+  onPwaChanged(callback: () => void): () => void;
   /** Gestos (4.0): o que as páginas detectam (repassado a cada guia e painel). */
   gesturesConfig(config: GestureConfig): Promise<void>;
   /** Gesto visto na casca (botão lateral numa página interna, deslizar). */
