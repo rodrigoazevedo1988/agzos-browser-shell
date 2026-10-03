@@ -62,6 +62,15 @@ const cli = require(path.join(electronDir, "cli-install.cjs")) as {
 };
 
 const files = require(path.join(electronDir, "files.cjs")) as {
+  filesOfArgv: (
+    argv: unknown,
+    options?: {
+      cwd?: string;
+      skip?: number;
+      exists?: (f: string) => boolean;
+      isFile?: (f: string) => boolean;
+    },
+  ) => string[];
   fileKind: (file: string, options?: { read?: (file: string) => string }) => string;
   looksLikeText: (buffer: Buffer) => boolean;
   fileUrlOf: (file: string, token: string) => string;
@@ -741,5 +750,39 @@ describe("PWA instalável", () => {
     expect(store.get(id)!.zoom).toBe(1);
     store.remove(id);
     expect(store.list()).toEqual([]);
+  });
+});
+
+describe("4.1.1 fix: arquivos abertos pelo sistema", () => {
+  it("pega só arquivos existentes, resolvidos pela pasta de quem chamou", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-argv-"));
+    const page = path.join(dir, "a b.html");
+    fs.writeFileSync(page, "<p>oi</p>");
+    fs.mkdirSync(path.join(dir, "pasta"));
+    const argv = [
+      "/opt/agzos/agzos",
+      "--no-sandbox",
+      "--agzos-pwa=0123456789abcdef",
+      "-r",
+      page,
+      "pasta",
+      "a b.html",
+      pathToFileURL(page).href,
+      "https://exemplo.com",
+      "nao-existe.txt",
+    ];
+    expect(files.filesOfArgv(argv, { cwd: dir })).toEqual([page]);
+    expect(files.filesOfArgv(null)).toEqual([]);
+  });
+
+  it("aceita caminho do Windows e ignora o executável", () => {
+    const seen = new Set(["C:\\Users\\eu\\nota.pdf"]);
+    const result = files.filesOfArgv(["C:\\Agzos\\Agzos.exe", "C:\\Users\\eu\\nota.pdf"], {
+      cwd: "C:\\",
+      exists: (file) => seen.has(file) || file.endsWith("nota.pdf"),
+      isFile: () => true,
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toContain("nota.pdf");
   });
 });

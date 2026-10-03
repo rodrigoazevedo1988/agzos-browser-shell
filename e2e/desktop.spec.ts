@@ -3380,3 +3380,36 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
     await app.close();
   }
 });
+
+test("4.1.1 fix: arquivo aberto pelo sistema (duplo clique, Abrir com) abre numa guia", async () => {
+  const profile = tempProfile();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-abrir-"));
+  const page = path.join(folder, "pagina.html");
+  const notes = path.join(folder, "notas.ts");
+  fs.writeFileSync(page, "<title>Pagina local</title><h1>Aberta pelo sistema</h1>");
+  fs.writeFileSync(notes, "export const nota = 1;\n");
+  const env = { ...process.env, AGZOS_USER_DATA: profile } as Record<string, string>;
+  // Primeira execução com o arquivo (como o Explorer/gerenciador chama o executável).
+  const app = await electron.launch({ args: ["--no-sandbox", root, page], cwd: root, env });
+  try {
+    const window = await app.firstWindow();
+    await window.locator('.browser-stage[data-ready="true"]').waitFor();
+    const pageUrl = `file://${page}`;
+    await expect.poll(() => liveViews(app, "pagina.html")).toEqual([pageUrl]);
+    await expect
+      .poll(() => inTab<string>(app, pageUrl, "document.querySelector('h1')?.textContent ?? ''"))
+      .toBe("Aberta pelo sistema");
+
+    // Com o navegador aberto: a segunda execução entrega o arquivo para esta e sai.
+    const electronBinary = await app.evaluate(() => process.execPath);
+    execFileSync(electronBinary, ["--no-sandbox", root, path.relative(folder, notes)], {
+      cwd: folder,
+      env,
+      timeout: 30_000,
+    });
+    await expect.poll(() => liveViews(app, "notas.ts?k=")).toHaveLength(1);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    await app.close();
+  }
+});

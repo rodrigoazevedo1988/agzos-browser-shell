@@ -453,7 +453,44 @@ function createSkill({ home, cwd, scope, name, description, body }) {
   return { ok: true, file };
 }
 
+/**
+ * Arquivos passados pelo sistema na linha de comando (duplo clique, "Abrir com", arrastar
+ * para o ícone): só argumentos que não são opções e apontam para um arquivo que existe.
+ * O executável e, sem empacotar, o script do app (`electron .`) ficam de fora.
+ */
+function filesOfArgv(argv, { cwd = process.cwd(), skip = 1, exists = fs.existsSync, isFile } = {}) {
+  const check =
+    isFile ??
+    ((file) => {
+      try {
+        return fs.statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    });
+  const files = [];
+  const args = (Array.isArray(argv) ? argv : []).slice(skip);
+  for (const [index, arg] of args.entries()) {
+    if (typeof arg !== "string" || !arg || arg.startsWith("-")) continue;
+    // Valor de `-r`/`--require` (script pré-carregado pelo Node/ferramentas), não arquivo.
+    if (["-r", "--require"].includes(args[index - 1])) continue;
+    let file = arg;
+    if (/^file:\/\//i.test(file)) {
+      try {
+        file = require("node:url").fileURLToPath(file);
+      } catch {
+        continue;
+      }
+    }
+    if (/^[a-z][a-z0-9+.-]+:/i.test(file) && !/^[a-z]:[\\/]/i.test(file)) continue;
+    file = path.resolve(cwd, file);
+    if (exists(file) && check(file) && !files.includes(file)) files.push(file);
+  }
+  return files.slice(0, 20);
+}
+
 module.exports = {
+  filesOfArgv,
   FILE_SCHEME,
   createSkill,
   fileKind,

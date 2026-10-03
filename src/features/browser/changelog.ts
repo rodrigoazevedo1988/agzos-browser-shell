@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.1.2",
+    date: "2026-10-03",
+    items: [
+      "Correção da 4.1.1: arquivos abertos direto do sistema — duplo clique, “Abrir com” no Explorer, no Finder ou no gerenciador de arquivos, ou arrastar para o ícone — agora abrem numa guia do navegador, mesmo com ele já aberto (antes só o Ctrl+O funcionava).",
+    ],
+  },
+  {
     version: "4.1.1",
     date: "2026-10-03",
     items: [

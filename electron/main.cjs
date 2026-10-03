@@ -100,6 +100,7 @@ const {
   handleFileRequest,
   listDirectory,
   pathOfFileUrl,
+  filesOfArgv,
   urlForPath,
   viewableUrl,
 } = require("./files.cjs");
@@ -145,6 +146,14 @@ watchGpuCrashes(app, gpuRunMode);
 // banco. O lock é por userData (os e2e usam perfis próprios).
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.exit(0);
+
+// macOS: o Finder entrega arquivos por evento (inclusive antes do app ficar pronto).
+const pendingSystemFiles = [];
+app.on("open-file", (event, file) => {
+  event.preventDefault();
+  if (app.isReady()) openSystemFiles([file]);
+  else pendingSystemFiles.push(file);
+});
 
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
 const developmentUrl = process.argv
@@ -4267,6 +4276,30 @@ function openPathsInTabs(ctx, files) {
   }
 }
 
+/**
+ * Arquivos abertos pelo sistema (duplo clique, "Abrir com", arrastar para o ícone): cada um
+ * numa guia da janela em foco. A janela recém-criada só ouve depois de carregar a casca.
+ */
+function openSystemFiles(files) {
+  const valid = files.filter((file) => typeof file === "string" && path.isAbsolute(file));
+  if (!valid.length) return;
+  const ctx =
+    lastFocused && !lastFocused.window.isDestroyed()
+      ? lastFocused
+      : ([...contexts.values()][0] ??
+        (openSavedWindows() ? [...contexts.values()][0] : createWindow()));
+  if (!ctx) return;
+  const deliver = () => {
+    openPathsInTabs(ctx, valid);
+    if (ctx.window.isMinimized()) ctx.window.restore();
+    ctx.window.show();
+    ctx.window.focus();
+  };
+  const contents = ctx.window.webContents;
+  if (contents.isLoading()) contents.once("did-finish-load", () => setTimeout(deliver, 800));
+  else deliver();
+}
+
 /** Home das integrações com o sistema (os e2e usam uma pasta temporária). */
 function integrationHome() {
   return (!app.isPackaged && process.env.AGZOS_TEST_HOME) || os.homedir();
@@ -5182,14 +5215,23 @@ app.whenReady().then(() => {
     if (!contexts.size) createWindow();
   }
   startup = { ...startup, early: startup.early && startup.restoredWindows > 0 };
+  if (!launchPwa) {
+    openSystemFiles([...pendingSystemFiles, ...filesOfArgv(process.argv)]);
+    pendingSystemFiles.length = 0;
+  }
   setInterval(
     () => void checkHibernation(),
     Number(process.env.AGZOS_HIBERNATE_CHECK_MS) || CHECK_INTERVAL_MS,
   ).unref();
   // Segunda execução (atalho de PWA, ícone do app clicado de novo): vem para esta.
-  app.on("second-instance", (_event, argv) => {
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     const id = pwaArgOf(argv);
     if (id && openPwaWindow(id)) return;
+    const files = filesOfArgv(argv, { cwd: workingDirectory });
+    if (files.length) {
+      openSystemFiles(files);
+      return;
+    }
     const ctx = lastFocused ?? [...contexts.values()][0] ?? null;
     if (ctx && !ctx.window.isDestroyed()) {
       if (ctx.window.isMinimized()) ctx.window.restore();
