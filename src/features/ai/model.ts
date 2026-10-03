@@ -65,3 +65,49 @@ export function nextRequestId() {
   requestSeq += 1;
   return `ai-${Date.now().toString(36)}-${requestSeq}`;
 }
+
+const normalize = (text: string) => text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Conversas da barra lateral (4.1.3): busca pelo título, filtro de projeto e arquivadas,
+ * agrupadas como no Claude (Hoje, Ontem, 7 dias, mais antigas).
+ */
+export function chatGroups<
+  T extends { title: string; projectId: string | null; archived: boolean; updatedAt: number },
+>(
+  chats: T[],
+  {
+    search = "",
+    projectId = null,
+    archived = false,
+    now = Date.now(),
+  }: { search?: string; projectId?: string | null; archived?: boolean; now?: number } = {},
+) {
+  const query = normalize(search.trim());
+  const list = chats
+    .filter((chat) => chat.archived === archived)
+    .filter((chat) => projectId === null || chat.projectId === projectId)
+    .filter((chat) => !query || normalize(chat.title).includes(query))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const start = today.getTime();
+  const buckets: { label: string; test: (at: number) => boolean }[] = archived
+    ? [{ label: "Arquivadas", test: () => true }]
+    : [
+        { label: "Hoje", test: (at) => at >= start },
+        { label: "Ontem", test: (at) => at >= start - DAY },
+        { label: "Últimos 7 dias", test: (at) => at >= start - 6 * DAY },
+        { label: "Mais antigas", test: () => true },
+      ];
+  const groups: { label: string; chats: T[] }[] = [];
+  for (const chat of list) {
+    const bucket = buckets.find((item) => item.test(chat.updatedAt))!;
+    const group = groups.find((item) => item.label === bucket.label);
+    if (group) group.chats.push(chat);
+    else groups.push({ label: bucket.label, chats: [chat] });
+  }
+  return groups;
+}

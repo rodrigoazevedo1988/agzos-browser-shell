@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.1.3",
+    date: "2026-10-03",
+    items: [
+      "Agzos AI de cara nova, no estilo do Claude: barra lateral com Novo (Ctrl+N com o foco no painel), busca, projetos (criar, renomear, arquivar), conversas recentes com título editável, artifacts e personalização; várias conversas abertas em guias; composer fixo no rodapé com o projeto da conversa.",
+      "Respostas em markdown de verdade, chegando aos pedaços: títulos, listas, tabelas, citações, links e blocos de código com copiar. Código, HTML e SVG abrem ao lado do chat, com prévia isolada.",
+      "Personalização do Agzos AI: instruções que valem em toda conversa e o modelo padrão (o Automático agora prefere o gpt oss 120b). O contexto da aba continua indo só quando você marca a caixa, e só naquela mensagem.",
+      "Instalar sites como app funciona em muito mais lugares: o service worker deixou de ser exigido (como no Chrome) e o manifesto é lido pelo próprio Chromium, inclusive quando o site o coloca depois de carregar (Grok, Gemini, Canva). Se o ícone não aparecer, use Configurações → Apps instalados → Tentar instalar este site como app.",
+    ],
+  },
+  {
     version: "4.1.2",
     date: "2026-10-03",
     items: [

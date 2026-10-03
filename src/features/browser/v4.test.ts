@@ -145,19 +145,28 @@ describe("aceleração de hardware", () => {
 
 // --- IA ---
 
-type AiResult = { ok: boolean; error?: string; text?: string; model?: string } & Record<
-  string,
-  unknown
->;
+type AiResult = {
+  ok: boolean;
+  error?: string;
+  text?: string;
+  model?: string;
+  chatId?: string | null;
+} & Record<string, unknown>;
 type Ai = {
   state(): { hasKey: boolean; encryption: boolean };
   setKey(key: string): Promise<AiResult>;
   removeKey(): AiResult;
   models(options?: { refresh?: boolean }): Promise<AiResult & { models?: string[] }>;
-  history(): { role: string; text: string; context?: object }[];
-  clearHistory(): AiResult;
+  messages(chatId: string | null): { role: string; text: string; context?: object }[];
+  library(): { chats: { id: string; title: string; count: number }[] };
   chat(
-    payload: { requestId: string; model: string | null; text: string; context: object | null },
+    payload: {
+      requestId: string;
+      chatId?: string | null;
+      model: string | null;
+      text: string;
+      context: object | null;
+    },
     onDelta: (delta: string) => void,
   ): Promise<AiResult & { fallbackFrom?: string | null }>;
 };
@@ -313,6 +322,7 @@ describe("Agzos AI (Groq)", () => {
     await service.chat(
       {
         requestId: "b",
+        chatId: first.chatId as string,
         model: "llama-3.1-8b-instant",
         text: "Resuma",
         context: { url: "https://ex.com/a", title: "Página A", selection: "trecho" },
@@ -334,12 +344,15 @@ describe("Agzos AI (Groq)", () => {
       "assistant",
       "user",
     ]);
-    expect(service.history()).toHaveLength(4);
-    expect(service.history()[2]).toMatchObject({
+    // 4.1.3: a primeira resposta cria a conversa; a segunda segue nela (chatId).
+    expect(first).toHaveProperty("chatId");
+    const chatId = first.chatId as string;
+    expect(service.messages(chatId)).toHaveLength(4);
+    expect(service.messages(chatId)[2]).toMatchObject({
       context: { url: "https://ex.com/a", selection: true },
     });
-    service.clearHistory();
-    expect(service.history()).toEqual([]);
+    expect(service.library().chats).toHaveLength(1);
+    expect(service.library().chats[0]).toMatchObject({ title: "Oi?", count: 4 });
   });
 
   it("modelo indisponível cai no próximo; limite e rede viram códigos", async () => {

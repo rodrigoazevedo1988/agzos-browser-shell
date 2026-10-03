@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import { AiPanel } from "@/features/ai/panel";
+import { AI_NEW_CHAT_EVENT, AiPanel } from "@/features/ai/panel";
 import { runGesture } from "@/features/gestures/run";
 import { useGestures } from "@/features/gestures/use-gestures";
 import { TerminalDock } from "@/features/terminal/dock";
@@ -142,6 +142,13 @@ async function writeClipboard(value: string) {
 
 /** Retângulo do chip na janela (a camada desenha o menu da pasta ancorado nele). */
 /** Mesma página (origem e caminho; query e âncora não contam). */
+/** Ctrl+N com o foco no Agzos AI (4.1.3): conversa nova em vez de janela nova. */
+function aiNewChat() {
+  if (!document.activeElement?.closest(".ai-sidebar")) return false;
+  window.dispatchEvent(new Event(AI_NEW_CHAT_EVENT));
+  return true;
+}
+
 function samePage(a: string, b: string) {
   try {
     const x = new URL(a);
@@ -250,6 +257,17 @@ export function AgzosBrowser() {
   );
   const activeWorkspace =
     state.workspaces.find((item) => item.id === state.activeWorkspaceId) ?? state.workspaces[0]!;
+  // Configurações → Apps (4.1.3): "este site" é a última guia da web que esteve ativa.
+  const lastWebTab = useRef<number | null>(null);
+  if (!activeTab.private && /^https?:/.test(current.url)) lastWebTab.current = activeTab.id;
+  const siteTabs = useMemo(() => {
+    const list = orderedTabs
+      .filter((tab) => !tab.private && /^https?:/.test(entryOf(tab).url))
+      .map((tab) => ({ id: tab.id, url: entryOf(tab).url, title: entryOf(tab).title }));
+    const last = list.findIndex((tab) => tab.id === lastWebTab.current);
+    return last > 0 ? [list[last]!, ...list.slice(0, last), ...list.slice(last + 1)] : list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedTabs, activeTab.id]);
   // Grupo em edição (balão ao lado do chip) e o formulário de workspace novo.
   const [groupEdit, setGroupEdit] = useState<{
     groupId: number;
@@ -1127,6 +1145,7 @@ export function AgzosBrowser() {
     }) => {
       const command = commandForKey(input);
       if (!command) return;
+      if (command.id === "window.new" && aiNewChat()) return;
       if (input.layer && ctxRef.current.state.switcher === null) setSwitcherLayer(true);
       runCommand(ctxRef.current, command.id, null, "keyboard");
     },
@@ -1162,6 +1181,7 @@ export function AgzosBrowser() {
       // Atalho desabilitado (ex.: Ctrl+F na web) fica com o navegador.
       if (!command || !isEnabled(ctxRef.current, command)) return;
       event.preventDefault();
+      if (command.id === "window.new" && aiNewChat()) return;
       runCommand(ctxRef.current, command.id, null, "keyboard");
     }
     window.addEventListener("keydown", onKey);
@@ -2130,6 +2150,7 @@ export function AgzosBrowser() {
                       onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
                       onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
                       onReset={() => dispatch({ type: "tabs/reset" })}
+                      siteTabs={siteTabs}
                     />
                   ) : null
                 }
@@ -2159,6 +2180,8 @@ export function AgzosBrowser() {
                 }}
                 model={prefs.aiModel}
                 onModel={(aiModel) => setPrefs({ aiModel })}
+                sidebar={prefs.aiSidebar}
+                onSidebar={(aiSidebar) => setPrefs({ aiSidebar })}
                 onClose={() => setPrefs({ aiOpen: false })}
                 onOpenUrl={(url) => openUrl(url, true)}
               />

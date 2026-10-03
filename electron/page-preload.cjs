@@ -510,7 +510,11 @@ if (!PANEL) {
   installImageViewer();
 }
 
-/** Avisa o main quando a página tem manifesto (e se há service worker). */
+/**
+ * Avisa o main quando a página tem manifesto (e se há service worker). Apps de página única
+ * (Gemini, Grok, Canva) põem ou trocam o <link rel=manifest> depois da carga: um observador
+ * do <head> e novas checagens pegam isso (4.1.3).
+ */
 function installPwaWatch() {
   if (!/^https?:$/.test(location.protocol)) return;
   let last = "";
@@ -531,9 +535,36 @@ function installPwaWatch() {
     last = key;
     send("agzos:pwa-detect", { manifestUrl: link.href, serviceWorker });
   };
+  let timer = 0;
+  const later = () => {
+    clearTimeout(timer);
+    timer = setTimeout(check, 400);
+  };
   const soon = () => {
     setTimeout(check, 600);
     setTimeout(check, 4000);
+    setTimeout(check, 12000);
+    try {
+      // Só o <head> (e filhos diretos): mudanças no corpo da página não custam nada aqui.
+      new MutationObserver((records) => {
+        if (
+          records.some((record) =>
+            [...record.addedNodes, record.target].some(
+              (node) => node instanceof Element && node.matches?.('link[rel~="manifest"]'),
+            ),
+          )
+        ) {
+          later();
+        }
+      }).observe(document.head ?? document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["href", "rel"],
+      });
+    } catch {
+      // Sem <head>: as checagens com tempo bastam.
+    }
   };
   if (document.readyState === "complete") soon();
   else window.addEventListener("load", soon, { once: true });

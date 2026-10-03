@@ -124,7 +124,7 @@ const pwa = require(path.join(electronDir, "pwa.cjs")) as {
   ) => Manifest | null;
   installability: (
     manifest: Manifest | null,
-    options: { serviceWorker: boolean; documentUrl: string },
+    options: { documentUrl: string },
   ) => { ok: boolean; reason?: string };
   iconCandidates: (icons: Manifest["icons"]) => Manifest["icons"];
   iconSize: (sizes: unknown) => number;
@@ -642,24 +642,21 @@ describe("PWA instalável", () => {
     expect(pwa.iconSize("48x48 96x96")).toBe(96);
   });
 
-  it("instalável só com página segura, ícone e service worker", () => {
+  it("instalável com página segura e ícone; service worker não é exigido (4.1.3)", () => {
     const manifest = pwa.parseManifest(
       { name: "A", icons: [{ src: "/a.png", sizes: "192x192" }] },
       { manifestUrl, documentUrl },
     );
-    expect(pwa.installability(manifest, { serviceWorker: true, documentUrl }).ok).toBe(true);
-    expect(pwa.installability(manifest, { serviceWorker: false, documentUrl }).reason).toBe(
-      "service-worker",
+    expect(pwa.installability(manifest, { documentUrl }).ok).toBe(true);
+    expect(pwa.installability(manifest, { documentUrl: "http://site.com/" }).reason).toBe(
+      "insecure",
     );
     expect(
-      pwa.installability(manifest, { serviceWorker: true, documentUrl: "http://site.com/" }).reason,
-    ).toBe("insecure");
-    expect(
       pwa.installability(pwa.parseManifest({ name: "A" }, { manifestUrl, documentUrl }), {
-        serviceWorker: true,
         documentUrl,
       }).reason,
     ).toBe("icon");
+    expect(pwa.installability(null, { documentUrl }).reason).toBe("manifest");
     expect(pwa.scopeContains("https://app.exemplo.com/", "https://app.exemplo.com/a")).toBe(true);
     expect(pwa.scopeContains("https://app.exemplo.com/app/", "https://app.exemplo.com/b")).toBe(
       false,

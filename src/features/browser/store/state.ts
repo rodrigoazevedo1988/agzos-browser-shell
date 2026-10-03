@@ -63,6 +63,8 @@ export type Prefs = {
   engine: EngineId;
   shield: boolean;
   aiOpen: boolean;
+  /** Barra de conversas do Agzos AI (4.1.3) aberta ao lado do chat. */
+  aiSidebar: boolean;
   orientation: TabOrientation;
   railCollapsed: boolean;
   pausedHosts: string[];
@@ -133,6 +135,7 @@ export const defaultPrefs: Prefs = {
   engine: "duckduckgo",
   shield: true,
   aiOpen: true,
+  aiSidebar: true,
   orientation: "horizontal",
   railCollapsed: false,
   pausedHosts: [],

@@ -109,10 +109,11 @@ function parseManifest(json, { manifestUrl, documentUrl }) {
 }
 
 /**
- * Pode instalar? Como o Chrome: manifesto válido com ícone, página segura e service
- * worker (pedido do PRD). `display: browser` também vale (o app abre em janela mesmo).
+ * Pode instalar? Como o Chrome atual: manifesto com nome e ícone numa página segura. O
+ * service worker deixou de ser exigido (4.1.3): o Chrome também não pede mais, e Grok e
+ * Gemini não têm um. `display: browser` também vale (o app abre em janela mesmo).
  */
-function installability(manifest, { serviceWorker, documentUrl }) {
+function installability(manifest, { documentUrl }) {
   if (!manifest) return { ok: false, reason: "manifest" };
   let secure = false;
   try {
@@ -124,7 +125,6 @@ function installability(manifest, { serviceWorker, documentUrl }) {
   }
   if (!secure) return { ok: false, reason: "insecure" };
   if (!manifest.icons.length) return { ok: false, reason: "icon" };
-  if (!serviceWorker) return { ok: false, reason: "service-worker" };
   return { ok: true };
 }
 

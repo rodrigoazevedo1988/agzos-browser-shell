@@ -186,6 +186,7 @@ describe("migração da 1.3", () => {
         engine: "yandex",
         shield: false,
         aiOpen: false,
+        aiSidebar: true,
         orientation: "vertical",
         railCollapsed: true,
         pausedHosts: ["x.com"],

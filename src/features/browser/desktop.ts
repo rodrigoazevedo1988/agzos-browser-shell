@@ -202,9 +202,46 @@ export type AiHistoryItem = {
   context?: { url: string; title: string; selection: boolean };
   model?: string;
 };
+/** Conversas do Agzos AI (4.1.3): a lista vem sem as mensagens. */
+export type AiProject = { id: string; name: string; archived: boolean; createdAt: number };
+export type AiChatSummary = {
+  id: string;
+  title: string;
+  titled: boolean;
+  projectId: string | null;
+  archived: boolean;
+  createdAt: number;
+  updatedAt: number;
+  count: number;
+};
+export type AiLibrary = {
+  projects: AiProject[];
+  chats: AiChatSummary[];
+  openIds: string[];
+  /** null = conversa nova, ainda sem mensagem. */
+  activeId: string | null;
+  persona: { instructions: string };
+};
+export type AiLibraryAction =
+  | { type: "chat-new"; projectId?: string | null }
+  | { type: "chat-open"; id: string }
+  | { type: "chat-close"; id: string }
+  | {
+      type: "chat-update";
+      id: string;
+      title?: string;
+      projectId?: string | null;
+      archived?: boolean;
+    }
+  | { type: "chat-delete"; id: string }
+  | { type: "project-new"; name: string }
+  | { type: "project-update"; id: string; name?: string; archived?: boolean }
+  | { type: "tabs"; openIds: string[]; activeId: string | null }
+  | { type: "persona"; instructions: string };
 export type AiChatResult =
   | {
       ok: true;
+      chatId: string | null;
       text: string;
       model: string;
       fallbackFrom: string | null;
@@ -256,6 +293,10 @@ export type AgentPlanStep = {
 };
 /** PWA da guia: instalável (ou já instalado). */
 export type PwaTabState = { id: string; name: string; installed: boolean } | null;
+/** Por que o site não instala (4.1.3): sem manifesto, sem HTTPS, sem ícone… */
+export type PwaReason = "manifest" | "insecure" | "icon" | "private" | "page" | "tab";
+export type PwaCheck =
+  { ok: true; id: string; name: string; installed: boolean } | { ok: false; reason: PwaReason };
 export type InstalledPwa = {
   id: string;
   name: string;
@@ -433,18 +474,24 @@ export type DesktopBridge = {
   aiSetKey(key: string): Promise<{ ok: true; models: string[] } | AiFailure>;
   aiRemoveKey(): Promise<{ ok: boolean }>;
   aiModels(refresh?: boolean): Promise<{ ok: true; models: string[] } | AiFailure>;
-  aiHistory(): Promise<AiHistoryItem[]>;
-  aiClearHistory(): Promise<{ ok: boolean }>;
+  aiLibrary(): Promise<AiLibrary>;
+  aiMessages(chatId: string | null): Promise<AiHistoryItem[]>;
+  aiLibraryAction(
+    action: AiLibraryAction,
+  ): Promise<{ ok: boolean; library: AiLibrary; id: string | null }>;
   aiChat(payload: {
     requestId: string;
+    /** null = conversa nova (criada com a primeira resposta, no projeto `projectId`). */
+    chatId: string | null;
+    projectId: string | null;
     model: string | null;
     text: string;
     context: AiContext | null;
   }): Promise<AiChatResult>;
   aiAbort(requestId: string): Promise<{ ok: boolean }>;
   onAiDelta(callback: (payload: { requestId: string; delta: string }) => void): () => void;
-  /** A conversa mudou (outra janela perguntou ou apagou). */
-  onAiHistory(callback: (history: AiHistoryItem[]) => void): () => void;
+  /** As conversas mudaram (resposta nova, outra janela, renomear, arquivar…). */
+  onAiLibrary(callback: (library: AiLibrary) => void): () => void;
   /** Texto selecionado na guia (só lido quando o usuário manda o contexto). */
   tabSelection(id: number): Promise<string>;
   /** Terminal (4.0): shells num PTY do main (node-pty). */
@@ -550,7 +597,11 @@ export type DesktopBridge = {
   /** Ctrl+O: escolher arquivos e abrir em guias. */
   filesPick(): Promise<number>;
   pwaState(tabId: number): Promise<PwaTabState>;
-  pwaInstall(tabId: number): Promise<{ ok: boolean; id?: string; error?: string }>;
+  /** Verifica a guia na hora (Configurações → Tentar instalar este site como app). */
+  pwaCheck(tabId: number): Promise<PwaCheck>;
+  pwaInstall(
+    tabId: number,
+  ): Promise<{ ok: boolean; id?: string; error?: string; reason?: PwaReason }>;
   pwaOpen(id: string): Promise<boolean>;
   pwaUninstall(id: string): Promise<{ ok: boolean; error?: string }>;
   pwaList(): Promise<InstalledPwa[]>;

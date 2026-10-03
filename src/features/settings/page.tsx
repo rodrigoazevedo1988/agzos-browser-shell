@@ -110,6 +110,8 @@ export type SettingsPageProps = {
   onOpenHistory: () => void;
   onOpenBookmarks: () => void;
   onReset: () => void;
+  /** Guias da web abertas (a última ativa primeiro): "Tentar instalar este site como app". */
+  siteTabs?: { id: number; url: string; title: string }[];
 };
 
 type Row = { id: string; label: string; keywords?: string; node: ReactNode };
@@ -799,8 +801,9 @@ export function SettingsPage(props: SettingsPageProps) {
           {
             id: "apps-pwa",
             label: "Apps instalados (PWA)",
-            keywords: "pwa app instalar desinstalar janela atalho manifesto service worker",
-            node: <InstalledAppsSetting />,
+            keywords:
+              "pwa app instalar desinstalar janela atalho manifesto tentar instalar este site",
+            node: <InstalledAppsSetting siteTabs={props.siteTabs ?? []} />,
           },
         ],
       });

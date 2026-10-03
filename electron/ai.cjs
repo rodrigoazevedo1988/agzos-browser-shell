@@ -3,23 +3,26 @@
 //   cifrada pelo safeStorage (DPAPI no Windows, Keychain no macOS) em <userData>/ai-key.bin;
 // - a casca nunca recebe a chave de volta, só "tem chave" ou não;
 // - nenhuma mensagem de erro ou log leva a chave (os erros viram códigos curtos).
-// A conversa (histórico local, apagável) fica no SQLite do app (meta aiHistory).
+// As conversas (4.1.3: várias, com projetos; electron/ai-library.cjs) ficam no SQLite do
+// app (meta aiChats); a conversa única da 4.0 (meta aiHistory) vira a primeira delas.
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+
+const library = require("./ai-library.cjs");
 
 const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 const KEY_FILE = "ai-key.bin";
 /** Ordem de preferência; o primeiro disponível na conta é o padrão. */
 const PREFERRED_MODELS = [
-  "llama-3.3-70b-versatile",
   "openai/gpt-oss-120b",
+  "llama-3.3-70b-versatile",
   "llama-3.1-8b-instant",
   "openai/gpt-oss-20b",
 ];
 /** Modelos da lista que não conversam (áudio, moderação). */
 const NON_CHAT_MODEL = /whisper|tts|guard|orpheus|playai|distil/i;
-const HISTORY_LIMIT = 200;
 /** Mensagens anteriores que vão junto com a pergunta (contexto da conversa). */
 const CONTEXT_MESSAGES = 20;
 const SELECTION_LIMIT = 8000;
@@ -146,41 +149,21 @@ function contextText(context) {
   return lines.join("\n");
 }
 
-/** Mensagens para a API: sistema, as últimas da conversa e a pergunta (com o contexto). */
-function buildMessages(history, question, context) {
+/**
+ * Mensagens para a API: sistema (com a personalização do usuário), as últimas da conversa
+ * e a pergunta (com o contexto).
+ */
+function buildMessages(history, question, context, instructions = "") {
   const previous = history.slice(-CONTEXT_MESSAGES).map((item) => ({
     role: item.role === "user" ? "user" : "assistant",
     content: item.text,
   }));
   const content = context ? `${contextText(context)}\n\nPergunta: ${question}` : question;
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...previous, { role: "user", content }];
-}
-
-function parseHistory(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter(
-      (item) =>
-        item &&
-        (item.role === "user" || item.role === "assistant") &&
-        typeof item.text === "string",
-    )
-    .map((item) => ({
-      role: item.role,
-      text: item.text,
-      at: Number(item.at) || 0,
-      ...(item.context && typeof item.context === "object"
-        ? {
-            context: {
-              url: String(item.context.url ?? ""),
-              title: String(item.context.title ?? ""),
-              selection: Boolean(item.context.selection),
-            },
-          }
-        : {}),
-      ...(typeof item.model === "string" ? { model: item.model } : {}),
-    }))
-    .slice(-HISTORY_LIMIT);
+  const custom = typeof instructions === "string" ? instructions.trim() : "";
+  const system = custom
+    ? `${SYSTEM_PROMPT}\n\nInstruções do usuário (personalização):\n${custom}`
+    : SYSTEM_PROMPT;
+  return [{ role: "system", content: system }, ...previous, { role: "user", content }];
 }
 
 function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL, database }) {
@@ -256,21 +239,27 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
     return { ok: true, models: chatModelsOf(body) };
   }
 
-  // Banco fechado (saída do app) ou indisponível: a conversa segue só na tela.
-  const history = () => {
+  // Banco fechado (saída do app) ou indisponível: as conversas seguem só na memória.
+  let cached = null;
+  const loadLibrary = () => {
+    if (cached) return cached;
     try {
-      return parseHistory(database?.getMeta("aiHistory"));
+      const saved = database?.getMeta("aiChats");
+      cached = library.parseLibrary(saved, saved ? null : database?.getMeta("aiHistory"));
     } catch {
-      return [];
+      cached = library.emptyLibrary();
     }
+    return cached;
   };
-  const saveHistory = (list) => {
+  const saveLibrary = (next) => {
+    cached = next;
     try {
-      database?.setMeta("aiHistory", list.slice(-HISTORY_LIMIT));
+      database?.setMeta("aiChats", next);
     } catch {
       // Ver acima.
     }
   };
+  const newId = () => `c${crypto.randomUUID().replace(/-/g, "").slice(0, 15)}`;
 
   const api = {
     state() {
@@ -318,11 +307,22 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
       return result;
     },
 
-    history,
+    /** Conversas, projetos e guias para a casca (sem as mensagens). */
+    library() {
+      return library.summaryOf(loadLibrary());
+    },
 
-    clearHistory() {
-      saveHistory([]);
-      return { ok: true };
+    /** Mensagens de uma conversa (a ativa quando não diz qual). */
+    messages(chatId) {
+      const current = loadLibrary();
+      return library.messagesOf(current, typeof chatId === "string" ? chatId : current.activeId);
+    },
+
+    /** Nova conversa, renomear, arquivar, projetos, guias e personalização. */
+    libraryAction(action) {
+      const result = library.applyAction(loadLibrary(), action, { newId, now: Date.now() });
+      saveLibrary(result.library);
+      return { ok: true, library: library.summaryOf(result.library), id: result.id ?? null };
     },
 
     /**
@@ -330,14 +330,18 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
      * resposta inteira (ou o código do erro). O modelo indisponível cai no próximo da
      * lista uma vez (`fallbackFrom` avisa a casca).
      */
-    async chat({ requestId, model, text, context }, onDelta) {
+    async chat({ requestId, chatId, projectId, model, text, context }, onDelta) {
       const key = readKey();
       if (!key) return { ok: false, error: "no-key" };
       const question = typeof text === "string" ? text.trim().slice(0, MESSAGE_LIMIT) : "";
       if (!question) return { ok: false, error: "request" };
       const pageContext = contextOf(context);
-      const previous = history();
-      const messages = buildMessages(previous, question, pageContext);
+      // Conversa nova (ou que sumiu): nasce com a primeira resposta.
+      let id = typeof chatId === "string" ? chatId : null;
+      const start = loadLibrary();
+      if (!id || !start.chats.some((chat) => chat.id === id)) id = null;
+      const previous = id ? library.messagesOf(start, id) : [];
+      const messages = buildMessages(previous, question, pageContext, start.persona.instructions);
       const controller = new AbortController();
       running.set(requestId, controller);
       let chosen = typeof model === "string" && model ? model : null;
@@ -404,9 +408,17 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
             };
           }
           const reply = { role: "assistant", text: answer, at: now, model: chosen };
-          if (answer) saveHistory([...previous, entry, reply]);
+          if (answer) {
+            let current = loadLibrary();
+            if (!id || !current.chats.some((chat) => chat.id === id)) {
+              id = newId();
+              current = library.newChat(current, { id, projectId: projectId ?? null, now });
+            }
+            saveLibrary(library.appendExchange(current, id, [entry, reply], now));
+          }
           return {
             ok: true,
+            chatId: id,
             text: answer,
             model: chosen,
             fallbackFrom,
@@ -572,5 +584,4 @@ module.exports = {
   errorOfStatus,
   parseSse,
   buildMessages,
-  parseHistory,
 };

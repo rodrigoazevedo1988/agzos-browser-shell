@@ -887,6 +887,11 @@ function wirePermissions(ses) {
     // Modo voz do terminal (4.1): o microfone para a própria interface do Agzos (casca ou
     // terminal flutuante), nunca para páginas.
     if (isAppInterface(contents) && permission === "media") {
+      // Prévia de artifact (4.1.3) é um iframe na casca: microfone só para o quadro principal.
+      if (details?.isMainFrame === false) {
+        callback(false);
+        return;
+      }
       const media = details?.mediaTypes ?? [];
       callback(media.length > 0 && media.every((type) => type === "audio"));
       return;
@@ -3317,10 +3322,12 @@ function registerIpc() {
   ipcMain.handle("ai:models", (_event, { refresh } = {}) =>
     aiService().models({ refresh: Boolean(refresh) }),
   );
-  ipcMain.handle("ai:history", () => aiService().history());
-  ipcMain.handle("ai:clear-history", () => {
-    const result = aiService().clearHistory();
-    broadcast("agzos:ai-history", []);
+  // Conversas (4.1.3): a lista vai para todas as janelas; as mensagens, só quando pedidas.
+  ipcMain.handle("ai:library", () => aiService().library());
+  ipcMain.handle("ai:messages", (_event, { chatId } = {}) => aiService().messages(chatId));
+  ipcMain.handle("ai:library-action", (_event, action = {}) => {
+    const result = aiService().libraryAction(action);
+    broadcast("agzos:ai-library", result.library);
     return result;
   });
   ipcMain.handle("ai:abort", (_event, { requestId } = {}) => aiService().abort(requestId));
@@ -3328,12 +3335,19 @@ function registerIpc() {
     const sender = event.sender;
     const requestId = String(payload.requestId ?? "");
     const result = await aiService().chat(
-      { requestId, model: payload.model, text: payload.text, context: payload.context },
+      {
+        requestId,
+        chatId: payload.chatId,
+        projectId: payload.projectId,
+        model: payload.model,
+        text: payload.text,
+        context: payload.context,
+      },
       (delta) => {
         if (!sender.isDestroyed()) sender.send("agzos:ai-delta", { requestId, delta });
       },
     );
-    if (result.ok) broadcast("agzos:ai-history", aiService().history());
+    if (result.ok) broadcast("agzos:ai-library", aiService().library());
     return result;
   });
   // Texto selecionado na guia: só lido quando o usuário marca "enviar contexto" e envia.
@@ -3591,6 +3605,9 @@ function registerIpc() {
     const contents = tabContents(ctxOfEvent(event), tabId);
     return contents ? pwaStateOf(contents) : null;
   });
+  ipcMain.handle("pwa:check", (event, { tabId } = {}) =>
+    checkPwa(tabContents(ctxOfEvent(event), tabId)),
+  );
   ipcMain.handle("pwa:install", (event, { tabId } = {}) => {
     const ctx = ctxOfEvent(event);
     return ctx ? installPwa(ctx, tabId) : { ok: false, error: "window" };
@@ -4334,6 +4351,8 @@ const pwaDetected = new Map();
 /** id do app → janela aberta. */
 const pwaWindows = new Map();
 const pwaSessions = new WeakSet();
+/** Mundo isolado da consulta do "Tentar instalar" (fora do 0 da página e do 999 do Electron). */
+const PWA_PROBE_WORLD = 4131;
 
 function pwaDir(id) {
   return path.join(app.getPath("userData"), "pwa", id);
@@ -4362,49 +4381,121 @@ function forgetPwa(contents) {
   emitPwa(contents);
 }
 
-/** A página tem manifesto (e service worker): lê o manifesto na session da guia. */
-async function detectPwa(contents, { manifestUrl, serviceWorker }) {
-  if (!tabOfContents.has(contents.id) || isPrivateContents(contents)) return;
-  const documentUrl = contents.getURL();
-  let manifestHref;
-  try {
-    const url = new URL(manifestUrl, documentUrl);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return;
-    manifestHref = url.href;
-  } catch {
-    return;
+/**
+ * Manifesto como o Chromium o vê (CDP Page.getAppManifest, 4.1.3): pega o <link> inserido
+ * depois da carga e o pedido com as credenciais certas. Sem resposta (o Chromium ainda não
+ * buscou, ou a guia sem debugger), busca o `manifestHref` na session da guia.
+ */
+async function readPwaManifest(contents, manifestHref) {
+  if (contents.debugger.isAttached()) {
+    try {
+      const result = await contents.debugger.sendCommand("Page.getAppManifest");
+      const url = typeof result?.url === "string" ? result.url : "";
+      if (url && result.data && /^https?:/.test(url) && result.data.length < 512 * 1024) {
+        return { url, json: JSON.parse(result.data) };
+      }
+    } catch {
+      // Segue pela busca direta.
+    }
   }
+  if (!manifestHref) return null;
+  try {
+    const response = await contents.session.fetch(manifestHref, { credentials: "include" });
+    if (!response.ok) return { url: manifestHref, json: null };
+    const text = await response.text();
+    return { url: manifestHref, json: text.length < 512 * 1024 ? JSON.parse(text) : null };
+  } catch {
+    return { url: manifestHref, json: null };
+  }
+}
+
+/**
+ * A página tem manifesto: lê e decide se dá para instalar. `force` (Configurações → Tentar
+ * instalar) lê de novo mesmo sem mudança.
+ */
+async function detectPwa(contents, { manifestUrl, serviceWorker }, { force = false } = {}) {
+  if (!tabOfContents.has(contents.id) || isPrivateContents(contents)) return null;
+  const documentUrl = contents.getURL();
+  let manifestHref = null;
+  if (manifestUrl) {
+    try {
+      const url = new URL(manifestUrl, documentUrl);
+      if (url.protocol === "https:" || url.protocol === "http:") manifestHref = url.href;
+    } catch {
+      manifestHref = null;
+    }
+  }
+  if (!manifestHref && !force) return null;
   const previous = pwaDetected.get(contents.id);
   if (
+    !force &&
     previous &&
+    previous.documentUrl === documentUrl &&
     previous.manifestUrl === manifestHref &&
     previous.serviceWorker === serviceWorker
   ) {
     emitPwa(contents);
-    return;
+    return previous;
   }
-  let json = null;
-  try {
-    const response = await contents.session.fetch(manifestHref, { credentials: "include" });
-    if (response.ok) {
-      const text = await response.text();
-      if (text.length < 512 * 1024) json = JSON.parse(text);
-    }
-  } catch {
-    json = null;
-  }
-  if (contents.isDestroyed() || contents.getURL() !== documentUrl) return;
-  const manifest = parseManifest(json, { manifestUrl: manifestHref, documentUrl });
-  const check = installability(manifest, { serviceWorker, documentUrl });
-  pwaDetected.set(contents.id, {
+  const read = await readPwaManifest(contents, manifestHref);
+  if (contents.isDestroyed() || contents.getURL() !== documentUrl) return null;
+  const manifestFinal = read?.url ?? manifestHref;
+  const manifest = read?.json
+    ? parseManifest(read.json, { manifestUrl: manifestFinal, documentUrl })
+    : null;
+  const check = installability(manifest, { documentUrl });
+  const info = {
     manifest,
     check,
     documentUrl,
     manifestUrl: manifestHref,
     serviceWorker,
     session: contents.session,
-  });
+  };
+  pwaDetected.set(contents.id, info);
   emitPwa(contents);
+  return info;
+}
+
+/** Configurações → "Tentar instalar este site como app": verifica a guia na hora. */
+async function checkPwa(contents) {
+  if (!contents || contents.isDestroyed()) return { ok: false, reason: "tab" };
+  if (isPrivateContents(contents)) return { ok: false, reason: "private" };
+  if (!/^https?:/.test(contents.getURL())) return { ok: false, reason: "page" };
+  let found = { manifestUrl: null, serviceWorker: false };
+  try {
+    // Mundo isolado: a página não intercepta a consulta.
+    const [result] = await contents.executeJavaScriptInIsolatedWorld(PWA_PROBE_WORLD, [
+      {
+        code: `(async () => {
+          const link = document.querySelector('link[rel~="manifest"]');
+          let sw = false;
+          try {
+            const c = navigator.serviceWorker;
+            sw = Boolean(c && (c.controller || (await c.getRegistration())));
+          } catch {}
+          return { manifestUrl: link ? link.href : null, serviceWorker: sw };
+        })()`,
+      },
+    ]);
+    if (result && typeof result === "object") {
+      found = {
+        manifestUrl: typeof result.manifestUrl === "string" ? result.manifestUrl : null,
+        serviceWorker: Boolean(result.serviceWorker),
+      };
+    }
+  } catch {
+    // Página sem acesso (erro, carregando): o Chromium ainda pode ter o manifesto.
+  }
+  const info = await detectPwa(contents, found, { force: true });
+  if (!info) return { ok: false, reason: "tab" };
+  if (!info.check.ok) return { ok: false, reason: info.check.reason };
+  return {
+    ok: true,
+    id: info.manifest.id,
+    name: info.manifest.name,
+    installed: Boolean(pwaStore?.get(info.manifest.id)),
+  };
 }
 
 /** Primeiro ícone do manifesto que o nativeImage consegue abrir. */
@@ -4503,8 +4594,13 @@ function removePwaShortcuts(record) {
 
 async function installPwa(ctx, tabId) {
   const contents = tabContents(ctx, tabId);
-  const info = contents ? pwaDetected.get(contents.id) : null;
-  if (!info?.check.ok) return { ok: false, error: "not-installable" };
+  if (!contents) return { ok: false, error: "not-installable" };
+  // Sem o aviso da página (ou com um antigo): verifica na hora antes de desistir.
+  if (!pwaDetected.get(contents.id)?.check.ok) await checkPwa(contents);
+  const info = pwaDetected.get(contents.id);
+  if (!info?.check.ok) {
+    return { ok: false, error: "not-installable", reason: info?.check.reason ?? "manifest" };
+  }
   const { manifest } = info;
   if (pwaStore.get(manifest.id)) {
     openPwaWindow(manifest.id);

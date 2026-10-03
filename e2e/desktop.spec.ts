@@ -260,7 +260,17 @@ function groq(request: http.IncomingMessage, response: http.ServerResponse, url:
       return;
     }
     response.writeHead(200, { "content-type": "text/event-stream" });
-    const parts = ["Olá ", "do Groq", " em streaming."];
+    // 4.1.3: "HTML" na pergunta traz um artifact; o resto, markdown com negrito.
+    const asked = parsed.messages?.at(-1)?.content ?? "";
+    const parts = asked.includes("HTML")
+      ? [
+          "Olá do Groq em streaming.\n\n```html\n",
+          "<!doctype html><title>Artifact de teste</title>\n",
+          "<h1>Artifact de teste</h1>\n```",
+        ]
+      : asked.includes("Primeira") || asked.includes("De novo")
+        ? ["Olá ", "do **Groq**", " em streaming."]
+        : ["Olá ", "do Groq", " em streaming."];
     let index = 0;
     const timer = setInterval(() => {
       const text = parts[index++];
@@ -366,6 +376,28 @@ test.beforeAll(async () => {
           display: "standalone",
           theme_color: "#d43420",
           icons: [{ src: "/pwa/icon.png", sizes: "192x192", type: "image/png" }],
+        }),
+      );
+      return;
+    }
+    // 4.1.3: app de página única sem service worker, com o manifesto posto depois da carga.
+    if (url === "/pwa-spa/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        "<!doctype html><title>App SPA</title><h1>SPA</h1><script>setTimeout(() => {" +
+          "const link = document.createElement('link'); link.rel = 'manifest';" +
+          "link.href = '/pwa-spa/manifest.json'; document.head.append(link); }, 1500)</script>",
+      );
+      return;
+    }
+    if (url === "/pwa-spa/manifest.json") {
+      response.writeHead(200, { "content-type": "application/manifest+json" });
+      response.end(
+        JSON.stringify({
+          name: "Agzos SPA",
+          start_url: "/pwa-spa/",
+          display: "standalone",
+          icons: [{ src: "/pwa/icon.png", sizes: "512x512", type: "image/png" }],
         }),
       );
       return;
@@ -3376,6 +3408,158 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
     await expect(list).toContainText("Nenhum app instalado ainda.");
     expect(fs.readdirSync(path.join(home, ".local", "share", "applications"))).toEqual([]);
     expect(fs.existsSync(path.join(profile, "pwa", appId))).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1.3: PWA sem service worker e com manifesto tardio instala; Configurações tenta instalar", async () => {
+  const profile = tempProfile();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-home-"));
+  const { app, window } = await launch(profile, {
+    AGZOS_TEST_PWA_CONFIRM: "1",
+    AGZOS_TEST_HOME: home,
+  });
+  try {
+    // O <link rel=manifest> chega 1,5 s depois da carga e não há service worker.
+    await go(window, `${origin}/pwa-spa/`);
+    await expect(window.getByRole("button", { name: "Instalar o app" })).toBeVisible({
+      timeout: 20_000,
+    });
+    // Site sem manifesto: Configurações explica, sem inventar instalação.
+    await window.keyboard.press("Control+t");
+    await go(window, `${origin}/principal`);
+    await expect(tabs(window).last()).toContainText("Página PRINCIPAL");
+    await window.keyboard.press("Control+t");
+    await go(window, "agzos://configuracoes");
+    await window.getByRole("button", { name: "Apps instalados" }).first().click();
+    const site = window.getByLabel("Site para instalar");
+    await expect(site.locator("option").first()).toContainText("Página PRINCIPAL");
+    await window.getByRole("button", { name: "Tentar instalar" }).click();
+    await expect(window.getByRole("status")).toContainText("não publica um manifesto");
+    // O app de página única pela mesma ação.
+    await site.selectOption({ label: `App SPA — ${new URL(origin).host}` });
+    await window.getByRole("button", { name: "Tentar instalar" }).click();
+    await expect(window.getByRole("status")).toContainText("Agzos SPA instalado como app.");
+    const list = window.getByRole("list", { name: "Apps instalados" });
+    await expect(list).toContainText("Agzos SPA");
+    await expect
+      .poll(() =>
+        app.evaluate(({ webContents }) =>
+          webContents
+            .getAllWebContents()
+            .filter((contents) => contents.session.getStoragePath()?.includes("pwa-"))
+            .map((contents) => contents.getURL()),
+        ),
+      )
+      .toEqual([`${origin}/pwa-spa/`]);
+    await list.getByRole("button", { name: "Desinstalar Agzos SPA" }).click();
+    await expect(list).toContainText("Nenhum app instalado ainda.");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1.3: Agzos AI no estilo Claude: barra lateral, guias, projetos, markdown e artifact", async () => {
+  const profile = tempProfile();
+  groqCalls.length = 0;
+  const { app, window } = await launch(profile, GROQ_ENV(profile));
+  try {
+    await go(window, `${origin}/principal`);
+    await expect(tabs(window).first()).toContainText("Página PRINCIPAL");
+    const panel = window.getByRole("complementary", { name: "Agzos AI" });
+    const nav = panel.getByRole("navigation", { name: "Conversas do Agzos AI" });
+    await expect(nav).toBeVisible();
+    // Sem chave: o composer só pede a GROQ_API_KEY; o rodapé mostra o status.
+    await expect(panel.getByLabel("Mensagem para Agzos AI")).toHaveCount(0);
+    await expect(nav).toContainText("Sem chave da Groq");
+    await panel.getByLabel("Chave da API Groq").fill(GROQ_KEY);
+    await panel.getByRole("button", { name: "Salvar chave" }).click();
+    const input = panel.getByLabel("Mensagem para Agzos AI");
+    await expect(input).toBeVisible();
+    await expect(nav).toContainText("Chave Groq");
+    await expect(nav).not.toContainText("Sem chave");
+
+    // Projeto novo; a conversa nova nasce nele.
+    await nav.getByRole("button", { name: "Novo projeto" }).click();
+    await nav.getByLabel("Nome do projeto").fill("Pesquisa");
+    await nav.getByLabel("Nome do projeto").press("Enter");
+    await expect(nav.getByRole("button", { name: /Pesquisa/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await panel.getByRole("button", { name: "Novo Ctrl+N" }).click();
+    await expect(panel.getByLabel("Projeto da conversa")).toHaveValue(/.+/);
+    await input.fill("Primeira pergunta");
+    await input.press("Enter");
+    const answer = panel.locator('.chat-bubble[data-role="assistant"]').last();
+    await expect(answer).toContainText("Olá do Groq em streaming.", { timeout: 10_000 });
+    // Resposta em markdown (o **negrito** do servidor de mentira vira <strong>).
+    await expect(answer.locator("strong")).toHaveText("Groq");
+    const tabsBar = panel.getByRole("tablist", { name: "Conversas abertas" });
+    await expect(tabsBar.getByRole("tab", { name: "Primeira pergunta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    // Ctrl+N com o foco no painel: conversa nova (não janela nova), em outra guia.
+    const windowCount = () =>
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    const before = await windowCount();
+    await input.focus();
+    await window.keyboard.press("Control+n");
+    await expect(tabsBar.getByRole("tab", { name: "Nova conversa" })).toBeVisible();
+    await expect(panel.locator(".chat-bubble")).toHaveCount(0);
+    await window.waitForTimeout(500);
+    expect(await windowCount()).toBe(before);
+    // Contexto só com a checkbox: esta não leva a URL.
+    await input.fill("Me mostre um HTML");
+    await input.press("Enter");
+    await expect(panel.locator('.chat-bubble[data-role="assistant"]').last()).toContainText(
+      "streaming.",
+      { timeout: 10_000 },
+    );
+    expect(groqCalls.at(-1)!.body).not.toContain(`${origin}/principal`);
+    // Só a pergunta desta conversa vai junto (a outra conversa fica de fora).
+    expect(groqCalls.at(-1)!.body).not.toContain("Primeira pergunta");
+    await expect(tabsBar.getByRole("tab")).toHaveCount(2);
+
+    // Artifact HTML abre ao lado, com prévia isolada.
+    await panel.getByRole("button", { name: "Abrir ao lado" }).first().click();
+    const artifact = panel.getByRole("region", { name: /^Artifact:/ });
+    await expect(artifact).toBeVisible();
+    await expect(artifact.frameLocator("iframe").locator("h1")).toHaveText("Artifact de teste");
+    await expect(artifact.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts");
+    await expect(nav.getByRole("region", { name: "Artifacts" })).toContainText("Artifact de teste");
+
+    // Renomear pela barra lateral (duplo clique) e buscar.
+    await nav.getByRole("button", { name: "Me mostre um HTML" }).dblclick();
+    await nav.getByLabel("Título da conversa").fill("Demo HTML");
+    await nav.getByLabel("Título da conversa").press("Enter");
+    await expect(tabsBar.getByRole("tab", { name: "Demo HTML" })).toBeVisible();
+    await nav.getByRole("button", { name: /Pesquisa/ }).click();
+    await nav.getByLabel("Buscar conversas").fill("primeira");
+    await expect(nav.getByRole("button", { name: "Primeira pergunta" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Demo HTML" })).toHaveCount(0);
+
+    // Personalização: instruções vão no sistema da próxima pergunta.
+    await nav.getByRole("button", { name: /Personalização/ }).click();
+    const dialog = panel.getByRole("dialog", { name: "Personalização do Agzos AI" });
+    await dialog.getByLabel("Instruções para todas as conversas").fill("Fale como pirata.");
+    await dialog.getByRole("button", { name: "Salvar" }).click();
+    await tabsBar.getByRole("tab", { name: "Primeira pergunta" }).click();
+    await input.fill("De novo");
+    await input.press("Enter");
+    await expect(panel.locator('.chat-bubble[data-role="assistant"]')).toHaveCount(2, {
+      timeout: 10_000,
+    });
+    await expect(panel.locator('.chat-bubble[data-role="assistant"]').last()).toContainText(
+      "streaming.",
+      { timeout: 10_000 },
+    );
+    expect(groqCalls.at(-1)!.body).toContain("Fale como pirata.");
+    expect(groqCalls.at(-1)!.body).toContain("Primeira pergunta");
+    expect(await window.content()).not.toContain(GROQ_KEY);
   } finally {
     await app.close();
   }

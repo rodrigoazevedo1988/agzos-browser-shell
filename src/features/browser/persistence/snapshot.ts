@@ -225,6 +225,7 @@ export function parsePrefs(value: unknown): Prefs {
     dark: bool("dark"),
     shield: bool("shield"),
     aiOpen: bool("aiOpen"),
+    aiSidebar: bool("aiSidebar"),
     railCollapsed: bool("railCollapsed"),
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),
