@@ -23,6 +23,8 @@ export default defineConfig({
       input: {
         main: path.join(directory, "renderer", "index.html"),
         overlay: path.join(directory, "renderer", "overlay.html"),
+        // Terminal flutuante (4.1).
+        terminal: path.join(directory, "renderer", "terminal.html"),
       },
     },
   },

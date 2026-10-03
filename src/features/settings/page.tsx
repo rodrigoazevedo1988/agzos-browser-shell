@@ -7,6 +7,7 @@ import {
   Palette,
   PartyPopper,
   Power,
+  Bot,
   Hand,
   Search,
   ShieldCheck,
@@ -37,6 +38,19 @@ import { SOUND_TICKS, soundGain, type SoundTick } from "@/features/sounds/sounds
 import { Toggle } from "@/features/ui/toggle";
 import { ACTION_LABELS, GESTURES } from "@/features/gestures/gestures";
 import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
+import {
+  SshConnectionsSetting,
+  SshKeysSetting,
+  TerminalAliasSetting,
+  TerminalApiKeysSetting,
+  TerminalDockSetting,
+  TerminalFontSetting,
+  TerminalShortcutList,
+  TerminalSnippetSetting,
+  TerminalThemeSetting,
+  TerminalToolsSetting,
+  TerminalVoiceSetting,
+} from "@/features/terminal/settings";
 import { ColorPicker } from "@/features/browser/ui/color-picker";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +81,7 @@ export type SettingsSectionId =
   | "gestos"
   | "privacidade"
   | "terminal"
+  | "terminal-avancado"
   | "desempenho"
   | "inicializacao"
   | "downloads"
@@ -139,6 +154,8 @@ export function SettingsPage(props: SettingsPageProps) {
   const [query, setQuery] = useState("");
 
   const sections = useMemo<Section[]>(() => {
+    const setTerminal = (patch: Partial<Prefs["terminal"]>) =>
+      setPrefs({ terminal: { ...prefs.terminal, ...patch } });
     const list: Section[] = [
       {
         id: "aparencia",
@@ -694,6 +711,80 @@ export function SettingsPage(props: SettingsPageProps) {
                 />
               </label>
             ),
+          },
+          {
+            id: "terminal-posicao",
+            label: "Posição do terminal",
+            keywords: "terminal embaixo direita lateral vertical horizontal janela flutuante pip",
+            node: <TerminalDockSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-tema",
+            label: "Tema e cores do terminal",
+            keywords: "terminal cor fundo texto cursor tema dracula solarized monokai claro",
+            node: <TerminalThemeSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-fonte",
+            label: "Fonte do terminal",
+            keywords: "terminal fonte tamanho cursor cascadia jetbrains fira menlo consolas",
+            node: <TerminalFontSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-voz",
+            label: "Modo voz",
+            keywords: "terminal voz microfone falar transcrever whisper groq ditado",
+            node: <TerminalVoiceSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-atalhos",
+            label: "Atalhos do terminal",
+            keywords: "terminal atalhos teclado sessao nova fechar fonte",
+            node: <TerminalShortcutList />,
+          },
+        ],
+      });
+      list.push({
+        id: "terminal-avancado",
+        label: "Terminal avançado",
+        icon: Bot,
+        rows: [
+          {
+            id: "terminal-aliases",
+            label: "Aliases",
+            keywords: "terminal alias atalho comando apelido",
+            node: <TerminalAliasSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-comandos",
+            label: "Comandos rápidos",
+            keywords: "terminal snippets comandos rapidos lançador",
+            node: <TerminalSnippetSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-ferramentas",
+            label: "Ferramentas de IA",
+            keywords: "terminal ia claude code opencode kiro antigravity agy freebuff codex gemini",
+            node: <TerminalToolsSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-chaves-api",
+            label: "Chaves de API",
+            keywords:
+              "terminal api chave anthropic openai gemini openrouter groq deepseek variavel ambiente",
+            node: <TerminalApiKeysSetting settings={prefs.terminal} onChange={setTerminal} />,
+          },
+          {
+            id: "terminal-ssh-chaves",
+            label: "Chaves SSH",
+            keywords: "ssh chave ed25519 publica gerar keygen",
+            node: <SshKeysSetting />,
+          },
+          {
+            id: "terminal-ssh",
+            label: "Conexões SSH",
+            keywords: "ssh servidor conexao host usuario porta",
+            node: <SshConnectionsSetting settings={prefs.terminal} onChange={setTerminal} />,
           },
         ],
       });

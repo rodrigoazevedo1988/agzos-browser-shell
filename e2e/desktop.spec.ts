@@ -211,6 +211,16 @@ function groq(request: http.IncomingMessage, response: http.ServerResponse, url:
       response.end(JSON.stringify({ error: { code: "invalid_api_key", message: "Invalid" } }));
       return;
     }
+    // Modo voz (4.1): o Whisper de mentira devolve um comando.
+    if (url === "/groq/audio/transcriptions") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          text: body.includes("whisper-large-v3-turbo") ? "echo VOZ-$((20+3))" : "?",
+        }),
+      );
+      return;
+    }
     if (url === "/groq/models") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
@@ -333,9 +343,10 @@ function tempProfile() {
 async function launch(
   profile: string,
   extraEnv: Record<string, string> = {},
+  extraArgs: string[] = [],
 ): Promise<{ app: ElectronApplication; window: Page }> {
   const app = await electron.launch({
-    args: ["--no-sandbox", root],
+    args: ["--no-sandbox", ...extraArgs, root],
     cwd: root,
     env: {
       ...process.env,
@@ -2952,6 +2963,137 @@ test("4.0: gestos: traço com o botão direito, botões laterais, deslizar e pin
         ),
       )
       .toBeGreaterThan(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1: terminal embaixo, à direita e flutuante sem perder as sessões; tema, lançador e alias", async () => {
+  test.skip(process.platform === "win32", "o e2e usa bash");
+  const profile = tempProfile();
+  const { app, window } = await launch(profile, { AGZOS_TEST_BASIC_KEYRING: "1" });
+  const type = async (page: Page, text: string) => {
+    await page.keyboard.type(text);
+    await page.keyboard.press("Enter");
+  };
+  try {
+    await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await window.keyboard.press("Control+Alt+t");
+    const dock = window.getByRole("region", { name: "Terminal" });
+    await expect(dock).toBeVisible();
+    await expect.poll(() => terminalText(window)).toMatch(/\S/);
+    await type(window, "echo MARCA=$((5*5))");
+    await expect.poll(() => terminalText(window)).toContain("MARCA=25");
+
+    // À direita: a mesma sessão, com o que já estava na tela.
+    await dock.getByRole("button", { name: "Terminal: À direita da página" }).click();
+    await expect(window.locator('.terminal-dock[data-dock="right"]')).toBeVisible();
+    await expect(window.getByRole("separator", { name: "Largura do terminal" })).toBeVisible();
+    await expect(dock.getByRole("tab")).toHaveCount(1);
+    await expect.poll(() => terminalText(window)).toContain("MARCA=25");
+
+    // Janela flutuante (PiP): a sessão segue lá; a casca fica sem o painel.
+    await window
+      .getByRole("region", { name: "Terminal" })
+      .getByRole("button", { name: "Terminal: Janela flutuante (PiP)" })
+      .click();
+    await expect
+      .poll(() => app.windows().some((page) => page.url().endsWith("/terminal.html")))
+      .toBe(true);
+    const pip = app.windows().find((page) => page.url().endsWith("/terminal.html"))!;
+    await expect(window.getByRole("region", { name: "Terminal" })).toHaveCount(0);
+    await expect.poll(() => terminalText(pip)).toContain("MARCA=25");
+    const onTop = await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().some(
+        (win) => win.getTitle().startsWith("Terminal") && win.isAlwaysOnTop(),
+      ),
+    );
+    expect(onTop).toBe(true);
+    await pip.locator(".xterm").click();
+    await type(pip, "echo NA-JANELA=$((2+2))");
+    await expect.poll(() => terminalText(pip)).toContain("NA-JANELA=4");
+
+    // Encaixar de volta embaixo pelo próprio PiP.
+    await pip.getByRole("button", { name: "Terminal: Embaixo da página" }).click();
+    await expect(window.locator('.terminal-dock[data-dock="bottom"]')).toBeVisible();
+    await expect
+      .poll(() => app.windows().some((page) => page.url().endsWith("/terminal.html")))
+      .toBe(false);
+    await expect.poll(() => terminalText(window)).toContain("NA-JANELA=4");
+
+    // Tema e alias pelas Configurações.
+    await go(window, "agzos://configuracoes");
+    await window.getByRole("button", { name: "Terminal", exact: true }).first().click();
+    await window.getByRole("combobox").filter({ hasText: "Agzos escuro" }).selectOption("dracula");
+    await expect(window.locator(".terminal-view")).toHaveCSS("background-color", "rgb(40, 42, 54)");
+    await window.getByRole("button", { name: "Terminal avançado" }).first().click();
+    await window.getByLabel("Nome do alias").fill("cumprimenta");
+    await window.getByLabel("Comando do alias").fill("echo ALIAS-OK");
+    await window.getByRole("button", { name: "Adicionar alias" }).click();
+    await window
+      .getByRole("combobox", { name: "Provedor da chave" })
+      .selectOption("OPENAI_API_KEY");
+    await window.getByLabel("Valor de OPENAI_API_KEY").fill("sk-e2e-terminal");
+    await window.getByRole("button", { name: "Salvar", exact: true }).click();
+    await expect(window.getByRole("list", { name: "Chaves de API dos terminais" })).toContainText(
+      "OPENAI_API_KEY",
+    );
+    await expect(
+      window.getByRole("list", { name: "Chaves de API dos terminais" }),
+    ).not.toContainText("sk-e2e-terminal");
+
+    // Sessão nova (Ctrl+Shift+E) já com o alias e a chave no ambiente.
+    await window.locator(".terminal-dock .xterm").click();
+    await window.keyboard.press("Control+Shift+E");
+    await expect(window.getByRole("region", { name: "Terminal" }).getByRole("tab")).toHaveCount(2);
+    await window.waitForTimeout(500);
+    await type(window, "cumprimenta; echo KEY=${OPENAI_API_KEY:0:6}");
+    await expect.poll(() => terminalText(window)).toContain("ALIAS-OK");
+    await expect.poll(() => terminalText(window)).toContain("KEY=sk-e2e");
+
+    // Lançador: comando rápido padrão.
+    await window.keyboard.press("Control+Shift+K");
+    const launcher = window.getByRole("dialog", { name: "Lançador do terminal" });
+    await expect(launcher).toContainText("Claude Code");
+    await expect(launcher).toContainText("Freebuff");
+    await launcher.getByRole("button", { name: /git status/ }).click();
+    await expect.poll(() => terminalText(window)).toMatch(/git status|not a git repository|fatal/);
+    // A chave nunca chega à casca.
+    expect(await window.content()).not.toContain("sk-e2e-terminal");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.1: modo voz grava, transcreve com a Groq e cola o comando no prompt", async () => {
+  test.skip(process.platform === "win32", "o e2e usa bash");
+  const profile = tempProfile();
+  const { app, window } = await launch(profile, GROQ_ENV(profile), [
+    "--use-fake-device-for-media-stream",
+    "--use-fake-ui-for-media-stream",
+  ]);
+  try {
+    // A chave do Agzos AI (a mesma do modo voz).
+    const panel = window.getByRole("complementary", { name: "Agzos AI" });
+    await panel.getByLabel("Chave da API Groq").fill(GROQ_KEY);
+    await panel.getByRole("button", { name: "Salvar chave" }).click();
+    await expect(panel.getByLabel("Mensagem para Agzos AI")).toBeVisible();
+
+    await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await window.keyboard.press("Control+Alt+t");
+    const dock = window.getByRole("region", { name: "Terminal" });
+    await expect.poll(() => terminalText(window)).toMatch(/\S/);
+    await dock.getByRole("button", { name: "Falar um comando (modo voz)" }).click();
+    await expect(dock.getByRole("status")).toContainText("Gravando");
+    await window.waitForTimeout(1500);
+    await dock.getByRole("button", { name: "Parar a gravação e transcrever" }).click();
+    // Cola sem Enter (padrão): o texto fica no prompt; o Enter é do usuário.
+    await expect.poll(() => terminalText(window)).toContain("echo VOZ-$((20+3))");
+    expect(await terminalText(window)).not.toContain("VOZ-23");
+    await dock.locator(".xterm").click();
+    await window.keyboard.press("Enter");
+    await expect.poll(() => terminalText(window)).toContain("VOZ-23");
+    expect(groqCalls.some((call) => call.url === "/groq/audio/transcriptions")).toBe(true);
   } finally {
     await app.close();
   }

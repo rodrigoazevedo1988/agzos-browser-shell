@@ -213,6 +213,34 @@ export type AiChatResult =
   | AiFailure;
 
 export type TerminalShell = { id: string; label: string };
+export type LiveTerminal = {
+  id: number;
+  shell: string;
+  label: string;
+  cwd: string;
+  history: string;
+};
+export type SshConnection = {
+  id: string;
+  name: string;
+  user: string;
+  host: string;
+  port: number;
+  /** Caminho da chave privada (ssh -i), opcional. */
+  key: string;
+};
+export type SshKey = {
+  name: string;
+  type: string;
+  comment: string;
+  publicKey: string;
+  privatePath: string | null;
+};
+/** O que o main e o terminal flutuante precisam das preferências do terminal. */
+export type TerminalRuntimeConfig = import("@/features/terminal/config").TerminalSettings & {
+  shell: string;
+  cwd: string;
+};
 /** Sessão lembrada: shell e a última pasta. */
 export type SavedTerminal = { shell: string; cwd: string };
 
@@ -392,6 +420,48 @@ export type DesktopBridge = {
   terminalFocus(focused: boolean): Promise<void>;
   terminalSaved(): Promise<SavedTerminal[]>;
   terminalSave(list: SavedTerminal[]): Promise<{ ok: boolean }>;
+  /** 4.1: sessões vivas da janela com a saída recente (o terminal mudou de lugar). */
+  terminalList(): Promise<LiveTerminal[]>;
+  terminalOpenSsh(
+    connection: SshConnection,
+    cols: number,
+    rows: number,
+  ): Promise<
+    | { ok: true; id: number; shell: string; label: string; cwd: string }
+    | { ok: false; error: string }
+  >;
+  /** Preferências do terminal para o main (aliases, Groq) e o terminal flutuante. */
+  terminalConfig(config: TerminalRuntimeConfig): Promise<void>;
+  terminalConfigGet(): Promise<TerminalRuntimeConfig | null>;
+  /** Abre/fecha o terminal flutuante (PiP) desta janela. */
+  terminalPip(open: boolean): Promise<void>;
+  /** No terminal flutuante: encaixar de volta na janela ou esconder. */
+  terminalDock(dock: "bottom" | "right" | "hide"): Promise<void>;
+  /** Quais comandos existem no PATH do app. */
+  terminalTools(commands: string[]): Promise<Record<string, boolean>>;
+  /** Chaves de API dos terminais: só os nomes voltam. */
+  terminalSecrets(): Promise<{ names: string[]; encryption: boolean }>;
+  terminalSecretSet(name: string, value: string): Promise<{ ok: boolean; error?: string }>;
+  terminalSecretRemove(name: string): Promise<{ ok: boolean; error?: string }>;
+  sshKeys(): Promise<SshKey[]>;
+  sshGenerate(options: {
+    name: string;
+    comment: string;
+    passphrase: string;
+  }): Promise<{ ok: true; key: SshKey } | { ok: false; error: string }>;
+  /** Modo voz: áudio → texto pelo Whisper da Groq (a chave do Agzos AI). */
+  aiTranscribe(
+    audio: Uint8Array,
+    mime: string,
+    language: string,
+  ): Promise<{ ok: true; text: string } | AiFailure>;
+  /** macOS: pede o microfone ao sistema (nos outros, true). */
+  micAccess(): Promise<boolean>;
+  onTerminalConfig(callback: (config: TerminalRuntimeConfig) => void): () => void;
+  /** Terminal flutuante fechado pelo usuário ou encaixado de volta. */
+  onTerminalPip(
+    callback: (payload: { open?: boolean; dock?: "bottom" | "right" }) => void,
+  ): () => void;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
   onTerminalData(callback: (payload: { id: number; data: string }) => void): () => void;

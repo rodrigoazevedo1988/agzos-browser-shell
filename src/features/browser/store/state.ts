@@ -23,6 +23,7 @@ import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
 import { DEFAULT_SOUND_TICK, type SoundTick } from "@/features/sounds/sounds";
 import { DEFAULT_GESTURES, type GesturePrefs } from "@/features/gestures/gestures";
 import { TERMINAL_HEIGHT } from "@/features/terminal/model";
+import { DEFAULT_TERMINAL, type TerminalSettings } from "@/features/terminal/config";
 
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
@@ -120,6 +121,8 @@ export type Prefs = {
   terminalHeight: number;
   terminalShell: string;
   terminalCwd: string;
+  /** Terminal 4.1: posição, aparência, aliases, IA, SSH e voz. */
+  terminal: TerminalSettings;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -160,6 +163,7 @@ export const defaultPrefs: Prefs = {
   terminalHeight: TERMINAL_HEIGHT.initial,
   terminalShell: "",
   terminalCwd: "",
+  terminal: DEFAULT_TERMINAL,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };

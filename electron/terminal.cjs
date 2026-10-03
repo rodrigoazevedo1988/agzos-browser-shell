@@ -14,6 +14,8 @@ const MAX_SESSIONS = 12;
 /** Junta a saída do PTY em lotes (menos mensagens de IPC com saída rápida). */
 const FLUSH_MS = 8;
 const CWD_CHECK_MS = 400;
+/** Saída recente de cada sessão (4.1): repetida quando o terminal troca de lugar. */
+const HISTORY_LIMIT = 256 * 1024;
 
 // Teclas que, com o foco no terminal, continuam sendo do navegador (mesma lista de
 // src/features/terminal/model.ts). O resto (Ctrl+C, Ctrl+W, Ctrl+R…) vai para o shell.
@@ -171,6 +173,11 @@ function createTerminals({
   onData,
   onExit,
   onCwd = () => {},
+  // 4.1: como subir o shell com os aliases ({ args, env }) e as variáveis extras (chaves
+  // de API) que só os terminais recebem.
+  prepare = (shell) => ({ args: shell.args, env: {} }),
+  extraEnv = () => ({}),
+  sshBinary = () => null,
 }) {
   const sessions = new Map();
   let seq = 0;
@@ -220,23 +227,39 @@ function createTerminals({
       return { ok: Boolean(ptyModule()), shells: shells().map(({ id, label }) => ({ id, label })) };
     },
 
-    /** Abre uma sessão. `shell`: id da lista (ou vazio = padrão); `cwd` inválido → início. */
-    open(owner, { shell, cwd, cols, rows } = {}) {
+    /**
+     * Abre uma sessão. `shell`: id da lista (ou vazio = padrão); `cwd` inválido → início.
+     * `ssh`: argumentos já validados (terminal-launch.cjs sshArgs) para uma sessão SSH.
+     */
+    open(owner, { shell, cwd, cols, rows, ssh = null, title = null } = {}) {
       const module = ptyModule();
       if (!module) return { ok: false, error: "unavailable" };
       const owned = [...sessions.values()].filter((item) => item.owner === owner).length;
       if (owned >= MAX_SESSIONS) return { ok: false, error: "limit" };
       const list = shells();
-      const chosen = list.find((item) => item.id === shell) ?? list[0];
+      let chosen = list.find((item) => item.id === shell) ?? list[0];
+      let launch;
+      if (ssh) {
+        const file = sshBinary();
+        if (!file) return { ok: false, error: "no-ssh" };
+        chosen = { id: "ssh", label: "ssh", file, args: ssh };
+        launch = { args: ssh, env: {} };
+      } else {
+        try {
+          launch = prepare(chosen);
+        } catch {
+          launch = { args: chosen.args, env: {} };
+        }
+      }
       const dir = typeof cwd === "string" && cwd && isDirectory(cwd) ? cwd : homedir;
       let child;
       try {
-        child = module.spawn(chosen.file, chosen.args, {
+        child = module.spawn(chosen.file, launch.args, {
           name: "xterm-256color",
           cols: clampSize(cols, 2, 1000, 80),
           rows: clampSize(rows, 1, 500, 24),
           cwd: dir,
-          env: shellEnv(env),
+          env: { ...shellEnv(env), ...extraEnv(), ...launch.env },
         });
       } catch {
         return { ok: false, error: "spawn" };
@@ -253,10 +276,19 @@ function createTerminals({
         cwdTimer: null,
         exited: false,
         tail: "",
+        history: "",
+        label: typeof title === "string" && title ? title.slice(0, 80) : chosen.label,
       };
       sessions.set(id, session);
       child.onData((data) => {
         session.buffer += data;
+        session.history += data;
+        if (session.history.length > HISTORY_LIMIT * 1.25) {
+          // Corta numa quebra de linha (não no meio de uma sequência de cor).
+          const cut = session.history.length - HISTORY_LIMIT;
+          const line = session.history.indexOf("\n", cut);
+          session.history = session.history.slice(line >= 0 ? line + 1 : cut);
+        }
         // Prompt do Windows: a pasta vem na saída.
         session.tail = (session.tail + data).slice(-2048);
         const cwdNow = cwdFromOutput(session.tail);
@@ -271,7 +303,7 @@ function createTerminals({
         sessions.delete(id);
         onExit(session.owner, id, { exitCode, signal: signal ?? null });
       });
-      return { ok: true, id, shell: chosen.id, label: chosen.label, cwd: dir };
+      return { ok: true, id, shell: chosen.id, label: session.label, cwd: dir };
     },
 
     write(owner, id, data) {
@@ -317,6 +349,20 @@ function createTerminals({
           // Já saiu.
         }
       }
+    },
+
+    /** Sessões vivas da janela com a saída recente (o terminal mudou de lugar). */
+    list(owner) {
+      return [...sessions.values()]
+        .filter((session) => session.owner === owner)
+        .map(({ id, shell, label, cwd, history, buffer }) => ({
+          id,
+          shell,
+          label,
+          cwd,
+          // O que ainda está no lote vai junto (sem chegar duas vezes depois).
+          history: history.slice(0, history.length - buffer.length),
+        }));
     },
 
     sessionsOf(owner) {

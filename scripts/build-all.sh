@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-VERSION="4.0.0"
+VERSION="4.1.0"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs terminal.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -106,6 +106,8 @@ with open(path, "rb") as f:
 data["CFBundleName"] = "Agzos Browser"
 data["CFBundleDisplayName"] = "Agzos Browser"
 data["CFBundleIdentifier"] = "br.agzos.browser"
+# Modo voz do terminal (4.1) e páginas que usam o microfone.
+data["NSMicrophoneUsageDescription"] = "O Agzos usa o microfone no modo voz do terminal e nos sites que você permitir."
 with open(path, "wb") as f:
     plistlib.dump(data, f)
 PY
@@ -149,4 +151,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.0.0: Agzos AI com a Groq (chave no cofre do sistema), gestos de trackpad e mouse, terminal de verdade e aceleração de vídeo pela GPU."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.1.0: terminal embaixo, à direita ou em janela flutuante, tema e fonte, modo voz com a Groq, ferramentas de IA, chaves de API, SSH, aliases e atalhos."

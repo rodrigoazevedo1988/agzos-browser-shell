@@ -11,6 +11,9 @@ if (!fs.existsSync(entry)) {
 if (!fs.existsSync(path.join(destination, "overlay.html"))) {
   throw new Error("The web build did not produce overlay.html (chrome overlay layer).");
 }
+if (!fs.existsSync(path.join(destination, "terminal.html"))) {
+  throw new Error("The web build did not produce terminal.html (floating terminal).");
+}
 const html = fs.readFileSync(entry, "utf8");
 if (/\b(?:src|href)=["']\//.test(html)) {
   throw new Error("Electron bundle contains absolute asset URLs. Keep Vite base set to './'.");

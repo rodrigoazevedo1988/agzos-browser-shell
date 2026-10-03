@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.1.0",
+    date: "2026-10-03",
+    items: [
+      "Terminal onde você quiser: embaixo da página, à direita dela ou numa janela flutuante sempre por cima (PiP). Arraste a borda para redimensionar; trocar de lugar não fecha as sessões nem apaga o que estava na tela.",
+      "Aparência do terminal em Configurações → Terminal: temas prontos (Agzos, Claro, Dracula, Solarized, Monokai, Meia-noite), cor de fundo, do texto e do cursor, fonte, tamanho e formato do cursor.",
+      "Modo voz: aperte o microfone (ou Ctrl+Shift+M), fale o comando e o texto transcrito pelo Whisper da Groq aparece no prompt — usa a mesma chave do Agzos AI.",
+      "Lançador (Ctrl+Shift+K) com Claude Code, OpenCode, Kiro, Antigravity, Freebuff, Codex e Gemini CLI, suas conexões SSH e comandos rápidos. As chaves de API dessas ferramentas ficam cifradas e entram só no ambiente do terminal.",
+      "SSH: veja as chaves de ~/.ssh, gere uma ed25519 nova, copie a chave pública e salve conexões que abrem com um clique.",
+      "Aliases que funcionam no bash, zsh, PowerShell e cmd, e atalhos novos: Ctrl+Shift+E nova sessão, Ctrl+Shift+W fecha, Ctrl+Shift+←/→ troca de sessão e Ctrl +/−/0 muda a fonte.",
+    ],
+  },
+  {
     version: "4.0.0",
     date: "2026-10-03",
     items: [

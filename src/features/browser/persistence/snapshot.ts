@@ -9,6 +9,7 @@ import {
 import { parseSoundTick, parseSoundVolume } from "@/features/sounds/sounds";
 import { parseGestures } from "@/features/gestures/gestures";
 import { clampTerminalHeight } from "@/features/terminal/model";
+import { parseTerminalSettings } from "@/features/terminal/config";
 import type { HydratePayload } from "../store/reducer";
 import {
   BOOKMARKS_URL,
@@ -268,6 +269,7 @@ export function parsePrefs(value: unknown): Prefs {
     terminalShell: isString(raw["terminalShell"])
       ? raw["terminalShell"].slice(0, 260)
       : defaultPrefs.terminalShell,
+    terminal: parseTerminalSettings(raw["terminal"]),
     terminalCwd: isString(raw["terminalCwd"])
       ? raw["terminalCwd"].slice(0, 1024)
       : defaultPrefs.terminalCwd,

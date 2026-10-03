@@ -520,6 +520,35 @@ export function AgzosBrowser() {
   useEffect(() => {
     if (prefs.terminalOpen && desktop) setTerminalMounted(true);
   }, [prefs.terminalOpen, desktop]);
+  // 4.1: o main precisa dos aliases e da opção da Groq; o terminal flutuante, do resto.
+  const terminalRuntime = JSON.stringify({
+    ...prefs.terminal,
+    shell: prefs.terminalShell,
+    cwd: prefs.terminalCwd,
+  });
+  useEffect(() => {
+    void desktop?.terminalConfig(JSON.parse(terminalRuntime));
+  }, [desktop, terminalRuntime]);
+  // Janela flutuante (PiP): aberta enquanto o terminal está à vista nesse modo.
+  const terminalPip = prefs.terminal.dock === "window" && prefs.terminalOpen;
+  useEffect(() => {
+    void desktop?.terminalPip(terminalPip);
+  }, [desktop, terminalPip]);
+  useEffect(
+    () =>
+      desktop?.onTerminalPip(({ open, dock }) => {
+        const now = ctxRef.current.state.prefs;
+        if (dock) {
+          dispatch({
+            type: "prefs/set",
+            patch: { terminal: { ...now.terminal, dock }, terminalOpen: true },
+          });
+        } else if (open === false) {
+          dispatch({ type: "prefs/set", patch: { terminalOpen: false } });
+        }
+      }),
+    [desktop],
+  );
 
   const setPrefs = useCallback(
     (patch: Partial<Prefs>) => dispatch({ type: "prefs/set", patch }),
@@ -1412,6 +1441,27 @@ export function AgzosBrowser() {
     </Button>
   );
 
+  const setTerminal = (patch: Partial<Prefs["terminal"]>) =>
+    setPrefs({ terminal: { ...prefs.terminal, ...patch } });
+  const terminalBottom = prefs.terminal.dock !== "right";
+  const terminalDock =
+    desktop && terminalMounted && prefs.terminal.dock !== "window" ? (
+      <TerminalDock
+        key={prefs.terminal.dock}
+        desktop={desktop}
+        hidden={!prefs.terminalOpen || state.fullscreen}
+        height={prefs.terminalHeight}
+        onHeight={(terminalHeight) => setPrefs({ terminalHeight })}
+        settings={prefs.terminal}
+        onSettings={setTerminal}
+        onDock={(dock) => setTerminal({ dock })}
+        defaultShell={prefs.terminalShell}
+        defaultCwd={prefs.terminalCwd}
+        isMac={isMac}
+        onClose={() => setPrefs({ terminalOpen: false })}
+      />
+    ) : null;
+
   const openSettings = () => openInternal(SETTINGS_URL, "Configurações");
   const runMenuAction = (action: AppMenuAction) => {
     switch (action) {
@@ -2073,19 +2123,9 @@ export function AgzosBrowser() {
                   flash();
                 }}
               />
-              {desktop && terminalMounted && (
-                <TerminalDock
-                  desktop={desktop}
-                  hidden={!prefs.terminalOpen || state.fullscreen}
-                  height={prefs.terminalHeight}
-                  onHeight={(terminalHeight) => setPrefs({ terminalHeight })}
-                  defaultShell={prefs.terminalShell}
-                  defaultCwd={prefs.terminalCwd}
-                  isMac={isMac}
-                  onClose={() => setPrefs({ terminalOpen: false })}
-                />
-              )}
+              {terminalBottom && terminalDock}
             </div>
+            {!terminalBottom && terminalDock}
             {prefs.aiOpen && !state.fullscreen && (
               <AiPanel
                 desktop={desktop}

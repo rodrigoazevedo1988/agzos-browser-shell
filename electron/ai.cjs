@@ -25,6 +25,42 @@ const CONTEXT_MESSAGES = 20;
 const SELECTION_LIMIT = 8000;
 const MESSAGE_LIMIT = 16000;
 const KEY_RE = /^[\x21-\x7e]{16,256}$/;
+/** Modo voz do terminal (4.1): Whisper da Groq. */
+const TRANSCRIBE_MODEL = "whisper-large-v3-turbo";
+/** Limite de upload da Groq para áudio. */
+const AUDIO_LIMIT = 25 * 1024 * 1024;
+const AUDIO_TYPES = {
+  "audio/webm": "webm",
+  "audio/ogg": "ogg",
+  "audio/mp4": "m4a",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+};
+
+/** Corpo multipart/form-data do /audio/transcriptions (sem depender de FormData no main). */
+function transcriptionBody(audio, mime, language, boundary) {
+  const type = String(mime ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  const extension = AUDIO_TYPES[type] ?? "webm";
+  const field = (name, value) =>
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+  const fields = [
+    field("model", TRANSCRIBE_MODEL),
+    field("response_format", "json"),
+    field("temperature", "0"),
+    ...(language ? [field("language", language)] : []),
+  ].join("");
+  const head =
+    `${fields}--${boundary}\r\nContent-Disposition: form-data; name="file"; ` +
+    `filename="voz.${extension}"\r\nContent-Type: ${type || "audio/webm"}\r\n\r\n`;
+  return Buffer.concat([
+    Buffer.from(head, "utf8"),
+    Buffer.from(audio),
+    Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
+  ]);
+}
 
 const SYSTEM_PROMPT =
   "Você é o Agzos AI, o assistente do navegador Agzos. Responda em português do Brasil, " +
@@ -387,11 +423,55 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
       running.get(requestId)?.abort();
       return { ok: true };
     },
+
+    /**
+     * Modo voz do terminal: áudio gravado na casca → texto (Whisper). `language` é o código
+     * ISO (pt, en…) ou vazio para detectar. Sem chave, nada sai do computador.
+     */
+    async transcribe({ audio, mime, language }) {
+      const key = readKey();
+      if (!key) return { ok: false, error: "no-key" };
+      const bytes = audio instanceof Uint8Array ? audio : null;
+      if (!bytes || !bytes.length || bytes.length > AUDIO_LIMIT)
+        return { ok: false, error: "request" };
+      const lang = typeof language === "string" && /^[a-z]{2}$/.test(language) ? language : "";
+      const boundary = `agzos${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+      let response;
+      try {
+        response = await fetch(`${baseUrl}/audio/transcriptions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          },
+          body: transcriptionBody(bytes, mime, lang, boundary),
+        });
+      } catch {
+        return { ok: false, error: "network" };
+      }
+      const body = await readJson(response);
+      if (!response.ok) {
+        return {
+          ok: false,
+          error: errorOfStatus(response.status, body),
+          retryAfter: retryAfterOf(response.headers),
+        };
+      }
+      const text = typeof body?.text === "string" ? body.text.trim() : "";
+      return { ok: true, text };
+    },
+
+    /** A chave da Groq para o ambiente dos terminais (opção do usuário); nunca para a casca. */
+    keyForTerminal() {
+      return readKey();
+    },
   };
   return api;
 }
 
 module.exports = {
+  TRANSCRIBE_MODEL,
+  transcriptionBody,
   DEFAULT_BASE_URL,
   PREFERRED_MODELS,
   createAi,

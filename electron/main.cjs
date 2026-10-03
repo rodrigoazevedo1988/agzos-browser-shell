@@ -11,6 +11,7 @@ const {
   safeStorage,
   net,
   webContents,
+  systemPreferences,
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -70,6 +71,15 @@ const {
 const { createGxControl, runSpeedTest } = require("./gx-control.cjs");
 const { createAi } = require("./ai.cjs");
 const { createTerminals, cwdReader, terminalKeepsBrowserKey } = require("./terminal.cjs");
+const {
+  cleanAliases,
+  detectCommands,
+  prepareAliases,
+  sshArgs,
+  sshBinary,
+} = require("./terminal-launch.cjs");
+const { createSecrets } = require("./terminal-secrets.cjs");
+const { generateKey, keygenBinary, listKeys } = require("./ssh-keys.cjs");
 const { applyGpuFlags, watchGpuCrashes, setGpuEnabled, gpuStatus } = require("./gpu-flags.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
@@ -818,6 +828,13 @@ function wirePermissions(ses) {
   wiredPermissionSessions.add(ses);
   const isPrivate = () => ses === privateSession();
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    // Modo voz do terminal (4.1): o microfone para a própria interface do Agzos (casca ou
+    // terminal flutuante), nunca para páginas.
+    if (isAppInterface(contents) && permission === "media") {
+      const media = details?.mediaTypes ?? [];
+      callback(media.length > 0 && media.every((type) => type === "audio"));
+      return;
+    }
     const types = permissionTypesOf(permission, details);
     if (!types) {
       callback(AUTO_ALLOWED.includes(permission));
@@ -1755,6 +1772,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   });
   window.on("closed", () => {
     terminals?.killAll(ctx);
+    closeTerminalPip(ctx);
     if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
     if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) {
       ctx.switcherView.webContents.close();
@@ -3261,23 +3279,24 @@ function registerIpc() {
   // --- Terminal (4.0): cada janela só vê e escreve nas sessões dela. ---
   ipcMain.handle("terminal:available", () => terminalService().available());
   ipcMain.handle("terminal:open", (event, options = {}) => {
-    const ctx = ctxOfEvent(event);
+    const ctx = terminalCtx(event);
     if (!ctx) return { ok: false, error: "window" };
     return terminalService().open(ctx, options);
   });
   ipcMain.on("terminal:write", (event, { id, data } = {}) => {
-    const ctx = ctxOfEvent(event);
+    const ctx = terminalCtx(event);
     if (ctx) terminals?.write(ctx, id, data);
   });
   ipcMain.handle("terminal:resize", (event, { id, cols, rows } = {}) => {
-    const ctx = ctxOfEvent(event);
+    const ctx = terminalCtx(event);
     return ctx ? Boolean(terminals?.resize(ctx, id, cols, rows)) : false;
   });
   ipcMain.handle("terminal:kill", (event, { id } = {}) => {
-    const ctx = ctxOfEvent(event);
+    const ctx = terminalCtx(event);
     return ctx ? Boolean(terminals?.kill(ctx, id)) : false;
   });
   ipcMain.handle("terminal:focus", (event, { focused } = {}) => {
+    // Só a casca: o terminal flutuante não tem atalhos do navegador para desviar.
     const ctx = ctxOfEvent(event);
     if (ctx) ctx.terminalFocused = Boolean(focused);
   });
@@ -3297,6 +3316,97 @@ function registerIpc() {
       }));
     database?.setMeta("terminalSessions", clean);
     return { ok: true };
+  });
+  // --- Terminal 4.1: posições, aparência/aliases, chaves de API, SSH e voz. ---
+  ipcMain.handle("terminal:list", (event) => {
+    const ctx = terminalCtx(event);
+    return ctx && terminals ? terminals.list(ctx) : [];
+  });
+  ipcMain.handle("terminal:open-ssh", (event, { connection, cols, rows } = {}) => {
+    const ctx = terminalCtx(event);
+    if (!ctx) return { ok: false, error: "window" };
+    const args = sshArgs(connection);
+    if (!args) return { ok: false, error: "ssh-invalid" };
+    const name = typeof connection?.name === "string" ? connection.name.trim() : "";
+    return terminalService().open(ctx, {
+      ssh: args,
+      cols,
+      rows,
+      title: `ssh · ${name || connection.host}`,
+    });
+  });
+  // Preferências do terminal vindas da casca: aliases e a chave da Groq valem nas sessões
+  // novas; o resto (tema, fonte) vai para o terminal flutuante.
+  ipcMain.handle("terminal:config", (_event, config) => {
+    if (!config || typeof config !== "object") return;
+    terminalConfig = { ...config, aliases: cleanAliases(config.aliases) };
+    for (const ctx of contexts.values()) {
+      const pip = ctx.terminalPip;
+      if (pip && !pip.isDestroyed()) pip.webContents.send("agzos:terminal-config", terminalConfig);
+    }
+  });
+  ipcMain.handle("terminal:config-get", () => terminalConfig);
+  ipcMain.handle("terminal:pip", (event, { open } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    if (open) openTerminalPip(ctx);
+    else closeTerminalPip(ctx);
+  });
+  // Botões do terminal flutuante ("encaixar embaixo/à direita", esconder) → casca.
+  ipcMain.handle("terminal:dock", (event, { dock } = {}) => {
+    const ctx = terminalPipOwner.get(event.sender.id);
+    if (!ctx) return;
+    if (dock === "bottom" || dock === "right") send(ctx, "agzos:terminal-pip", { dock });
+    else send(ctx, "agzos:terminal-pip", { open: false });
+  });
+  ipcMain.handle("terminal:tools", (_event, { commands } = {}) =>
+    detectCommands(commands, {
+      platform: process.platform,
+      env: process.env,
+      exists: fs.existsSync,
+    }),
+  );
+  ipcMain.handle("terminal:secrets", () => ({
+    names: terminalSecrets().names(),
+    encryption: terminalSecrets().encryption(),
+  }));
+  ipcMain.handle("terminal:secret-set", (_event, { name, value } = {}) =>
+    terminalSecrets().set(name, value),
+  );
+  ipcMain.handle("terminal:secret-remove", (_event, { name } = {}) =>
+    terminalSecrets().remove(name),
+  );
+  ipcMain.handle("ssh:keys", () => listKeys(path.join(os.homedir(), ".ssh")));
+  ipcMain.handle("ssh:generate", (_event, { name, comment, passphrase } = {}) =>
+    generateKey({
+      sshDir: path.join(os.homedir(), ".ssh"),
+      name,
+      comment,
+      passphrase,
+      execFile: require("node:child_process").execFile,
+      binary: keygenBinary({
+        platform: process.platform,
+        env: process.env,
+        exists: fs.existsSync,
+      }),
+    }),
+  );
+  ipcMain.handle("ai:transcribe", (_event, { audio, mime, language } = {}) =>
+    aiService().transcribe({
+      audio: audio instanceof Uint8Array ? audio : audio ? new Uint8Array(audio) : null,
+      mime,
+      language,
+    }),
+  );
+  // macOS pede a permissão do microfone ao sistema uma vez.
+  ipcMain.handle("media:mic-access", async () => {
+    if (process.platform !== "darwin") return true;
+    try {
+      if (systemPreferences.getMediaAccessStatus("microphone") === "granted") return true;
+      return await systemPreferences.askForMediaAccess("microphone");
+    } catch {
+      return false;
+    }
   });
   ipcMain.handle("terminal:clipboard-read", () => clipboard.readText());
   ipcMain.handle("terminal:clipboard-write", (_event, { text } = {}) => {
@@ -3728,17 +3838,153 @@ function registerIpc() {
 app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");
 
 let terminals = null;
+/** Preferências do terminal (4.1) que o main usa: aliases, Groq no ambiente, tema… */
+let terminalConfig = { aliases: [], groqEnv: false };
+/** Terminal flutuante (PiP) → janela dona: as sessões continuam sendo da janela. */
+const terminalPipOwner = new Map();
+const TERMINAL_PAGE = path.join(__dirname, "..", "dist", "terminal.html");
+
+/** Janela das sessões: a casca ou o terminal flutuante dela. */
+function terminalCtx(event) {
+  return ctxOfEvent(event) ?? terminalPipOwner.get(event.sender.id) ?? null;
+}
+
+/** Interface do próprio Agzos (casca ou terminal flutuante), nunca uma página. */
+function isAppInterface(contents) {
+  return Boolean(contents) && (contexts.has(contents.id) || terminalPipOwner.has(contents.id));
+}
+
+/** Eventos das sessões vão para a casca e para o terminal flutuante, se aberto. */
+function sendTerminal(ctx, channel, payload) {
+  send(ctx, channel, payload);
+  const pip = ctx?.terminalPip;
+  if (pip && !pip.isDestroyed()) pip.webContents.send(channel, payload);
+}
+
+/** e2e no Linux sem chaveiro: a cifra básica do Chromium (nunca no app empacotado). */
+function allowTestKeyring() {
+  if (!app.isPackaged && process.env.AGZOS_TEST_BASIC_KEYRING === "1") {
+    safeStorage.setUsePlainTextEncryption?.(true);
+  }
+}
+
+let secrets = null;
+function terminalSecrets() {
+  allowTestKeyring();
+  secrets ??= createSecrets({
+    file: path.join(app.getPath("userData"), "terminal-secrets.bin"),
+    safeStorage,
+  });
+  return secrets;
+}
+
 /** Terminais (4.0): o node-pty carrega na primeira sessão (falha vira "indisponível"). */
 function terminalService() {
   terminals ??= createTerminals({
     loadPty: () => require("node-pty"),
     homedir: os.homedir(),
     readCwd: cwdReader(process.platform, require("node:child_process").execFile),
-    onData: (ctx, id, data) => send(ctx, "agzos:terminal-data", { id, data }),
-    onExit: (ctx, id, info) => send(ctx, "agzos:terminal-exit", { id, ...info }),
-    onCwd: (ctx, id, cwd) => send(ctx, "agzos:terminal-cwd", { id, cwd }),
+    onData: (ctx, id, data) => sendTerminal(ctx, "agzos:terminal-data", { id, data }),
+    onExit: (ctx, id, info) => sendTerminal(ctx, "agzos:terminal-exit", { id, ...info }),
+    onCwd: (ctx, id, cwd) => sendTerminal(ctx, "agzos:terminal-cwd", { id, cwd }),
+    prepare: (shell) =>
+      prepareAliases(
+        shell,
+        terminalConfig.aliases,
+        path.join(app.getPath("userData"), "terminal-init"),
+      ),
+    // Chaves de API só no ambiente dos shells (nunca na casca).
+    extraEnv: () => {
+      const env = terminalSecrets().env();
+      if (terminalConfig.groqEnv && !env.GROQ_API_KEY) {
+        const key = aiService().keyForTerminal();
+        if (key) env.GROQ_API_KEY = key;
+      }
+      return env;
+    },
+    sshBinary: () =>
+      sshBinary({ platform: process.platform, env: process.env, exists: fs.existsSync }),
   });
   return terminals;
+}
+
+/** Terminal flutuante (4.1): janela pequena sempre por cima, com as sessões da janela. */
+function openTerminalPip(ctx) {
+  const current = ctx.terminalPip;
+  if (current && !current.isDestroyed()) {
+    current.show();
+    current.focus();
+    return;
+  }
+  if (!fs.existsSync(TERMINAL_PAGE)) return;
+  let bounds = null;
+  try {
+    bounds = fitBounds(
+      database?.getMeta("terminalPipBounds"),
+      screen.getAllDisplays().map((display) => display.workArea),
+    );
+  } catch {
+    bounds = null;
+  }
+  const background =
+    typeof terminalConfig.theme?.background === "string" &&
+    /^#[0-9a-f]{6}$/i.test(terminalConfig.theme.background)
+      ? terminalConfig.theme.background
+      : "#0E0E0E";
+  const pip = new BrowserWindow({
+    title: "Terminal — Agzos",
+    width: 760,
+    height: 440,
+    ...(bounds ?? {}),
+    minWidth: 360,
+    minHeight: 200,
+    show: false,
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    backgroundColor: background,
+    ...(process.platform === "darwin" ? {} : { icon: path.join(__dirname, "icons", "icon.png") }),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  pip.setAlwaysOnTop(true, "floating");
+  const id = pip.webContents.id;
+  terminalPipOwner.set(id, ctx);
+  ctx.terminalPip = pip;
+  pip.once("ready-to-show", () => pip.show());
+  let timer = null;
+  const saveBounds = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!pip.isDestroyed()) database?.setMeta("terminalPipBounds", pip.getBounds());
+    }, 300);
+  };
+  pip.on("resize", saveBounds);
+  pip.on("move", saveBounds);
+  pip.on("close", () => {
+    // Fechada pelo usuário: a casca marca o terminal como escondido (as sessões ficam).
+    if (!ctx.closingPip && !quitting) send(ctx, "agzos:terminal-pip", { open: false });
+  });
+  pip.on("closed", () => {
+    clearTimeout(timer);
+    terminalPipOwner.delete(id);
+    ctx.closingPip = false;
+    if (ctx.terminalPip === pip) ctx.terminalPip = null;
+  });
+  pip.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  pip.webContents.on("will-navigate", (event) => event.preventDefault());
+  void pip.loadFile(TERMINAL_PAGE).catch(() => {});
+}
+
+function closeTerminalPip(ctx) {
+  const pip = ctx?.terminalPip;
+  if (!pip || pip.isDestroyed()) return;
+  // O "close" pode chegar depois desta chamada: o aviso de "fechada pelo usuário" não vale.
+  ctx.closingPip = true;
+  pip.close();
 }
 
 let ai = null;
@@ -3746,10 +3992,7 @@ let ai = null;
 function aiService() {
   // A API de teste (servidor local dos e2e) só vale fora do app empacotado.
   const testUrl = app.isPackaged ? null : process.env.AGZOS_GROQ_BASE_URL;
-  // e2e no Linux sem chaveiro: a cifra básica do Chromium (nunca no app empacotado).
-  if (!ai && !app.isPackaged && process.env.AGZOS_TEST_BASIC_KEYRING === "1") {
-    safeStorage.setUsePlainTextEncryption?.(true);
-  }
+  allowTestKeyring();
   ai ??= createAi({
     userDataDir: app.getPath("userData"),
     safeStorage,

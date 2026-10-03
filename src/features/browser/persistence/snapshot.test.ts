@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS } from "../side-panels";
 import { DEFAULT_GESTURES } from "@/features/gestures/gestures";
+import { DEFAULT_TERMINAL } from "@/features/terminal/config";
 import { browserReducer } from "../store/reducer";
 import { initialState } from "../store/state";
 import {
@@ -215,6 +216,7 @@ describe("migração da 1.3", () => {
         terminalHeight: 280,
         terminalShell: "",
         terminalCwd: "",
+        terminal: DEFAULT_TERMINAL,
       },
       session: {
         tabs: legacyTabs,
