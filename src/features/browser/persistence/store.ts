@@ -1,3 +1,4 @@
+import { emptyColorLibrary, parseColorLibrary } from "@/features/colors/color";
 import { parseBookmarks } from "../bookmarks";
 import { desktopBridge, type DesktopBridge } from "../desktop";
 import type { SyncPayload } from "../store/reducer";
@@ -33,6 +34,7 @@ export function syncPayloadOf(sections: Record<string, unknown>): SyncPayload {
   if ("links" in sections) payload.links = parseLinks(sections["links"]);
   if ("dial" in sections) payload.dial = parseDial(sections["dial"]);
   if ("notes" in sections) payload.notes = parseNotes(sections["notes"]);
+  if ("colors" in sections) payload.colors = parseColorLibrary(sections["colors"]);
   if ("closedTabs" in sections) payload.closedTabs = parseClosedTabs(sections["closedTabs"]);
   if ("bookmarks" in sections) {
     const bookmarks = parseBookmarks(sections["bookmarks"]);
@@ -159,6 +161,7 @@ function sectionsOf(snapshot: Snapshot): Record<string, unknown> {
     closedTabs: snapshot.closedTabs,
     bookmarks: snapshot.bookmarks,
     notes: snapshot.notes ?? {},
+    colors: snapshot.colors ?? emptyColorLibrary,
   };
 }
 

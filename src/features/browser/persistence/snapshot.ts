@@ -1,3 +1,5 @@
+import { parseFeaturePrefs } from "../feature-prefs";
+import { emptyColorLibrary, parseColorLibrary, type ColorLibrary } from "@/features/colors/color";
 import { parseBookmarks } from "../bookmarks";
 import { parseLimits } from "../control/limits";
 import {
@@ -64,6 +66,8 @@ export type Snapshot = {
   bookmarks: BookmarkNode[] | null;
   /** Notas por página (4.5); ausente = nenhuma. */
   notes?: Record<string, PageNote>;
+  /** 4.7: ColorTools (histórico e paletas). */
+  colors?: ColorLibrary;
 };
 
 export const SNAPSHOT_SECTIONS = [
@@ -75,6 +79,7 @@ export const SNAPSHOT_SECTIONS = [
   "bookmarks",
   "dial",
   "notes",
+  "colors",
 ] as const;
 
 const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL, DIAL_URL, SCRATCHPAD_URL]);
@@ -307,6 +312,7 @@ export function parsePrefs(value: unknown): Prefs {
       ? raw["terminalShell"].slice(0, 260)
       : defaultPrefs.terminalShell,
     terminal: parseTerminalSettings(raw["terminal"]),
+    features: parseFeaturePrefs(raw["features"]),
     terminalCwd: isString(raw["terminalCwd"])
       ? raw["terminalCwd"].slice(0, 1024)
       : defaultPrefs.terminalCwd,
@@ -335,6 +341,7 @@ export function parseSnapshot(value: unknown): Snapshot | null {
     closedTabs: parseClosedTabs(value["closedTabs"]),
     bookmarks: parseBookmarks(value["bookmarks"]),
     notes: parseNotes(value["notes"]),
+    colors: parseColorLibrary(value["colors"]),
   };
 }
 
@@ -364,7 +371,7 @@ export type PersistedSlice = Pick<
   BrowserState,
   "tabs" | "activeId" | "prefs" | "links" | "closedTabs" | "bookmarks"
 > &
-  Partial<Pick<BrowserState, "groups" | "workspaces" | "split" | "dial" | "notes">>;
+  Partial<Pick<BrowserState, "groups" | "workspaces" | "split" | "dial" | "notes" | "colors">>;
 
 export function snapshotOf(state: PersistedSlice): Snapshot {
   const tabs = state.tabs.filter((tab) => !tab.private).map(({ private: _private, ...tab }) => tab);
@@ -386,6 +393,7 @@ export function snapshotOf(state: PersistedSlice): Snapshot {
     closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
     bookmarks: state.bookmarks,
     notes: state.notes ?? {},
+    colors: state.colors ?? emptyColorLibrary,
   };
 }
 
@@ -403,6 +411,7 @@ export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | nu
     workspaces: snapshot.session.workspaces ?? [],
     split: snapshot.session.split ?? null,
     notes: snapshot.notes ?? {},
+    colors: snapshot.colors ?? emptyColorLibrary,
   };
 }
 
@@ -452,6 +461,7 @@ export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
     closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),
     bookmarks: null,
     notes: {},
+    colors: emptyColorLibrary,
   };
 }
 

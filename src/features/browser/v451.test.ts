@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { TOOLS, shortcutText } from "@/features/tools/tools";
 
 import { commandById, commands } from "./commands";
+import { FEATURE_SHORTCUTS } from "./feature-prefs";
 
 // 4.5.1: entradas visíveis das ferramentas (página inicial, Discador, barra).
 const mainSource = fs.readFileSync(path.join(process.cwd(), "electron", "main.cjs"), "utf8");
@@ -14,7 +15,11 @@ describe("4.5.1: ferramentas com entrada visível", () => {
     for (const tool of TOOLS) {
       const command = commandById(tool.id);
       expect(command, tool.id).toBeDefined();
-      if (tool.shortcut) expect(command!.shortcuts?.length, tool.id).toBeGreaterThan(0);
+      // 4.7: atalho configurável (Configurações > Recursos) vale como atalho do comando.
+      const configurable = FEATURE_SHORTCUTS.some((item) => item.id === tool.id && item.fallback);
+      if (tool.shortcut && !configurable) {
+        expect(command!.shortcuts?.length, tool.id).toBeGreaterThan(0);
+      }
     }
     expect(TOOLS.map((tool) => tool.id)).toEqual(
       expect.arrayContaining(["tab.new-session", "ports.open", "scratchpad.open", "page.inspect"]),

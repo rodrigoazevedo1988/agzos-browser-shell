@@ -4,6 +4,8 @@ import { DEFAULT_LIMITS } from "../control/limits";
 import { DEFAULT_SIDE_PANELS } from "../side-panels";
 import { DEFAULT_GESTURES } from "@/features/gestures/gestures";
 import { DEFAULT_TERMINAL } from "@/features/terminal/config";
+import { emptyColorLibrary } from "@/features/colors/color";
+import { defaultFeaturePrefs } from "../feature-prefs";
 import { browserReducer } from "../store/reducer";
 import { initialState } from "../store/state";
 import {
@@ -102,6 +104,7 @@ describe("snapshot", () => {
       closedTabs: [{ title: "a", url: "https://a.com" }],
       bookmarks: null,
       notes: {},
+      colors: emptyColorLibrary,
     });
   });
 
@@ -125,6 +128,7 @@ describe("snapshot", () => {
       workspaces: [],
       split: null,
       notes: {},
+      colors: emptyColorLibrary,
     });
   });
 
@@ -223,6 +227,7 @@ describe("migração da 1.3", () => {
         terminalShell: "",
         terminalCwd: "",
         terminal: DEFAULT_TERMINAL,
+        features: defaultFeaturePrefs,
       },
       session: {
         tabs: legacyTabs,
@@ -236,6 +241,7 @@ describe("migração da 1.3", () => {
       closedTabs: [{ title: "Velha", url: "https://velha.com" }],
       bookmarks: null,
       notes: {},
+      colors: emptyColorLibrary,
     });
   });
 

@@ -107,6 +107,7 @@ describe("chrome-overlay.cjs", () => {
         "extensions",
         "extmenu",
         "tools",
+        "colors",
       ].sort(),
     );
   });

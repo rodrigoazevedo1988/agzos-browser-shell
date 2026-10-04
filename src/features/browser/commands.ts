@@ -46,6 +46,10 @@ export type CommandId =
   | "scratchpad.open"
   | "scratchpad.capture"
   | "extensions.open"
+  | "colors.eyedropper"
+  | "colors.panel"
+  | "pdf.open"
+  | "page-theme.toggle"
   | "tab.new-right"
   | "tab.reopen-closed"
   | "tab.duplicate"
@@ -151,6 +155,11 @@ export type CommandContext = {
     inspect: (tabId: number) => void;
     /** 4.5: Configurações → Extensões. */
     openExtensions: () => void;
+    /** 4.7: ColorTools (conta-gotas na guia e o painel), PDF Tools e tema da página. */
+    eyedropper: (tabId: number) => void;
+    toggleColors: () => void;
+    openPdfTools: () => void;
+    togglePageTheme: (tabId: number) => void;
   };
 };
 
@@ -640,6 +649,32 @@ export const commands: Command[] = [
     enabled: ({ desktop }) => desktop !== null,
     visible: ({ desktop }) => desktop !== null,
     run: ({ ui }, tabId) => ui.inspect(tabId),
+  },
+  // 4.7: atalhos configuráveis (Configurações > Recursos), por isso sem `shortcuts` aqui.
+  {
+    id: "colors.eyedropper",
+    label: "ColorTools: conta-gotas",
+    enabled: onDesktopPage,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.eyedropper(tabId),
+  },
+  {
+    id: "colors.panel",
+    label: "ColorTools (paleta, gradiente e histórico)",
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.toggleColors(),
+  },
+  {
+    id: "pdf.open",
+    label: "PDF Tools",
+    run: ({ ui }) => ui.openPdfTools(),
+  },
+  {
+    id: "page-theme.toggle",
+    label: "Tema da página: Dark ou Lightning",
+    enabled: onDesktopPage,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.togglePageTheme(tabId),
   },
   {
     id: "extensions.open",

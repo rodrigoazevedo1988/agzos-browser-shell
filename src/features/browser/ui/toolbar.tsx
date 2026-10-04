@@ -9,6 +9,7 @@ import {
   LockKeyhole,
   Moon,
   PictureInPicture2,
+  Pipette,
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
@@ -57,6 +58,15 @@ export type ToolbarProps = {
   siteKey: { saved: boolean; open: boolean; onToggle: () => void } | null;
   /** 4.6: modo leitura (caderno na barra de URL): só quando a página tem artigo legível. */
   reader?: { active: boolean; onToggle: () => void } | null;
+  /**
+   * 4.7: tema da página (por domínio): lua quando está em Lightning (Dark disponível), sol
+   * quando está em Dark (voltar ao Lightning).
+   */
+  pageTheme?: { dark: boolean; domain: string; shortcut: string; onToggle: () => void } | null;
+  /** 4.7: a guia mostra um PDF: abrir no PDF Tools. */
+  pdf?: { onOpen: () => void } | null;
+  /** 4.7: ColorTools (conta-gotas na barra). */
+  colors?: { open: boolean; onToggle: (anchor: DOMRect) => void } | null;
   /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
   pwa?: { name: string; installed: boolean; onClick: () => void } | null;
   dark: boolean;
@@ -248,6 +258,37 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 <BookOpenText />
               </button>
             )}
+            {props.pdf && (
+              <button
+                type="button"
+                className="omnibox-action pdf-button"
+                onClick={props.pdf.onOpen}
+                title="Abrir no PDF Tools (editar, comprimir, OCR)"
+                aria-label="Abrir no PDF Tools"
+              >
+                PDF
+              </button>
+            )}
+            {props.pageTheme && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "page-theme-button", props.pageTheme.dark && "on")}
+                onClick={props.pageTheme.onToggle}
+                title={`${
+                  props.pageTheme.dark
+                    ? `Voltar ${props.pageTheme.domain} ao Lightning`
+                    : `Dark em ${props.pageTheme.domain}`
+                }${props.pageTheme.shortcut ? ` (${props.pageTheme.shortcut})` : ""}`}
+                aria-label={
+                  props.pageTheme.dark
+                    ? "Tema Dark desta página ligado: voltar ao Lightning"
+                    : "Ligar o tema Dark nesta página"
+                }
+                aria-pressed={props.pageTheme.dark}
+              >
+                {props.pageTheme.dark ? <Sun /> : <Moon />}
+              </button>
+            )}
             {props.pwa && (
               <button
                 type="button"
@@ -362,6 +403,21 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               }
             >
               <Download />
+            </Button>
+          )}
+          {props.colors && (
+            <Button
+              variant={props.colors.open ? "default" : "ghost"}
+              size="icon"
+              className="colors-button"
+              onClick={(event) =>
+                props.colors?.onToggle(event.currentTarget.getBoundingClientRect())
+              }
+              title="ColorTools"
+              aria-label="ColorTools"
+              aria-pressed={props.colors.open}
+            >
+              <Pipette />
             </Button>
           )}
           {props.pinnedExtensions?.map((item) => (

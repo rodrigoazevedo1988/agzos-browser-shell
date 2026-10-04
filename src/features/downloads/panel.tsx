@@ -12,12 +12,15 @@ export function DownloadsPanel({
   onAction,
   onClear,
   onClose,
+  onOpenManager,
 }: {
   downloads: DownloadRecord[];
   desktop: boolean;
   onAction: (id: number, action: DownloadAction) => void;
   onClear: () => void;
   onClose: () => void;
+  /** 4.7: o gerenciador completo (agzos://downloads). */
+  onOpenManager?: () => void;
 }) {
   const finished = downloads.some((item) => item.state !== "progressing");
 
@@ -141,11 +144,18 @@ export function DownloadsPanel({
           );
         })}
       </div>
-      {finished && (
+      {(finished || onOpenManager) && (
         <div className="settings-actions">
-          <Button variant="outline" size="sm" onClick={onClear}>
-            Limpar concluídos
-          </Button>
+          {finished && (
+            <Button variant="outline" size="sm" onClick={onClear}>
+              Limpar concluídos
+            </Button>
+          )}
+          {onOpenManager && (
+            <Button variant="ghost" size="sm" onClick={onOpenManager}>
+              Ver todos
+            </Button>
+          )}
         </div>
       )}
     </aside>

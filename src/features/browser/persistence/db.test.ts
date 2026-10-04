@@ -106,7 +106,7 @@ describe("electron/db.cjs", () => {
 
   it("migrations v2 e v3 criam downloads e site_settings", () => {
     const db = openDatabase(tempFile());
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4]);
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
     db.setSiteSetting("exemplo.com", "zoom", 1.25);
     expect(db.getSiteSetting("exemplo.com", "zoom")).toBe(1.25);
     db.setSiteSetting("exemplo.com", "zoom", null);

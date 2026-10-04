@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.6.2-D10A11?style=for-the-badge">
+  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.7.0-D10A11?style=for-the-badge">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-44-0E0E0E?style=for-the-badge&logo=electron&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/React-19-0E0E0E?style=for-the-badge&logo=react&logoColor=61DAFB">
   <img alt="Plataformas" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0E0E0E?style=for-the-badge">
@@ -98,6 +98,24 @@ casca única, com tema escuro ou claro e efeito de vidro.
       </ul>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>📥 Downloads e tema por site</h3>
+      <ul>
+        <li><b>Gerenciador de downloads</b> (Ctrl+J): filtros, busca, etiquetas, retomar com Range, mudar destino e exportar JSON/CSV</li>
+        <li>Pastas por tipo e regras por tipo, site ou nome</li>
+        <li><b>Dark por site</b>: a lua na barra de URL escurece só aquele domínio, sem recarregar e sem inverter fotos e vídeos</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🎨 ColorTools e 📄 PDF Tools</h3>
+      <ul>
+        <li><b>ColorTools</b>: conta-gotas com lupa, cores da página, gradiente, paletas e histórico</li>
+        <li><b>PDF Tools</b> local: editar, assinar, organizar, juntar, dividir, comprimir, senha AES-256, formulários e OCR</li>
+        <li>Nada sai do computador; IA e nuvem só com consentimento</li>
+      </ul>
+    </td>
+  </tr>
 </table>
 
 <p align="right"><a href="#topo">↑ topo</a></p>
@@ -108,19 +126,23 @@ casca única, com tema escuro ou claro e efeito de vidro.
 
 ## ✦ Prints
 
-|                                   Ferramentas na barra lateral                                   |                                        Pop-up de extensões                                         |
-| :----------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------: |
-| <img src="docs/prints/4.6.0/03-menu-ferramentas-escuro.png" alt="Menu Ferramentas" width="100%"> |    <img src="docs/prints/4.6.0/06-popup-extensoes.png" alt="Pop-up de extensões" width="100%">     |
-|                                 **Pop-up da extensão ancorado**                                  |                                        **Menu da extensão**                                        |
-| <img src="docs/prints/4.6.1/02-volume-master-pop-up.png" alt="Pop-up da extensão" width="100%">  | <img src="docs/prints/4.6.0/10-menu-permissoes-e-remover.png" alt="Menu da extensão" width="100%"> |
-|                                     **Portas e túnel HTTPS**                                     |                                        **Mira de elemento**                                        |
-|      <img src="docs/prints/4.5.1/06-portas-e-tunel.png" alt="Portas e túnel" width="100%">       |     <img src="docs/prints/4.5.1/05-mira-de-elemento.png" alt="Mira de elemento" width="100%">      |
-|                                        **API Scratchpad**                                        |                                          **Modo leitura**                                          |
-|      <img src="docs/prints/4.5.1/12-api-scratchpad.png" alt="API Scratchpad" width="100%">       |      <img src="docs/prints/4.6.0/05-modo-leitura-ligado.png" alt="Modo leitura" width="100%">      |
-|                                     **Barra lateral larga**                                      |                                           **Tema claro**                                           |
-| <img src="docs/prints/4.6.0/11-barra-lateral-larga.png" alt="Barra lateral larga" width="100%">  |     <img src="docs/prints/4.6.0/13-menu-ferramentas-claro.png" alt="Tema claro" width="100%">      |
+|                                         Gerenciador de downloads                                          |                                             PDF Tools                                              |
+| :-------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------: |
+| <img src="docs/prints/4.7.0/01-gerenciador-de-downloads.png" alt="Gerenciador de downloads" width="100%"> |   <img src="docs/prints/4.7.0/13-pdf-tools-edicoes-aplicadas.png" alt="PDF Tools" width="100%">    |
+|                                          **Dark só neste site**                                           |                                           **ColorTools**                                           |
+|       <img src="docs/prints/4.7.0/04-wikipedia-dark-por-site.png" alt="Dark por site" width="100%">       |      <img src="docs/prints/4.7.0/05-conta-gotas-com-lupa.png" alt="Conta-gotas" width="100%">      |
+|                                     **Ferramentas na barra lateral**                                      |                                      **Pop-up de extensões**                                       |
+|     <img src="docs/prints/4.6.0/03-menu-ferramentas-escuro.png" alt="Menu Ferramentas" width="100%">      |    <img src="docs/prints/4.6.0/06-popup-extensoes.png" alt="Pop-up de extensões" width="100%">     |
+|                                      **Pop-up da extensão ancorado**                                      |                                        **Menu da extensão**                                        |
+|      <img src="docs/prints/4.6.1/02-volume-master-pop-up.png" alt="Pop-up da extensão" width="100%">      | <img src="docs/prints/4.6.0/10-menu-permissoes-e-remover.png" alt="Menu da extensão" width="100%"> |
+|                                         **Portas e túnel HTTPS**                                          |                                        **Mira de elemento**                                        |
+|           <img src="docs/prints/4.5.1/06-portas-e-tunel.png" alt="Portas e túnel" width="100%">           |     <img src="docs/prints/4.5.1/05-mira-de-elemento.png" alt="Mira de elemento" width="100%">      |
+|                                            **API Scratchpad**                                             |                                          **Modo leitura**                                          |
+|           <img src="docs/prints/4.5.1/12-api-scratchpad.png" alt="API Scratchpad" width="100%">           |      <img src="docs/prints/4.6.0/05-modo-leitura-ligado.png" alt="Modo leitura" width="100%">      |
+|                                          **Barra lateral larga**                                          |                                           **Tema claro**                                           |
+|      <img src="docs/prints/4.6.0/11-barra-lateral-larga.png" alt="Barra lateral larga" width="100%">      |     <img src="docs/prints/4.6.0/13-menu-ferramentas-claro.png" alt="Tema claro" width="100%">      |
 
-Galerias completas: [4.6.1](docs/prints/4.6.1/README.md) · [4.6.0](docs/prints/4.6.0/README.md) · [4.5.1](docs/prints/4.5.1/README.md)
+Galerias completas: [4.7.0](docs/prints/4.7.0/README.md) · [4.6.1](docs/prints/4.6.1/README.md) · [4.6.0](docs/prints/4.6.0/README.md) · [4.5.1](docs/prints/4.5.1/README.md)
 
 <p align="right"><a href="#topo">↑ topo</a></p>
 
@@ -259,6 +281,7 @@ publicação atualiza o `latest.json` que o app consulta. Cada versão ganha uma
 - PRDs por versão em [`docs/prd/`](docs/prd/), por exemplo:
   - [4.6: extensões em pop-up, leitura na barra de URL e ferramentas sem repetição](docs/prd/v4.6-extensoes-popup-leitura-barra.md)
   - [4.6.1: Chrome Web Store, pop-up que não encolhe e clique pelo manifest](docs/prd/v4.6.1-web-store-popup-manifest.md)
+  - [4.7.0: gerenciador de downloads, tema por site, ColorTools e PDF Tools](docs/prd/v4.7.0-downloads-tema-cores-pdf.md)
   - [4.5: Session Tabs, portas e túnel, Scratchpad, extensões, Widevine e leitura](docs/prd/v4.5-dev-sessoes-extensoes-leitura.md)
   - [4.1.3: PWA instalável e Agzos AI no estilo do Claude](docs/prd/v4.1.3-pwa-e-agzos-ai-estilo-claude.md)
   - [4.0: IA, gestos, terminal e GPU](docs/prd/v4.0-ia-gestos-terminal-gpu.md)

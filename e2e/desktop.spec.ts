@@ -164,6 +164,73 @@ const PAGES: Record<string, string> = {
 // /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
 let unstableDown = true;
 
+// --- 4.7: rotas do gerenciador de downloads, tema, ColorTools e PDF Tools ---
+let v47Pdf: Buffer = Buffer.alloc(0);
+const v47Ranges: string[] = [];
+const RESUMABLE = Buffer.alloc(1024 * 1024, 9);
+const v47Files = new Map<string, Buffer>();
+function v47Route(request: http.IncomingMessage, response: http.ServerResponse, url: string) {
+  const file = v47Files.get(url);
+  if (file) {
+    response.writeHead(200, { "content-type": "application/pdf" });
+    response.end(file);
+    return true;
+  }
+  if (url === "/v47/doc.pdf") {
+    response.writeHead(200, { "content-type": "application/pdf" });
+    response.end(v47Pdf);
+    return true;
+  }
+  if (url === "/v47/link-pdf") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end('<!doctype html><title>Link PDF</title><a id="pdf" href="/v47/doc.pdf">PDF</a>');
+    return true;
+  }
+  if (url === "/v47/tema") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(`<!doctype html><title>Tema</title><body style="margin:0;background:#ffffff;color:#111111">
+      <h1 id="t">Texto escuro em fundo claro</h1><img id="foto" src="/pwa/icon.png" width="40" height="40">
+      <script>window.marcador = "sem-reload";</script></body>`);
+    return true;
+  }
+  if (url === "/v47/cores") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(`<!doctype html><title>Cores</title><body style="margin:0;background:#ffffff">
+      <div id="azul" style="position:fixed;left:0;top:0;width:400px;height:300px;background:#1c7ed6"></div>
+      <p style="position:fixed;left:20px;top:340px;color:#d10a11">texto vermelho</p></body>`);
+    return true;
+  }
+  if (url === "/v47/retomavel.bin") {
+    const range = request.headers["range"];
+    if (range) v47Ranges.push(String(range));
+    const headers = {
+      "content-type": "application/octet-stream",
+      "content-disposition": 'attachment; filename="retomavel.bin"',
+      "accept-ranges": "bytes",
+      etag: '"agzos-v47"',
+      "last-modified": "Wed, 01 Oct 2026 10:00:00 GMT",
+    };
+    const match = range ? /bytes=(\d+)-/.exec(String(range)) : null;
+    if (match) {
+      const start = Number(match[1]);
+      response.writeHead(206, {
+        ...headers,
+        "content-range": `bytes ${start}-${RESUMABLE.length - 1}/${RESUMABLE.length}`,
+        "content-length": String(RESUMABLE.length - start),
+      });
+      response.end(RESUMABLE.subarray(start));
+      return true;
+    }
+    // Primeira vez: manda metade e derruba a conexão (download "interrompido", retomável).
+    response.writeHead(200, { ...headers, "content-length": String(RESUMABLE.length) });
+    response.write(RESUMABLE.subarray(0, RESUMABLE.length / 2), () =>
+      setTimeout(() => request.socket.destroy(), 300),
+    );
+    return true;
+  }
+  return false;
+}
+
 // Agzos Key de mentira (AGZOS_KEY_URL): cofre Argon2id como o servidor real manda, sem
 // t/m/p no authMeta. A chave é o vetor do argon2-browser do Agzos Key (64 MiB, t=3, p=4).
 const KEY_PASSWORD = "senha-do-arnaldo";
@@ -310,6 +377,7 @@ function groq(request: http.IncomingMessage, response: http.ServerResponse, url:
 test.beforeAll(async () => {
   server = http.createServer((request, response) => {
     const url = request.url ?? "/";
+    if (v47Route(request, response, url)) return;
     if (url.startsWith("/groq/")) {
       groq(request, response, url);
       return;
@@ -465,7 +533,22 @@ test.beforeAll(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  v47Pdf = Buffer.from(await makeV47Pdf());
 });
+
+/** PDF de 3 páginas com texto grande (OCR) e um formulário. */
+async function makeV47Pdf() {
+  const { PDFDocument, StandardFonts, rgb } = await import("@cantoo/pdf-lib");
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.HelveticaBold);
+  for (let index = 1; index <= 3; index++) {
+    const page = doc.addPage([595, 842]);
+    page.drawText(`AGZOS PAGINA ${index}`, { x: 60, y: 700, size: 40, font, color: rgb(0, 0, 0) });
+  }
+  const form = doc.getForm();
+  form.createTextField("nome").addToPage(doc.getPage(0), { x: 60, y: 600, width: 220, height: 26 });
+  return doc.save();
+}
 
 test.afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
@@ -693,7 +776,7 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
       Object.keys(stored)
         .filter((key) => !key.startsWith("meta:"))
         .sort(),
-    ).toEqual(["bookmarks", "closedTabs", "dial", "links", "notes", "prefs", "version"]);
+    ).toEqual(["bookmarks", "closedTabs", "colors", "dial", "links", "notes", "prefs", "version"]);
     // 1.7: a sessão (guias) é de cada janela e fica no registro das janelas.
     expect(stored["meta:windows"]).toContain("/salva");
     expect(JSON.stringify(stored)).not.toContain("secreta");
@@ -785,7 +868,8 @@ test("downloads: salva na pasta, mostra progresso, pausa/retoma e persiste", asy
     await go(first.window, `${origin}/arquivo/relatorio.txt`);
     const button = first.window.getByRole("button", { name: "Downloads", exact: true });
     await expect(button).toBeVisible();
-    await first.window.keyboard.press(`${MOD}+j`);
+    // 4.7: Ctrl+J abre o gerenciador; o botão da barra abre o painel rápido.
+    await button.click();
     const panel = (await overlayPage(first.app)).getByRole("complementary", { name: "Downloads" });
     // Nome já existia na pasta: vira "relatorio (1).txt".
     await expect(panel).toContainText("relatorio (1).txt");
@@ -793,9 +877,9 @@ test("downloads: salva na pasta, mostra progresso, pausa/retoma e persiste", asy
       .poll(() => fs.readFileSync(path.join(downloadsDir, "relatorio (1).txt"), "utf8"))
       .toContain("relatório agzos");
 
-    await first.window.keyboard.press(`${MOD}+j`);
+    await button.click();
     await go(first.window, `${origin}/arquivo/lento.bin`);
-    await first.window.keyboard.press(`${MOD}+j`);
+    await button.click();
     await expect(panel.getByRole("progressbar")).toBeVisible();
     await panel.getByRole("button", { name: "Pausar lento.bin" }).click();
     await expect(panel).toContainText("Pausado");
@@ -808,7 +892,7 @@ test("downloads: salva na pasta, mostra progresso, pausa/retoma e persiste", asy
 
   const second = await launch(profile);
   try {
-    await second.window.keyboard.press(`${MOD}+j`);
+    await second.window.getByRole("button", { name: "Downloads", exact: true }).click();
     const panel = (await overlayPage(second.app)).getByRole("complementary", { name: "Downloads" });
     await expect(panel).toContainText("relatorio (1).txt");
     await expect(panel).toContainText("lento.bin");
@@ -931,7 +1015,7 @@ test("fechar o app com download em andamento não trava e o registra como cancel
 
   const second = await launch(profile);
   try {
-    await second.window.keyboard.press(`${MOD}+j`);
+    await second.window.getByRole("button", { name: "Downloads", exact: true }).click();
     const panel = (await overlayPage(second.app)).getByRole("complementary", { name: "Downloads" });
     await expect(panel.locator('[data-state="cancelled"]')).toContainText("Cancelado");
   } finally {
@@ -4510,6 +4594,402 @@ test("4.6: barra lateral muda de largura arrastando e se adapta", async () => {
       "data-mode",
       "wide",
     );
+  } finally {
+    await app.close();
+  }
+});
+
+// --- 4.7 ---
+
+const desktopCall = <T>(window: Page, code: string) =>
+  window.evaluate(
+    (source) =>
+      new Function("desktop", `return (async () => { ${source} })()`)(
+        (window as unknown as { agzosDesktop: unknown }).agzosDesktop,
+      ),
+    code,
+  ) as Promise<T>;
+
+test("4.7: gerenciador de downloads (Ctrl+J, regras, etiquetas, Range, filtros, teclado)", async () => {
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  const pdfDir = path.join(profile, "Documentos PDF");
+  try {
+    // Organizar por tipo (PDF numa pasta própria) e regra de domínio → etiqueta.
+    await desktopCall(
+      window,
+      `const { config } = await desktop.downloadsConfig();
+       await desktop.downloadsSetConfig({ ...config, byTypeOn: true,
+         byType: { ...config.byType, pdf: ${JSON.stringify(pdfDir)} },
+         rules: [{ id: "r1", match: "domain", pattern: "127.0.0.1", tag: "teste", folder: "", subfolder: "", enabled: true }] });`,
+    );
+    // Ctrl+J abre o gerenciador em menos de 150 ms (medido na casca, com o app já de pé:
+    // nos primeiros instantes o processo ainda carrega listas e perfil).
+    await window.waitForTimeout(1500);
+    const elapsed = await window.evaluate((meta) => {
+      return new Promise<number>((resolve) => {
+        const start = performance.now();
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "j",
+            code: "KeyJ",
+            ctrlKey: !meta,
+            metaKey: meta,
+            bubbles: true,
+          }),
+        );
+        const check = () =>
+          document.querySelector(".downloads-manager")
+            ? resolve(performance.now() - start)
+            : requestAnimationFrame(check);
+        check();
+      });
+    }, process.platform === "darwin");
+    expect(elapsed).toBeLessThan(150);
+    await expect(omnibox(window)).toHaveValue("agzos://downloads");
+    const manager = window.getByRole("grid", { name: "Lista de downloads" });
+
+    // A rede cai no meio: o Chromium retoma de onde parou com Range (If-Range pelo ETag),
+    // sozinho ou pelo "Retomar" quando ele desiste.
+    await app.evaluate(
+      ({ session }, url) => session.defaultSession.downloadURL(url),
+      `${origin}/v47/retomavel.bin`,
+    );
+    const row = manager.getByRole("row").filter({ hasText: "retomavel.bin" });
+    const resume = row.getByRole("button", { name: /Retomar retomavel\.bin/ });
+    await expect
+      .poll(
+        async () =>
+          ((await row.textContent()) ?? "").includes("Concluído") || (await resume.count()) > 0,
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+    if ((await resume.count()) > 0) await resume.click();
+    await expect(row).toContainText("Concluído", { timeout: 20_000 });
+    await expect(row).toContainText("teste");
+    expect(v47Ranges.some((range) => /^bytes=\d+-$/.test(range) && range !== "bytes=0-")).toBe(
+      true,
+    );
+    expect(fs.statSync(path.join(profile, "Downloads", "retomavel.bin")).size).toBe(
+      RESUMABLE.length,
+    );
+
+    // PDF vai para a pasta do tipo.
+    await app.evaluate(
+      ({ session }, url) => session.defaultSession.downloadURL(url),
+      `${origin}/v47/doc.pdf`,
+    );
+    const pdfRow = manager.getByRole("row").filter({ hasText: "doc.pdf" });
+    await expect(pdfRow).toContainText("Concluído", { timeout: 20_000 });
+    expect(fs.existsSync(path.join(pdfDir, "doc.pdf"))).toBe(true);
+
+    // Filtros e busca no histórico local.
+    await window.getByRole("tab", { name: /Concluídos/ }).click();
+    await expect(manager.getByRole("row")).toHaveCount(3);
+    await window.getByLabel("Filtrar por tipo").selectOption("pdf");
+    await expect(manager.getByRole("row")).toHaveCount(2);
+    await window.getByLabel("Filtrar por tipo").selectOption("all");
+    await window.getByLabel("Pesquisar downloads").fill("retomavel");
+    await expect(manager.getByRole("row")).toHaveCount(2);
+    await window.getByLabel("Pesquisar downloads").fill("");
+
+    // Etiqueta à mão (vale em todas as janelas pelo main).
+    await pdfRow.getByRole("button", { name: "Etiquetar doc.pdf" }).click();
+    await pdfRow.getByLabel("Nova etiqueta").fill("contratos");
+    await pdfRow.getByLabel("Nova etiqueta").press("Enter");
+    await expect(pdfRow).toContainText("contratos");
+    await pdfRow.getByRole("button", { name: "Pronto" }).click();
+    await window.getByLabel("Filtrar por etiqueta").selectOption("contratos");
+    await expect(manager.getByRole("row")).toHaveCount(2);
+    await window.getByLabel("Filtrar por etiqueta").selectOption("");
+
+    // Teclado: F busca; setas e Shift+Delete tiram do histórico.
+    await pdfRow.focus();
+    await window.keyboard.press("Shift+Delete");
+    await expect(manager.getByRole("row").filter({ hasText: "doc.pdf" })).toHaveCount(0);
+    await window.keyboard.press("f");
+    await expect(window.getByLabel("Pesquisar downloads")).toBeFocused();
+
+    // Exportar CSV (diálogo trocado no teste).
+    const csv = path.join(profile, "downloads.csv");
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = (async () => ({
+        canceled: false,
+        filePath: file,
+      })) as typeof dialog.showSaveDialog;
+    }, csv);
+    await window.getByRole("button", { name: "Exportar CSV" }).click();
+    await expect.poll(() => fs.existsSync(csv)).toBe(true);
+    expect(fs.readFileSync(csv, "utf8")).toContain("retomavel.bin");
+
+    // Ctrl+J no gerenciador fecha (a guia volta ou fecha).
+    await window.keyboard.press(`${MOD}+j`);
+    await expect(omnibox(window)).not.toHaveValue("agzos://downloads");
+  } finally {
+    await app.close();
+  }
+  // A pasta e as regras sobrevivem ao reinício.
+  ({ app, window } = await launch(profile));
+  try {
+    const config = await desktopCall<{ byTypeOn: boolean; rules: unknown[] }>(
+      window,
+      "return (await desktop.downloadsConfig()).config;",
+    );
+    expect(config.byTypeOn).toBe(true);
+    expect(config.rules).toHaveLength(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.7: tema Dark por domínio (sem reload, mídia fora, lembrado)", async () => {
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  const page = `${origin}/v47/tema`;
+  const filterOf = (url: string, selector: string) =>
+    inTab<string>(
+      app,
+      url,
+      `getComputedStyle(document.querySelector(${JSON.stringify(selector)})).filter`,
+    );
+  try {
+    await go(window, page);
+    await expect.poll(() => liveViews(app, page)).toHaveLength(1);
+    const on = window.getByRole("button", { name: "Ligar o tema Dark nesta página" });
+    await expect(on).toBeVisible();
+    await on.click();
+    await expect.poll(() => filterOf(page, "html")).toContain("invert");
+    // Imagem volta ao original (inverte de novo) e a página não recarregou.
+    expect(await filterOf(page, "#foto")).toContain("invert");
+    expect(await inTab(app, page, "window.marcador")).toBe("sem-reload");
+    const off = window.getByRole("button", { name: /voltar ao Lightning/i });
+    await expect(off).toHaveAttribute("aria-pressed", "true");
+    // Mesmo domínio, outra página: já nasce em Dark.
+    await go(window, `${origin}/outra`);
+    await expect.poll(() => liveViews(app, "/outra")).toHaveLength(1);
+    await expect.poll(() => filterOf(`${origin}/outra`, "html")).toContain("invert");
+    // Outro domínio nasce em Lightning.
+    const other = `${origin.replace("127.0.0.1", "localhost")}/v47/tema`;
+    await go(window, other);
+    await expect(
+      window.getByRole("button", { name: "Ligar o tema Dark nesta página" }),
+    ).toBeVisible();
+    expect(await filterOf(other, "html")).toBe("none");
+  } finally {
+    await app.close();
+  }
+  ({ app, window } = await launch(profile));
+  try {
+    await go(window, page);
+    await expect.poll(() => liveViews(app, page)).toHaveLength(1);
+    await expect.poll(() => filterOf(page, "html")).toContain("invert");
+    // Clique volta ao Lightning sem recarregar.
+    await window.getByRole("button", { name: /voltar ao Lightning/i }).click();
+    await expect.poll(() => filterOf(page, "html")).toBe("none");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.7: ColorTools (conta-gotas, analisador, gradiente, histórico)", async () => {
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  const page = `${origin}/v47/cores`;
+  try {
+    await go(window, page);
+    await expect.poll(() => liveViews(app, "/v47/cores")).toHaveLength(1);
+    await expect.poll(() => inTab(app, page, "document.readyState")).toBe("complete");
+    await window.getByRole("button", { name: "ColorTools" }).click();
+    let layer = await overlayPage(app);
+    await layer.getByRole("button", { name: /Pegar cor da página/ }).click();
+    // Camada do conta-gotas por cima da guia: clica no bloco azul.
+    const picked = await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!;
+      const find = () =>
+        win.contentView.children.find(
+          (child) =>
+            "webContents" in child &&
+            (child as { webContents: Electron.WebContents }).webContents
+              .getTitle()
+              .startsWith("agzos-pick"),
+        ) as { webContents: Electron.WebContents } | undefined;
+      for (let i = 0; i < 80; i++) {
+        const view = find();
+        if (
+          view &&
+          (await view.webContents
+            .executeJavaScript("typeof ready !== 'undefined' && ready")
+            .catch(() => false))
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const view = find();
+      if (!view) return "sem camada";
+      view.webContents.sendInputEvent({ type: "mouseMove", x: 120, y: 120 });
+      view.webContents.sendInputEvent({
+        type: "mouseDown",
+        x: 120,
+        y: 120,
+        button: "left",
+        clickCount: 1,
+      });
+      view.webContents.sendInputEvent({
+        type: "mouseUp",
+        x: 120,
+        y: 120,
+        button: "left",
+        clickCount: 1,
+      });
+      return "ok";
+    });
+    expect(picked).toBe("ok");
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe("#1C7ED6");
+    layer = await overlayPage(app);
+    await expect(layer.getByRole("complementary", { name: "ColorTools" })).toContainText("#1C7ED6");
+    // Analisador: as cores computadas da página.
+    await layer.getByRole("tab", { name: "Cores da página" }).click();
+    await layer.getByRole("button", { name: "Analisar página" }).click();
+    await expect(layer.getByRole("list", { name: "Cores da página" })).toContainText("#1C7ED6");
+    await expect(layer.getByRole("list", { name: "Cores da página" })).toContainText("#D10A11");
+    // Gradiente: copia o CSS.
+    await layer.getByRole("tab", { name: "Gradiente" }).click();
+    await layer.getByRole("button", { name: "Copiar CSS" }).click();
+    await expect
+      .poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain("linear-gradient(");
+    // Histórico com a cor pega.
+    await layer.getByRole("tab", { name: "Histórico" }).click();
+    await expect(layer.getByRole("list", { name: "Histórico de cores" })).toContainText("#1C7ED6");
+  } finally {
+    await app.close();
+  }
+  // O histórico fica no perfil.
+  ({ app, window } = await launch(profile));
+  try {
+    await go(window, page);
+    await window.getByRole("button", { name: "ColorTools" }).click();
+    const layer = await overlayPage(app);
+    await layer.getByRole("tab", { name: "Histórico" }).click();
+    await expect(layer.getByRole("list", { name: "Histórico de cores" })).toContainText("#1C7ED6");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.7: PDF Tools (ícone PDF na barra, organizar, senha AES-256, exportar, OCR)", async () => {
+  const profile = tempProfile();
+  const { app, window } = await launch(profile);
+  try {
+    await go(window, `${origin}/v47/doc.pdf`);
+    const button = window.getByRole("button", { name: "Abrir no PDF Tools" });
+    await expect(button).toBeVisible({ timeout: 15_000 });
+    await button.click();
+    await expect(omnibox(window)).toHaveValue("agzos://pdf");
+    const head = window.locator(".pdf-head");
+    await expect(head).toContainText("doc.pdf", { timeout: 20_000 });
+    await expect(head).toContainText("3 páginas");
+
+    // Organizar: apaga a página 2.
+    await expect(window.locator(".pdf-thumb")).toHaveCount(3);
+    await window.getByRole("button", { name: "Apagar a página" }).nth(1).click();
+    await window.getByRole("button", { name: "Aplicar", exact: true }).click();
+    await expect(head).toContainText("2 páginas");
+    await expect(head).toContainText("não salvo");
+
+    // Formulário AcroForm.
+    await window.getByRole("button", { name: /^Formulário/ }).click();
+    await window.getByLabel("nome").fill("Rodrigo");
+    await window.getByRole("button", { name: "Preencher", exact: true }).click();
+    await expect(window.getByText(/Formulário preenchido/).first()).toBeVisible();
+
+    // Senha AES-256.
+    await window.getByRole("button", { name: /^Senha/ }).click();
+    await window.getByLabel("Senha para abrir").fill("agzos123");
+    await window.getByLabel("Repita a senha").fill("agzos123");
+    await window.getByRole("button", { name: "Proteger com senha" }).click();
+    await expect(head).toContainText("com senha");
+
+    // Exportar (diálogo trocado no teste) e conferir o arquivo.
+    const out = path.join(profile, "saida.pdf");
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = (async () => ({
+        canceled: false,
+        filePath: file,
+      })) as typeof dialog.showSaveDialog;
+    }, out);
+    await window.getByRole("button", { name: "Exportar", exact: true }).click();
+    await expect.poll(() => fs.existsSync(out)).toBe(true);
+    const { PDFDocument } = await import("@cantoo/pdf-lib");
+    const bytes = fs.readFileSync(out);
+    expect(bytes.toString("latin1")).toContain("/AESV3");
+    await expect(PDFDocument.load(bytes)).rejects.toThrow(/encrypted/i);
+    const opened = await PDFDocument.load(bytes, { password: "agzos123" });
+    expect(opened.getPageCount()).toBe(2);
+    expect(opened.getForm().getTextField("nome").getText()).toBe("Rodrigo");
+
+    // OCR local (português e inglês vêm no app): texto da página 1.
+    await window.getByRole("button", { name: /^OCR/ }).click();
+    await window.getByLabel("Páginas").fill("1");
+    await window.getByRole("button", { name: "Executar OCR" }).click();
+    await expect(window.locator(".pdf-text")).toContainText("AGZOS", { timeout: 60_000 });
+    await expect(head).toContainText("com senha");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.7: PDF Tools comprime as imagens (antes/depois) no worker", async () => {
+  const profile = tempProfile();
+  const { app, window } = await launch(profile);
+  try {
+    // Foto 1600×1200 com ruído (JPEG de qualidade alta), feita pelo nativeImage do Electron.
+    const jpeg = Buffer.from(
+      await app.evaluate(({ nativeImage }) => {
+        const width = 1600;
+        const height = 1200;
+        const bitmap = Buffer.alloc(width * height * 4);
+        let seed = 7;
+        for (let i = 0; i < width * height; i++) {
+          seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+          bitmap[i * 4] = (i % width) % 256;
+          bitmap[i * 4 + 1] = (seed >> 8) & 255;
+          bitmap[i * 4 + 2] = Math.floor(i / width) % 256;
+          bitmap[i * 4 + 3] = 255;
+        }
+        return [...nativeImage.createFromBitmap(bitmap, { width, height }).toJPEG(95)];
+      }),
+    );
+    const { PDFDocument } = await import("@cantoo/pdf-lib");
+    const doc = await PDFDocument.create();
+    const image = await doc.embedJpg(jpeg);
+    doc.addPage([800, 600]).drawImage(image, { x: 0, y: 0, width: 800, height: 600 });
+    const original = Buffer.from(await doc.save());
+    v47Files.set("/v47/foto.pdf", original);
+
+    await go(window, `${origin}/v47/foto.pdf`);
+    await window.getByRole("button", { name: "Abrir no PDF Tools" }).click({ timeout: 15_000 });
+    const head = window.locator(".pdf-head");
+    await expect(head).toContainText("foto.pdf", { timeout: 20_000 });
+    await window.getByRole("button", { name: /^Comprimir/ }).click();
+    await window.getByRole("radio", { name: /Forte/ }).click();
+    await window.getByRole("button", { name: "Comprimir", exact: true }).click();
+    const result = window.locator(".pdf-result");
+    await expect(result).toContainText("Depois", { timeout: 30_000 });
+    await expect(result).toContainText("1 de 1 imagens refeitas");
+    await expect(head).toContainText("não salvo");
+    const out = path.join(profile, "foto-menor.pdf");
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = (async () => ({
+        canceled: false,
+        filePath: file,
+      })) as typeof dialog.showSaveDialog;
+    }, out);
+    await window.getByRole("button", { name: "Exportar", exact: true }).click();
+    await expect.poll(() => fs.existsSync(out)).toBe(true);
+    const smaller = fs.readFileSync(out);
+    expect(smaller.length).toBeLessThan(original.length / 2);
+    expect((await PDFDocument.load(smaller)).getPageCount()).toBe(1);
   } finally {
     await app.close();
   }

@@ -5,6 +5,7 @@ import { DownloadsPanel } from "@/features/downloads/panel";
 import { ExtensionMenu } from "@/features/extensions/menu";
 import { ExtensionsPanel } from "@/features/extensions/panel";
 import { ToolsMenu } from "@/features/tools/tools-menu";
+import { ColorToolsPanel } from "@/features/colors/panel";
 import { AutofillPopup } from "@/features/key/autofill-popup";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
@@ -42,7 +43,9 @@ export type PanelSpec =
   /** 4.6: menu de uma extensão (clique direito ou "…"). */
   | { kind: "extmenu"; key?: string; props: ComponentProps<typeof ExtensionMenu> }
   /** 4.6: menu Ferramentas da barra lateral. */
-  | { kind: "tools"; key?: string; props: ComponentProps<typeof ToolsMenu> };
+  | { kind: "tools"; key?: string; props: ComponentProps<typeof ToolsMenu> }
+  /** 4.7: ColorTools (popover do conta-gotas da barra). */
+  | { kind: "colors"; key?: string; props: ComponentProps<typeof ColorToolsPanel> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -81,5 +84,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <ExtensionMenu key={key} {...spec.props} />;
     case "tools":
       return <ToolsMenu key={key} {...spec.props} />;
+    case "colors":
+      return <ColorToolsPanel key={key} {...spec.props} />;
   }
 }

@@ -29,6 +29,8 @@ const OVERLAY_KINDS = new Set([
   "extensions",
   "extmenu",
   "tools",
+  // 4.7: ColorTools.
+  "colors",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;

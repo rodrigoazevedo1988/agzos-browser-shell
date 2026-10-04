@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.7.0",
+    date: "2026-10-04",
+    items: [
+      "Gerenciador de downloads (Ctrl+J): lista com nome, situação, progresso, tamanho e pasta; filtros (em andamento, pausados, concluídos, falhos, tipo e etiqueta) e busca no histórico por nome, endereço, site ou etiqueta. Pausar, retomar (com Range quando o servidor aceita), reiniciar, cancelar, abrir a pasta, mudar o destino de um item, etiquetar e exportar a seleção em JSON ou CSV. Pelo teclado: Espaço, Delete, Shift+Delete, R, F e Enter.",
+      "Pastas e regras: pasta padrão, “organizar por tipo” (PDF, imagens, vídeos, áudio e compactados em pastas próprias) e regras por tipo, site (etiqueta) ou nome (subpasta), em Configurações → Recursos. Tudo vale em todas as janelas e fica no perfil.",
+      "Tema da página por site: a lua na barra de endereço liga o Dark só naquele site (sol volta ao Lightning), sem recarregar, e o app lembra. Fotos, vídeos, canvas, iframes e logos ficam como estão; trechos que perderiam contraste voltam ao original. Atalho Alt+Shift+D.",
+      "ColorTools (conta-gotas na barra): pegue a cor de qualquer ponto da página com lupa e HEX/RGB/HSL ao vivo (Alt+Shift+C), analise as cores da página, monte gradientes lineares ou radiais e copie o CSS, salve paletas e veja o histórico, com busca e cores fixadas. No clique direito: copiar cor do pixel, analisar a página e abrir o gerador de gradiente.",
+      "PDF Tools (agzos://pdf, Ctrl+Alt+P): editar (texto, imagem, formas, marca-texto, comentário, assinatura desenhada e marca-d'água), organizar, juntar, dividir, girar, recortar, comprimir (fraca, equilibrada ou forte, com antes e depois), senha AES-256, formulários, OCR local em português, inglês e espanhol, PDF para imagens ou texto e, com o LibreOffice instalado, Word para PDF e PDF para Word. Tudo neste computador.",
+      "PDFs abrem na guia, como no Chrome, e um ícone PDF na barra de endereço leva o documento ao PDF Tools (também pelo clique direito no link e pelo gerenciador de downloads). Resumo com IA e salvar na nuvem ficam desligados até você ligar, e pedem confirmação a cada arquivo.",
+    ],
+  },
+  {
     version: "4.6.2",
     date: "2026-10-04",
     items: [

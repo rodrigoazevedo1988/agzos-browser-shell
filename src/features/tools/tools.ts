@@ -3,7 +3,10 @@ import {
   Braces,
   Camera,
   Crosshair,
+  Download,
+  FileText,
   Layers,
+  Pipette,
   Network,
   NotebookPen,
   Puzzle,
@@ -22,7 +25,10 @@ export type ToolId =
   | "page.capture"
   | "page.reader"
   | "notes.toggle"
-  | "extensions.open";
+  | "extensions.open"
+  | "downloads.toggle"
+  | "colors.panel"
+  | "pdf.open";
 
 export type Tool = {
   id: ToolId;
@@ -90,6 +96,27 @@ export const TOOLS: Tool[] = [
     label: "Extensões",
     hint: "Carregar, ligar e abrir extensões",
     icon: Puzzle,
+  },
+  // 4.7
+  {
+    id: "downloads.toggle",
+    label: "Downloads",
+    hint: "Pausar, etiquetar, regras e pastas por tipo",
+    icon: Download,
+    shortcut: "Ctrl+J",
+  },
+  {
+    id: "colors.panel",
+    label: "ColorTools",
+    hint: "Conta-gotas, paleta da página e gradiente",
+    icon: Pipette,
+  },
+  {
+    id: "pdf.open",
+    label: "PDF Tools",
+    hint: "Editar, juntar, comprimir, senha e OCR",
+    icon: FileText,
+    shortcut: "Ctrl+Alt+P",
   },
 ];
 

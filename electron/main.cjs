@@ -15,6 +15,7 @@ const {
   systemPreferences,
   dialog,
   nativeImage,
+  nativeTheme,
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -26,7 +27,15 @@ const {
   COLLECT_DOM_SOURCE,
   AUTH_PATH_SOURCE,
 } = require("./adblock.cjs");
-const { createDownloadManager } = require("./downloads.cjs");
+const { createDownloadManager, uniquePath } = require("./downloads.cjs");
+const pageTheme = require("./page-theme.cjs");
+const colorTools = require("./color-tools.cjs");
+const { createPdfTools, safeFileName: safePdfName } = require("./pdf-tools.cjs");
+const {
+  defaultTypeFolders,
+  exportDownloads,
+  parseDownloadsConfig,
+} = require("./download-rules.cjs");
 const { nextZoom, zoomHostOf } = require("./zoom.cjs");
 const {
   createPanelLog,
@@ -370,6 +379,16 @@ function notifyDownloadNavigation(item, contents) {
   emitTab(contents, { type: "download-navigation", urls });
 }
 
+// 4.7: navegação principal que devolveu um PDF (a casca mostra o ícone do PDF Tools).
+function rememberPdfFrame(details) {
+  if (details.resourceType !== "mainFrame" || !details.webContentsId) return;
+  const headers = details.responseHeaders ?? {};
+  const type = Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type");
+  const value = String(type?.[1]?.[0] ?? "").toLowerCase();
+  if (value.startsWith("application/pdf")) pdfFrames.set(details.webContentsId, details.url);
+  else pdfFrames.delete(details.webContentsId);
+}
+
 // Pipeline de rede único por session. O Electron aceita UM listener por evento de
 // webRequest: um segundo onBeforeSendHeaders/onHeadersReceived substituiria os Client
 // Hints e quebraria o login do Google. Todo recurso novo entra nestas funções.
@@ -382,6 +401,7 @@ app.on("session-created", (ses) => {
   });
   ses.webRequest.onHeadersReceived((details, callback) => {
     rememberAcceptedHints(details);
+    rememberPdfFrame(details);
     callback({});
   });
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -730,6 +750,24 @@ async function saveLoadedImage(contents, url) {
   }
 }
 
+/** "Copiar cor do pixel": 1×1 do compositor no ponto do clique; a casca copia no formato. */
+async function copyPixelColor(contents, ctx, x, y) {
+  try {
+    const image = await contents.capturePage({
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      width: 1,
+      height: 1,
+    });
+    const bitmap = image.toBitmap();
+    if (bitmap.length < 4) return;
+    const hex = colorTools.hexOf(colorTools.rgbOfBitmap(bitmap));
+    send(ctx, "agzos:color-action", { action: "copied", hex });
+  } catch {
+    // Página fechada.
+  }
+}
+
 function buildPageContextMenu(contents, params) {
   const template = [];
   const canBack = contents.navigationHistory.canGoBack();
@@ -829,6 +867,35 @@ function buildPageContextMenu(contents, params) {
       shellAction("page.inspect", "Mira de elemento (cores e Tailwind)", "CmdOrCtrl+Shift+C"),
       shellAction("page.reader", "Modo leitura", "CmdOrCtrl+Alt+R"),
       shellAction("scratchpad.capture", "Capturar requisições no Scratchpad"),
+      // 4.7: ColorTools.
+      {
+        label: "Copiar cor do pixel",
+        click: () => void copyPixelColor(contents, pageTab.ctx, params.x, params.y),
+      },
+      {
+        label: "Analisar cores da página",
+        click: () => send(pageTab.ctx, "agzos:color-action", { action: "analyze" }),
+      },
+      {
+        label: "Abrir gerador de gradiente",
+        click: () => send(pageTab.ctx, "agzos:color-action", { action: "gradient" }),
+      },
+    );
+  }
+  // 4.7: PDF Tools pelo link .pdf ou pela própria página em PDF.
+  const pdfTarget =
+    params.linkURL && /\.pdf(?:$|[?#])/i.test(params.linkURL) && isWebUrl(params.linkURL)
+      ? params.linkURL
+      : pageTab && pdfFrames.get(contents.id) === contents.getURL()
+        ? contents.getURL()
+        : null;
+  if (pageTab && pdfTarget) {
+    template.push(
+      { type: "separator" },
+      {
+        label: "Abrir com PDF Tools",
+        click: () => send(pageTab.ctx, "agzos:pdf-open", { url: pdfTarget, tabId: pageTab.id }),
+      },
     );
   }
 
@@ -1223,10 +1290,16 @@ function releaseKeySuppression(contents, input) {
   });
 }
 
+// 4.7: atalhos configuráveis dos recursos (ColorTools, PDF Tools, tema da página), que a
+// casca manda pelas preferências. Só combos com modificador.
+let extraShortcuts = new Set();
+const EXTRA_COMBO =
+  /^(?:(?:mod|alt|shift)\+){1,3}[a-z0-9[\];',./`=-]$|^(?:(?:mod|alt|shift)\+){1,3}f(?:[1-9]|1[0-2])$/;
+
 function forwardAppShortcut(ctx, input, event, { page = false, contents = null } = {}) {
   if (input.type !== "keyDown" || !ctx) return false;
   const combo = shortcutCombo(input);
-  if (!FORWARDED_SHORTCUTS.has(combo)) return false;
+  if (!FORWARDED_SHORTCUTS.has(combo) && !extraShortcuts.has(combo)) return false;
   // No Mac o ⌘H é "Ocultar Agzos Browser" (a barra de menus trata; histórico é ⌘Y).
   if (process.platform === "darwin" && combo === "mod+h" && input.meta) return false;
   event.preventDefault();
@@ -1617,6 +1690,112 @@ function isPrivateContents(contents) {
   return contents.session === privateSession();
 }
 
+// --- 4.7: tema da página por domínio (electron/page-theme.cjs) ---
+// contents.id → chaves do CSS inserido no documento atual.
+const themedContents = new Map();
+// Guias anônimas: a escolha vale só até fechar o app.
+const privateThemes = {};
+let savedThemes = null;
+
+function themeMap(contents) {
+  if (!savedThemes) {
+    try {
+      savedThemes = pageTheme.parseThemeMap(database?.getMeta("pageThemes"));
+    } catch {
+      savedThemes = {};
+    }
+  }
+  return contents && isPrivateContents(contents)
+    ? { ...savedThemes, ...privateThemes }
+    : savedThemes;
+}
+
+function pageThemeInfo(contents) {
+  const url = contents.getURL();
+  // O visualizador de PDF do Chromium fica como está (o PDF Tools tem tema próprio).
+  const domain = pdfFrames.get(contents.id) === url ? null : pageTheme.themeDomainOf(url);
+  const mode = pageTheme.modeOf(themeMap(contents), domain);
+  return {
+    domain,
+    mode,
+    dark: Boolean(domain) && pageTheme.isDarkMode(mode, nativeTheme.shouldUseDarkColors),
+  };
+}
+
+async function applyPageTheme(contents, { adjust = false } = {}) {
+  if (contents.isDestroyed()) return null;
+  const info = pageThemeInfo(contents);
+  const applied = themedContents.get(contents.id);
+  try {
+    if (info.dark && !applied) {
+      const marker = { keys: [] };
+      themedContents.set(contents.id, marker);
+      marker.keys.push(await contents.insertCSS(pageTheme.BASE_CSS, { cssOrigin: "user" }));
+      marker.keys.push(await contents.insertCSS(pageTheme.DARK_CSS));
+    } else if (!info.dark && applied) {
+      themedContents.delete(contents.id);
+      for (const key of applied.keys) await contents.removeInsertedCSS(key);
+      await contents.executeJavaScriptInIsolatedWorld(
+        pageTheme.PAGE_THEME_WORLD,
+        [{ code: pageTheme.pageThemeResetSource() }],
+        false,
+      );
+    }
+  } catch {
+    // Página fechada ou navegando: a próxima navegação aplica de novo.
+  }
+  emitTab(contents, { type: "page-theme", theme: info });
+  if (info.dark && adjust && !contents.isDestroyed()) {
+    try {
+      const reverted = await contents.executeJavaScriptInIsolatedWorld(
+        pageTheme.PAGE_THEME_WORLD,
+        [{ code: pageTheme.pageThemeAdjustSource() }],
+        false,
+      );
+      if (Number(reverted) > 0) {
+        emitTab(contents, { type: "page-theme-reverted", count: Number(reverted) });
+      }
+    } catch {
+      // Ver acima.
+    }
+  }
+  return info;
+}
+
+/** Reaplica nas guias de um domínio (ou em todas), em todas as janelas. */
+function reapplyPageTheme(domain = null) {
+  for (const id of tabOfContents.keys()) {
+    const contents = webContents.fromId(id);
+    if (!contents || contents.isDestroyed()) continue;
+    if (domain && pageTheme.themeDomainOf(contents.getURL()) !== domain) continue;
+    void applyPageTheme(contents, { adjust: true });
+  }
+}
+
+function setPageThemeMode(contents, mode) {
+  const info = pageThemeInfo(contents);
+  const clean = pageTheme.cleanMode(mode);
+  if (!info.domain || !clean) return info;
+  if (isPrivateContents(contents)) {
+    privateThemes[info.domain] = clean;
+  } else {
+    const next = { ...themeMap(null) };
+    if (clean === "lightning") delete next[info.domain];
+    else next[info.domain] = clean;
+    savedThemes = next;
+    database?.setMeta("pageThemes", next);
+  }
+  reapplyPageTheme(info.domain);
+  return pageThemeInfo(contents);
+}
+
+// PDF na guia (ícone "PDF" na barra de URL): pelo Content-Type da navegação principal.
+const pdfFrames = new Map();
+function notifyPdf(contents, url) {
+  const pdf = pdfFrames.get(contents.id) === url || /\.pdf(?:$|[?#])/i.test(url);
+  emitTab(contents, { type: "pdf", url, pdf });
+}
+
 function storedZoom(contents, host) {
   if (isPrivateContents(contents) && privateZoom.has(host)) return privateZoom.get(host);
   const value = database?.getSiteSetting(host, "zoom");
@@ -1780,6 +1959,13 @@ function wireView(view) {
   });
   contents.on("did-navigate", () => clearLoadFailed(contents));
   contents.on("did-navigate", () => applyStoredZoom(contents));
+  // 4.7: tema da página (o CSS inserido some a cada documento novo) e ícone do PDF.
+  contents.on("did-navigate", (_event, url) => {
+    themedContents.delete(contents.id);
+    void applyPageTheme(contents);
+    notifyPdf(contents, url);
+  });
+  contents.on("did-finish-load", () => void applyPageTheme(contents, { adjust: true }));
   contents.on("did-stop-loading", () => {
     scheduleThumbnail(contents, 600);
     scheduleReadableProbe(contents);
@@ -3505,6 +3691,9 @@ function registerIpc() {
         contextIsolation: true,
         preload: PAGE_PRELOAD,
         partition: tabPartition(options),
+        // 4.7: visualizador de PDF do Chromium na guia (como no Chrome); o ícone PDF da
+        // barra leva o documento ao PDF Tools.
+        plugins: true,
       },
     });
     if (typeof options?.session === "string" && !options?.private) {
@@ -4564,9 +4753,476 @@ function registerIpc() {
   ipcMain.handle("downloads:dir", () => downloadsDir());
   ipcMain.handle("downloads:open-dir", () => void shell.openPath(downloadsDir()));
   ipcMain.handle("app:quit", () => app.quit());
-  ipcMain.handle("download:action", (_event, { id, action }) => {
+  ipcMain.handle("shortcuts:extra", (_event, { combos } = {}) => {
+    extraShortcuts = new Set(
+      (Array.isArray(combos) ? combos : [])
+        .filter((combo) => typeof combo === "string" && EXTRA_COMBO.test(combo))
+        .filter((combo) => combo !== "shift+" && !/^shift\+[^+]+$/.test(combo))
+        .slice(0, 16),
+    );
+  });
+  // 4.7: PDF Tools.
+  ipcMain.handle("pdf:open-dialog", async (event, { maxMb } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const options = {
+      title: "Abrir no PDF Tools",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        {
+          name: "PDF, imagens e documentos",
+          extensions: [
+            "pdf",
+            "png",
+            "jpg",
+            "jpeg",
+            "doc",
+            "docx",
+            "odt",
+            "rtf",
+            "xls",
+            "xlsx",
+            "ods",
+            "ppt",
+            "pptx",
+            "odp",
+          ],
+        },
+        { name: "PDF", extensions: ["pdf"] },
+      ],
+    };
+    const result = ctx
+      ? await dialog.showOpenDialog(ctx.window, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
+    const files = [];
+    for (const file of result.filePaths.slice(0, 50)) {
+      const read = pdfService().readFile(file, pdfMaxBytes(maxMb));
+      if (!read.ok) return { ok: false, error: read.error, name: path.basename(file) };
+      files.push(read.file);
+    }
+    return { ok: true, files };
+  });
+  // Só arquivos que o app conhece: downloads concluídos (ou já abertos no PDF Tools).
+  ipcMain.handle("pdf:read-path", (_event, { path: file, maxMb } = {}) => {
+    if (typeof file !== "string") return { ok: false, error: "missing" };
+    const known =
+      pdfService().canOverwrite(file) ||
+      (downloads?.list() ?? []).some((row) => row.state === "completed" && row.path === file);
+    if (!known || !fs.existsSync(file)) return { ok: false, error: "missing" };
+    try {
+      return pdfService().readFile(file, pdfMaxBytes(maxMb));
+    } catch {
+      return { ok: false, error: "missing" };
+    }
+  });
+  // PDF de uma página (link ou a guia): baixado na session da guia (cookies dela).
+  ipcMain.handle("pdf:from-url", async (event, { url, tabId, maxMb } = {}) => {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { ok: false, error: "url" };
+    const contents = Number.isInteger(tabId) ? tabContents(ctxOfEvent(event), tabId) : null;
+    const ses = contents?.session ?? session.defaultSession;
+    try {
+      const response = await ses.fetch(url, { cache: "no-store" });
+      if (!response.ok) return { ok: false, error: "download" };
+      const limit = pdfMaxBytes(maxMb);
+      const declared = Number(response.headers.get("content-length")) || 0;
+      if (declared > limit) return { ok: false, error: "size" };
+      const data = Buffer.from(await response.arrayBuffer());
+      if (data.length > limit) return { ok: false, error: "size" };
+      if (data.subarray(0, 1024).indexOf("%PDF") < 0) return { ok: false, error: "notpdf" };
+      let name = "documento.pdf";
+      try {
+        name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "") || name;
+      } catch {
+        // Fica o nome padrão.
+      }
+      if (!/\.pdf$/i.test(name)) name = `${name || "documento"}.pdf`;
+      return {
+        ok: true,
+        file: {
+          name: safePdfName(name),
+          path: "",
+          size: data.length,
+          bytes: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+        },
+      };
+    } catch {
+      return { ok: false, error: "network" };
+    }
+  });
+  ipcMain.handle("pdf:save", async (event, { bytes, name, path: file, mode, filters } = {}) => {
+    if (!(bytes instanceof ArrayBuffer || ArrayBuffer.isView(bytes))) return { ok: false };
+    const data = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
+    if (mode === "same" && pdfService().canOverwrite(file)) {
+      try {
+        pdfService().writeFile(file, data);
+        return { ok: true, path: file };
+      } catch {
+        return { ok: false, error: "write" };
+      }
+    }
+    const ctx = ctxOfEvent(event);
+    const options = {
+      title: "Exportar",
+      defaultPath: path.join(
+        typeof file === "string" && file && pdfService().canOverwrite(file)
+          ? path.dirname(file)
+          : downloadsDir(),
+        safePdfName(name),
+      ),
+      ...(Array.isArray(filters) ? { filters: filters.slice(0, 4) } : {}),
+    };
+    const result = ctx
+      ? await dialog.showSaveDialog(ctx.window, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    try {
+      pdfService().writeFile(result.filePath, data);
+    } catch {
+      return { ok: false, error: "write" };
+    }
+    return { ok: true, path: result.filePath };
+  });
+  // Vários arquivos numa pasta que o usuário escolheu (sem sobrescrever nada).
+  ipcMain.handle("pdf:save-into", (_event, { dir, name, bytes } = {}) => {
+    if (typeof dir !== "string" || !pickedDirs.has(path.resolve(dir))) return { ok: false };
+    if (!(bytes instanceof ArrayBuffer || ArrayBuffer.isView(bytes))) return { ok: false };
+    try {
+      const file = uniquePath(dir, safePdfName(name, "arquivo"));
+      pdfService().writeFile(file, bytes instanceof ArrayBuffer ? bytes : bytes.buffer);
+      return { ok: true, path: file };
+    } catch {
+      return { ok: false };
+    }
+  });
+  ipcMain.handle("pdf:session-start", () => pdfService().startSession());
+  ipcMain.handle("pdf:session-end", (_event, { id } = {}) => pdfService().endSession(id));
+  ipcMain.handle("pdf:ocr-asset", (_event, { name } = {}) => pdfService().ocrAsset(name));
+  ipcMain.handle("pdf:ocr-languages", () => pdfService().ocrLanguages());
+  ipcMain.handle("pdf:ocr-download", (_event, { lang } = {}) =>
+    pdfService().downloadLanguage(String(lang ?? "")),
+  );
+  ipcMain.handle("pdf:office", () => pdfService().office());
+  ipcMain.handle("pdf:office-convert", async (_event, payload = {}) => {
+    if (!(payload.bytes instanceof ArrayBuffer || ArrayBuffer.isView(payload.bytes))) {
+      return { ok: false, error: "format" };
+    }
+    const service = pdfService();
+    const { id } = service.startSession();
+    try {
+      return await service.convertOffice(id, {
+        bytes: payload.bytes instanceof ArrayBuffer ? payload.bytes : payload.bytes.buffer,
+        name: payload.name,
+        to: payload.to,
+      });
+    } finally {
+      service.endSession(id);
+    }
+  });
+  ipcMain.handle("pdf:cloud-targets", () => pdfService().cloudTargets());
+  ipcMain.handle("pdf:cloud-save", (_event, { bytes, name, target } = {}) => {
+    if (!(bytes instanceof ArrayBuffer || ArrayBuffer.isView(bytes))) return { ok: false };
+    try {
+      return pdfService().cloudSave({
+        bytes: bytes instanceof ArrayBuffer ? bytes : bytes.buffer,
+        name,
+        target,
+      });
+    } catch {
+      return { ok: false, error: "write" };
+    }
+  });
+  // Resumo com o Agzos AI: só com o recurso ligado e a confirmação por arquivo na casca.
+  ipcMain.handle("pdf:summarize", async (event, { requestId, text, language } = {}) => {
+    const id = String(requestId ?? "");
+    const body = typeof text === "string" ? text.slice(0, 400_000) : "";
+    if (!id || !body.trim()) return { ok: false, error: "empty" };
+    pdfSummaries.add(id);
+    const sender = event.sender;
+    const progress = (fraction) => {
+      if (!sender.isDestroyed()) sender.send("agzos:pdf-progress", { requestId: id, fraction });
+    };
+    const lang = typeof language === "string" && language ? language.slice(0, 40) : "português";
+    const chunks = [];
+    for (let start = 0; start < body.length; start += 24_000)
+      chunks.push(body.slice(start, start + 24_000));
+    try {
+      const partials = [];
+      for (const [index, chunk] of chunks.entries()) {
+        if (!pdfSummaries.has(id)) return { ok: false, error: "cancelled" };
+        const result = await aiService().complete({
+          system: `Você resume documentos. Responda em ${lang}, em tópicos curtos e fiéis ao texto, sem inventar.`,
+          user: `Resuma este trecho de um PDF${chunks.length > 1 ? ` (parte ${index + 1} de ${chunks.length})` : ""}:\n\n${chunk}`,
+          maxTokens: 900,
+        });
+        if (!result.ok) return { ok: false, error: result.error ?? "ai" };
+        partials.push(result.text);
+        progress((index + 1) / (chunks.length + (chunks.length > 1 ? 1 : 0)));
+      }
+      if (partials.length === 1) return { ok: true, text: partials[0] };
+      if (!pdfSummaries.has(id)) return { ok: false, error: "cancelled" };
+      const final = await aiService().complete({
+        system: `Você junta resumos parciais de um documento. Responda em ${lang}, em tópicos curtos.`,
+        user: partials.map((part, index) => `Parte ${index + 1}:\n${part}`).join("\n\n"),
+        maxTokens: 1200,
+      });
+      progress(1);
+      return final.ok ? { ok: true, text: final.text } : { ok: false, error: final.error ?? "ai" };
+    } catch {
+      return { ok: false, error: "network" };
+    } finally {
+      pdfSummaries.delete(id);
+    }
+  });
+  ipcMain.handle("pdf:abort", (_event, { requestId } = {}) => {
+    pdfSummaries.delete(String(requestId ?? ""));
+  });
+  const FINGERPRINT = /^[a-f0-9]{64}$/;
+  ipcMain.handle("pdf:password-get", (_event, { fingerprint } = {}) => {
+    if (typeof fingerprint !== "string" || !FINGERPRINT.test(fingerprint)) return null;
+    const saved = database?.getMeta("pdfPasswords") ?? {};
+    return pdfService().openPassword(saved[fingerprint]);
+  });
+  ipcMain.handle("pdf:password-remember", (_event, { fingerprint, password } = {}) => {
+    if (typeof fingerprint !== "string" || !FINGERPRINT.test(fingerprint)) return { ok: false };
+    if (typeof password !== "string" || !password || password.length > 256) return { ok: false };
+    const sealed = pdfService().sealPassword(password);
+    if (!sealed) return { ok: false };
+    const saved = { ...(database?.getMeta("pdfPasswords") ?? {}) };
+    saved[fingerprint] = sealed;
+    database?.setMeta("pdfPasswords", saved);
+    return { ok: true };
+  });
+  ipcMain.handle("pdf:password-forget", (_event, { fingerprint } = {}) => {
+    if (fingerprint === null) {
+      database?.setMeta("pdfPasswords", {});
+      return;
+    }
+    if (typeof fingerprint !== "string") return;
+    const saved = { ...(database?.getMeta("pdfPasswords") ?? {}) };
+    delete saved[fingerprint];
+    database?.setMeta("pdfPasswords", saved);
+  });
+
+  // 4.7: ColorTools (conta-gotas e analisador da guia).
+  ipcMain.handle("colors:pick", async (event, { tabId, dark } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, tabId);
+    const holder = ctx?.views.get(tabId)?.view;
+    if (!ctx || !contents || !holder) return null;
+    closePanelLayer(ctx, { notify: true, refocus: false });
+    ctx.tooltip?.hide();
+    const bounds = holder.getBounds();
+    if (bounds.width < 2 || bounds.height < 2) return null;
+    const color = await colorTools.openColorPicker({
+      window: ctx.window,
+      bounds,
+      capture: () => contents.capturePage(),
+      createView: () => createLayerView(WebContentsView),
+      scaleFactor: screen.getDisplayMatching(ctx.window.getBounds()).scaleFactor,
+      light: dark === false,
+    });
+    if (!contents.isDestroyed()) contents.focus();
+    return color;
+  });
+  ipcMain.handle("colors:analyze", async (event, { tabId } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), tabId);
+    if (!contents || !isWebUrl(contents.getURL())) return { ok: false, colors: [], scanned: 0 };
+    try {
+      const result = await contents.executeJavaScriptInIsolatedWorld(
+        colorTools.COLOR_WORLD,
+        [{ code: colorTools.colorAnalyzeSource() }],
+        false,
+      );
+      return {
+        ok: true,
+        colors: Array.isArray(result?.colors) ? result.colors : [],
+        scanned: Number(result?.scanned) || 0,
+      };
+    } catch {
+      return { ok: false, colors: [], scanned: 0 };
+    }
+  });
+  // Exportações da casca (ColorTools, PDF Tools): o usuário escolhe onde gravar.
+  ipcMain.handle("file:save-as", async (event, { name, data, filters } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const content =
+      typeof data === "string"
+        ? data
+        : data instanceof ArrayBuffer || ArrayBuffer.isView(data)
+          ? Buffer.from(data instanceof ArrayBuffer ? data : data.buffer)
+          : null;
+    if (content === null || content.length > 512 * 1024 * 1024) return { ok: false };
+    const safeName = path.basename(String(name || "arquivo")).replace(/[\\/:*?"<>|]/g, "_");
+    const options = {
+      defaultPath: path.join(downloadsDir(), safeName || "arquivo"),
+      ...(Array.isArray(filters)
+        ? {
+            filters: filters
+              .filter(
+                (item) => item && typeof item.name === "string" && Array.isArray(item.extensions),
+              )
+              .slice(0, 6)
+              .map((item) => ({
+                name: item.name.slice(0, 40),
+                extensions: item.extensions.filter((ext) => /^[\w*]{1,8}$/.test(ext)).slice(0, 8),
+              })),
+          }
+        : {}),
+    };
+    const result = ctx
+      ? await dialog.showSaveDialog(ctx.window, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    try {
+      fs.writeFileSync(result.filePath, content);
+    } catch {
+      return { ok: false };
+    }
+    return { ok: true, path: result.filePath };
+  });
+  ipcMain.handle("clipboard:write", (_event, { text } = {}) => {
+    if (typeof text === "string" && text.length <= 100_000) clipboard.writeText(text);
+  });
+
+  // 4.7: tema da página por domínio.
+  ipcMain.handle("page-theme:get", (event, { tabId } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), tabId);
+    return contents ? pageThemeInfo(contents) : { domain: null, mode: "lightning", dark: false };
+  });
+  ipcMain.handle("page-theme:set", (event, { tabId, mode } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), tabId);
+    if (!contents) return { domain: null, mode: "lightning", dark: false };
+    return setPageThemeMode(contents, mode);
+  });
+  ipcMain.handle("page-theme:list", () => ({ ...themeMap(null) }));
+  // Configurações: escolher o modo de um domínio (inclusive Auto) sem abrir o site.
+  ipcMain.handle("page-theme:set-domain", (_event, { domain, mode } = {}) => {
+    const clean = typeof domain === "string" ? pageTheme.registrableDomain(domain.trim()) : null;
+    const value = pageTheme.cleanMode(mode);
+    if (!clean || !value) return { ...themeMap(null) };
+    const next = { ...themeMap(null) };
+    if (value === "lightning") delete next[clean];
+    else next[clean] = value;
+    savedThemes = next;
+    database?.setMeta("pageThemes", next);
+    reapplyPageTheme(clean);
+    return { ...next };
+  });
+  ipcMain.handle("page-theme:forget", (_event, { domain } = {}) => {
+    const clean = typeof domain === "string" ? pageTheme.registrableDomain(domain) : null;
+    const next = clean ? { ...themeMap(null) } : {};
+    if (clean) delete next[clean];
+    savedThemes = next;
+    database?.setMeta("pageThemes", next);
+    reapplyPageTheme(clean);
+    return { ...next };
+  });
+
+  // 4.7: gerenciador de downloads (pasta global, por tipo, regras e etiquetas).
+  ipcMain.handle("downloads:config", () => ({
+    config: downloadsConfig(),
+    defaults: defaultTypeFolders(systemDirs()),
+    base: baseDownloadsDir(),
+  }));
+  ipcMain.handle("downloads:set-config", (_event, raw) => {
+    const next = parseDownloadsConfig(raw, systemDirs());
+    downloadsConfigCache = next;
+    database?.setMeta("downloadsConfig", next);
+    broadcast("agzos:downloads-config", next);
+    return next;
+  });
+  ipcMain.handle("downloads:pick-dir", async (event, { title } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const options = {
+      title: typeof title === "string" ? title.slice(0, 80) : "Escolher pasta",
+      defaultPath: downloadsDir(),
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const result = ctx
+      ? await dialog.showOpenDialog(ctx.window, options)
+      : await dialog.showOpenDialog(options);
+    const picked = result.canceled ? null : (result.filePaths[0] ?? null);
+    // 4.7: pasta escolhida pelo usuário: o PDF Tools pode gravar nela (dividir, imagens).
+    if (picked) pickedDirs.add(path.resolve(picked));
+    return picked;
+  });
+  // Exporta metadados da seleção (nunca o arquivo baixado) ou as regras do gerenciador.
+  ipcMain.handle("downloads:export", async (event, { ids, format, what } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const rules = what === "rules";
+    const type = rules ? "json" : format === "csv" ? "csv" : "json";
+    if (!rules && (!downloads || !Array.isArray(ids) || !ids.length)) return { ok: false };
+    const content = rules
+      ? `${JSON.stringify({ app: "Agzos Browser", kind: "downloads-rules", config: downloadsConfig() }, null, 2)}\n`
+      : exportDownloads(downloads.rows(ids), type);
+    const options = {
+      title: rules ? "Exportar regras de download" : "Exportar downloads",
+      defaultPath: path.join(
+        downloadsDir(),
+        rules ? "agzos-regras-download.json" : `agzos-downloads.${type}`,
+      ),
+      filters: [{ name: type.toUpperCase(), extensions: [type] }],
+    };
+    const result = ctx
+      ? await dialog.showSaveDialog(ctx.window, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    try {
+      fs.writeFileSync(result.filePath, content);
+    } catch {
+      return { ok: false, error: "write" };
+    }
+    return { ok: true, path: result.filePath };
+  });
+  ipcMain.handle("downloads:import-rules", async (event) => {
+    const ctx = ctxOfEvent(event);
+    const options = {
+      title: "Importar regras de download",
+      properties: ["openFile"],
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    };
+    const result = ctx
+      ? await dialog.showOpenDialog(ctx.window, options)
+      : await dialog.showOpenDialog(options);
+    const file = result.canceled ? null : result.filePaths[0];
+    if (!file) return { ok: false, canceled: true };
+    let parsed;
+    try {
+      if (fs.statSync(file).size > 512 * 1024) return { ok: false, error: "size" };
+      parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      return { ok: false, error: "json" };
+    }
+    if (parsed?.kind !== "downloads-rules" || !parsed.config) return { ok: false, error: "json" };
+    const next = parseDownloadsConfig(parsed.config, systemDirs());
+    downloadsConfigCache = next;
+    database?.setMeta("downloadsConfig", next);
+    broadcast("agzos:downloads-config", next);
+    return { ok: true, config: next };
+  });
+  ipcMain.handle("download:action", async (event, { id, action, value }) => {
     if (!downloads || !Number.isInteger(id)) return { ok: false };
     switch (action) {
+      case "restart":
+        return { ok: downloads.restart(id) };
+      case "tags":
+        return { ok: downloads.setTags(id, Array.isArray(value) ? value : []) };
+      case "destination": {
+        let dir = typeof value === "string" && path.isAbsolute(value) ? value : null;
+        if (!dir) {
+          const ctx = ctxOfEvent(event);
+          const options = {
+            title: "Mudar destino deste download",
+            properties: ["openDirectory", "createDirectory"],
+          };
+          const result = ctx
+            ? await dialog.showOpenDialog(ctx.window, options)
+            : await dialog.showOpenDialog(options);
+          dir = result.canceled ? null : (result.filePaths[0] ?? null);
+        }
+        if (!dir) return { ok: false, canceled: true };
+        return downloads.setDestination(id, dir);
+      }
       case "pause":
         downloads.pause(id);
         return { ok: true };
@@ -5747,6 +6403,32 @@ function pwaIconDataUrl(id) {
 
 let ai = null;
 /** Serviço da IA, criado na primeira chamada (depois do ready: safeStorage e banco). */
+// --- 4.7: PDF Tools (electron/pdf-tools.cjs) ---
+let pdfTools = null;
+function pdfService() {
+  allowTestKeyring();
+  if (!pdfTools) {
+    pdfTools = createPdfTools({
+      userDataDir: app.getPath("userData"),
+      distDir: path.join(__dirname, "..", "dist"),
+      safeStorage,
+      fetchBuffer: async (url) => {
+        const response = await net.fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return Buffer.from(await response.arrayBuffer());
+      },
+    });
+    pdfTools.cleanupStale();
+  }
+  return pdfTools;
+}
+const PDF_MAX_BYTES = 500 * 1024 * 1024;
+const pickedDirs = new Set();
+const pdfMaxBytes = (maxMb) =>
+  Math.min(PDF_MAX_BYTES, Math.max(1, Number(maxMb) || 50) * 1024 * 1024);
+// Resumos em andamento (Cancelar entre um trecho e outro).
+const pdfSummaries = new Set();
+
 function aiService() {
   // A API de teste (servidor local dos e2e) só vale fora do app empacotado.
   const testUrl = app.isPackaged ? null : process.env.AGZOS_GROQ_BASE_URL;
@@ -5778,8 +6460,47 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("devtools-opened", () => contents.closeDevTools());
 });
 
-function downloadsDir() {
+/** Pasta de downloads do sistema (ou a dos testes). */
+function baseDownloadsDir() {
   return process.env.AGZOS_DOWNLOADS_DIR || app.getPath("downloads");
+}
+
+/** Pasta padrão: a escolhida em Configurações > Downloads ou a do sistema. */
+function downloadsDir() {
+  return downloadsConfig().dir || baseDownloadsDir();
+}
+
+function systemDirs() {
+  const safe = (name, fallback) => {
+    try {
+      return app.getPath(name);
+    } catch {
+      return fallback;
+    }
+  };
+  const base = baseDownloadsDir();
+  const home = safe("home", base);
+  return {
+    downloads: base,
+    documents: safe("documents", path.join(home, "Documents")),
+    pictures: safe("pictures", path.join(home, "Pictures")),
+    videos: safe("videos", path.join(home, "Videos")),
+    music: safe("music", path.join(home, "Music")),
+  };
+}
+
+let downloadsConfigCache = null;
+function downloadsConfig() {
+  if (!downloadsConfigCache) {
+    let saved = null;
+    try {
+      saved = database?.getMeta("downloadsConfig") ?? null;
+    } catch {
+      saved = null;
+    }
+    downloadsConfigCache = parseDownloadsConfig(saved, systemDirs());
+  }
+  return downloadsConfigCache;
 }
 
 function shieldConfigOf(prefs) {
@@ -5801,6 +6522,8 @@ function startServices() {
     downloadsDir,
     emit: (record) => broadcast("agzos:download", record),
     isPrivateSession: (ses) => ses === privateSession(),
+    config: downloadsConfig,
+    defaultSession: () => session.defaultSession,
   });
   adblock = createAdblock({
     userDataDir: app.getPath("userData"),
@@ -6105,6 +6828,8 @@ app.whenReady().then(() => {
   }
   startServices();
   registerIpc();
+  // 4.7: tema "Auto" das páginas segue o claro/escuro do sistema.
+  nativeTheme.on("updated", () => reapplyPageTheme());
   startExtensions();
   startWidevine();
   pwaStore = createPwaStore({ database });
@@ -6185,6 +6910,8 @@ app.on("before-quit", (event) => {
 app.on("will-quit", () => {
   // 4.5: nenhum túnel sobrevive ao app.
   tunnels.stopAll();
+  // 4.7: temporários do PDF Tools não sobrevivem ao app.
+  pdfTools?.cleanupStale();
   // Saída normal: janelas gravadas e o marcador de execução sai.
   try {
     windowStore?.endRun();

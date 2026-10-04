@@ -50,6 +50,10 @@ function context(state: BrowserState = initialState, desktop = false) {
     openScratchpad: vi.fn(),
     inspect: vi.fn(),
     openExtensions: vi.fn(),
+    eyedropper: vi.fn(),
+    toggleColors: vi.fn(),
+    openPdfTools: vi.fn(),
+    togglePageTheme: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

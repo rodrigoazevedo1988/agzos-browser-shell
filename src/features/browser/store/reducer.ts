@@ -1,3 +1,4 @@
+import { emptyColorLibrary, type ColorLibrary } from "@/features/colors/color";
 import { BOOKMARKS_LIMIT, moveNode, seedFromLinks, subtreeIds } from "../bookmarks";
 import type {
   AdblockStats,
@@ -48,6 +49,7 @@ export type HydratePayload = {
   workspaces?: Workspace[] | undefined;
   split?: SplitView | null | undefined;
   notes?: Record<string, PageNote> | undefined;
+  colors?: ColorLibrary | undefined;
 };
 
 /** Seções compartilhadas que outra janela gravou. */
@@ -58,6 +60,7 @@ export type SyncPayload = {
   closedTabs?: ClosedTab[];
   bookmarks?: BookmarkNode[] | null;
   notes?: Record<string, PageNote>;
+  colors?: ColorLibrary;
 };
 
 export type BrowserAction =
@@ -184,7 +187,9 @@ export type BrowserAction =
   // --- Notas (4.5) ---
   /** Grava (ou apaga, com texto vazio) a nota da página `key`. */
   | { type: "notes/set"; key: string; url: string; title: string; text: string; now: number }
-  | { type: "notes/delete"; key: string };
+  | { type: "notes/delete"; key: string }
+  /** 4.7: ColorTools (histórico e paletas inteiros, a casca calcula). */
+  | { type: "colors/set"; library: ColorLibrary };
 
 function homeTab(id: number, isPrivate?: boolean, session?: TabSession): Tab {
   if (isPrivate) return { id, history: [homeEntry], index: 0, private: true };
@@ -480,6 +485,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         links: saved.links ?? defaultLinks,
         dial: saved.dial ?? defaultDial,
         notes: saved.notes ?? {},
+        colors: saved.colors ?? emptyColorLibrary,
         // Antes da 1.6 a estrela salvava nos atalhos: eles viram favoritos da barra.
         bookmarks: saved.bookmarks ?? seedFromLinks(saved.links ?? [], defaultLinks, 0),
         closedTabs: saved.closedTabs.slice(-CLOSED_TABS_LIMIT),
@@ -496,10 +502,11 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "sync": {
-      const { prefs, links, dial, closedTabs, bookmarks, notes } = action.payload;
+      const { prefs, links, dial, closedTabs, bookmarks, notes, colors } = action.payload;
       return {
         ...state,
         ...(notes ? { notes } : {}),
+        ...(colors ? { colors } : {}),
         ...(prefs ? { prefs } : {}),
         ...(links !== undefined ? { links: links ?? defaultLinks } : {}),
         ...(dial !== undefined ? { dial: dial ?? defaultDial } : {}),
@@ -532,6 +539,9 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       }
       return { ...state, notes };
     }
+
+    case "colors/set":
+      return { ...state, colors: action.library };
 
     case "notes/delete": {
       if (!(action.key in state.notes)) return state;

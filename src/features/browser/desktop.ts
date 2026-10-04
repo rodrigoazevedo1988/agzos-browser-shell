@@ -1,3 +1,4 @@
+import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
 import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
 import type { PanelKind } from "./overlay/panels";
@@ -64,6 +65,7 @@ export type DesktopTabEvent =
   | { type: "thumbnail"; id: number; dataUrl: string }
   /** 4.6: a página (nesta URL) tem artigo para o modo leitura. */
   | { type: "readable"; id: number; url: string; readable: boolean }
+  | V47TabEvent
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
   /** Login enviado numa página (page-preload): oferecer salvar no Agzos Key. */
   | { type: "login-detected"; id: number; url: string; username: string; password: string }
@@ -123,6 +125,10 @@ export type DownloadRecord = {
   canResume: boolean;
   /** Evento de remoção (diálogo "Salvar como" cancelado). */
   removed?: boolean;
+  /** 4.7: tipo, etiquetas e pasta pendente ("mudar destino" durante o download). */
+  type?: DownloadFileType;
+  tags?: string[];
+  moveTo?: string | null;
 };
 
 export type DownloadAction = "pause" | "resume" | "cancel" | "open" | "show" | "remove";
@@ -466,7 +472,7 @@ export type WidevineStatus = {
   version: string | null;
 };
 
-export type DesktopBridge = {
+export type DesktopBridge = DesktopV47 & {
   attachTab(
     id: number,
     url: string,

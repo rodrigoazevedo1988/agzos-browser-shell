@@ -1,5 +1,7 @@
 import { MoreHorizontal } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -40,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { childrenOf, newBookmarkId } from "./bookmarks";
 import {
   commandForKey,
+  commands,
   isEnabled,
   runCommand,
   shortcutCombo,
@@ -77,6 +80,11 @@ import { PortsPanel } from "@/features/dev/ports-panel";
 import { NotesPanel } from "@/features/notes/panel";
 import { READER_FONT, ReaderView } from "@/features/reader/view";
 import { ScratchpadPage } from "@/features/scratchpad/page";
+import { DownloadsManager } from "@/features/downloads/manager";
+import { createDownloadsApi } from "@/features/downloads/api";
+import { PdfHelpPage } from "@/features/pdf/help";
+import { comboOfHotkey } from "./feature-prefs";
+import { useV47Shell, type PdfRequest } from "./v47-shell";
 import type { SettingsSectionId } from "@/features/settings/page";
 import type { ToolId } from "@/features/tools/tools";
 import type { ExtensionMenuAction } from "@/features/extensions/menu";
@@ -111,6 +119,9 @@ import {
   DIAL_URL,
   HISTORY_URL,
   SCRATCHPAD_URL,
+  DOWNLOADS_URL,
+  PDF_URL,
+  PDF_HELP_URL,
   SETTINGS_URL,
   defaultPrefs,
   initialState,
@@ -140,6 +151,11 @@ import { WhatsNew } from "./ui/whats-new";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
 
+// 4.7: PDF Tools (pdf.js, pdf-lib e o OCR) só carrega quando a página abre.
+const PdfToolsPage = lazy(() =>
+  import("@/features/pdf/page").then((module) => ({ default: module.PdfToolsPage })),
+);
+
 type Panel =
   | "key"
   | "privacy"
@@ -155,7 +171,8 @@ type Panel =
   | "sideapps"
   | "extensions"
   | "extmenu"
-  | "tools";
+  | "tools"
+  | "colors";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -992,6 +1009,18 @@ export function AgzosBrowser() {
     dispatch({ type: "nav/open-internal", entry: { title, url, kind: "internal" } });
   }, []);
 
+  // 4.7: Ctrl+J abre o gerenciador; no gerenciador, fecha (volta à página anterior).
+  const toggleDownloadsManager = useCallback(() => {
+    const current = stateRef.current;
+    const active = current.tabs.find((tab) => tab.id === current.activeId);
+    if (active && entryOf(active).url === DOWNLOADS_URL) {
+      if (active.index > 0) dispatch({ type: "nav/step", delta: -1 });
+      else dispatch({ type: "tab/close", id: active.id });
+      return;
+    }
+    openInternal(DOWNLOADS_URL, "Downloads");
+  }, [openInternal]);
+
   // Menu nativo no app; na web, o menu da casca (pastas reabrem o menu com o conteúdo).
   const openContextMenu = tabMenu.open;
   const showMenu = useCallback(
@@ -1208,6 +1237,48 @@ export function AgzosBrowser() {
     if (open) dispatch({ type: "tab/activate", id: open.id });
     else openInternal(SETTINGS_URL, "Configurações");
   };
+
+  // 4.7: downloads, tema da página, ColorTools e PDF Tools (v47-shell.tsx).
+  const [pdfRequest, setPdfRequest] = useState<PdfRequest | null>(null);
+  const openPdfPage = useCallback(
+    (request: PdfRequest | null) => {
+      if (request) setPdfRequest(request);
+      openInternal(PDF_URL, "PDF Tools");
+    },
+    [openInternal],
+  );
+  const openPdfTools = (request: Omit<PdfRequest, "at"> | null = null) =>
+    openPdfPage(request ? { ...request, at: Date.now() } : null);
+  const v47 = useV47Shell({
+    desktop,
+    dispatch,
+    prefs,
+    colors: state.colors,
+    activeTabId: activeTab.id,
+    activeUrl: current.url,
+    activeIsPage: current.kind === "page",
+    activePrivate: Boolean(activeTab.private),
+    isMac,
+    colorsOpen: panel === "colors",
+    setColorsOpen: (open) => {
+      panelRef.current = open ? "colors" : panelRef.current === "colors" ? null : panelRef.current;
+      setPanel((currentPanel) =>
+        open ? "colors" : currentPanel === "colors" ? null : currentPanel,
+      );
+    },
+    setNotice,
+    openPdfPage,
+    openSettings: () => openSettingsAt("recursos"),
+  });
+  const setFeatures = v47.setFeatures;
+  // 4.7: API interna agzos.downloads (só na casca, nunca nas páginas).
+  useEffect(() => {
+    if (!desktop) return;
+    const host = window as unknown as { agzos?: Record<string, unknown> };
+    host.agzos = { ...(host.agzos ?? {}), downloads: createDownloadsApi(desktop) };
+  }, [desktop]);
+  const featureComboRef = useRef(v47.featureForCombo);
+  featureComboRef.current = v47.featureForCombo;
 
   // 4.5: mira de elemento, com aviso na casca (ligou, desligou ou não dá nesta guia).
   const inspect = async (tabId: number) => {
@@ -1435,7 +1506,11 @@ export function AgzosBrowser() {
       copy: (id, value) => void copyText(id, value),
       step: (delta) => step(delta),
       openFind,
-      toggleDownloads: () => togglePanel("downloads"),
+      toggleDownloads: () => toggleDownloadsManager(),
+      eyedropper: (tabId) => v47.eyedropper(tabId),
+      toggleColors: () => v47.toggleColors(),
+      openPdfTools: () => openPdfTools(),
+      togglePageTheme: (tabId) => v47.togglePageTheme(tabId),
       bookmarkPage,
       bookmarkAllTabs,
       pictureInPicture,
@@ -1534,7 +1609,12 @@ export function AgzosBrowser() {
       layer?: boolean;
     }) => {
       const command = commandForKey(input);
-      if (!command) return;
+      if (!command) {
+        // 4.7: atalhos configuráveis (ColorTools, PDF Tools, tema da página).
+        const feature = featureComboRef.current(comboOfHotkey(input));
+        if (feature) runCommand(ctxRef.current, feature, null, "keyboard");
+        return;
+      }
       if (command.id === "window.new" && aiNewChat()) return;
       if (input.layer && ctxRef.current.state.switcher === null) setSwitcherLayer(true);
       runCommand(ctxRef.current, command.id, null, "keyboard");
@@ -1568,8 +1648,22 @@ export function AgzosBrowser() {
         return;
       }
       const command = commandForKey(input);
+      if (!command) {
+        // 4.7: atalho configurável. Sem Ctrl/⌘ ele não tira a tecla de um campo de texto.
+        const combo = comboOfHotkey({ ...input, key: shortcutKey(input) });
+        const editable =
+          event.target instanceof HTMLElement &&
+          Boolean(event.target.closest("input, textarea, select, [contenteditable='true']"));
+        const feature =
+          combo.startsWith("mod+") || !editable ? featureComboRef.current(combo) : null;
+        const featureCommand = feature ? commands.find((item) => item.id === feature) : undefined;
+        if (!featureCommand || !isEnabled(ctxRef.current, featureCommand)) return;
+        event.preventDefault();
+        runCommand(ctxRef.current, featureCommand.id, null, "keyboard");
+        return;
+      }
       // Atalho desabilitado (ex.: Ctrl+F na web) fica com o navegador.
-      if (!command || !isEnabled(ctxRef.current, command)) return;
+      if (!isEnabled(ctxRef.current, command)) return;
       event.preventDefault();
       if (command.id === "window.new" && aiNewChat()) return;
       runCommand(ctxRef.current, command.id, null, "keyboard");
@@ -1905,8 +1999,8 @@ export function AgzosBrowser() {
         void desktop?.quitApp();
         return;
       case "downloads.toggle":
-        // O menu fecha antes; o painel de downloads abre em seguida.
-        window.setTimeout(() => setPanel("downloads"), 0);
+        // 4.7: o item Downloads do menu abre o gerenciador (como o Ctrl+J).
+        openInternal(DOWNLOADS_URL, "Downloads");
         return;
       default:
         runCommand(ctx, action, null, "menu");
@@ -1993,6 +2087,10 @@ export function AgzosBrowser() {
                 void desktop
                   .downloadsClear()
                   .then((list) => dispatch({ type: "downloads/set", list }));
+              },
+              onOpenManager: () => {
+                closePanel();
+                openInternal(DOWNLOADS_URL, "Downloads");
               },
               onClose: closePanel,
             },
@@ -2191,83 +2289,88 @@ export function AgzosBrowser() {
   const extMenuInfo = extMenu ? extensionList.find((item) => item.dir === extMenu.dir) : null;
   const activeHost = current.kind === "page" ? hostOf(current.url) : null;
   const panelSpec: PanelSpec | null =
-    panel === "tools" && desktop
-      ? {
-          kind: "tools",
-          props: {
-            left: toolsAnchor.left,
-            top: toolsAnchor.top,
-            mac: isMac,
-            onRun: (id) => runTool(id),
-            onClose: closePanel,
-          },
-        }
-      : panel === "extensions" && desktop
+    panel === "colors" && v47.colorsSpec
+      ? v47.colorsSpec
+      : panel === "tools" && desktop
         ? {
-            kind: "extensions",
+            kind: "tools",
             props: {
-              extensions: extensionList.map((item) => ({
-                dir: item.dir,
-                name: item.name,
-                icon: item.icon,
-                summary: item.access.summary,
-                pinned: item.pinned,
-                enabled: item.enabled && item.loaded,
-                kind: item.kind,
-                update: item.update,
-              })),
-              right: extAnchor
-                ? Math.max(8, Math.round(window.innerWidth - extAnchor.x - extAnchor.width))
-                : 12,
-              onOpen: (dir, anchor) => openExtensionPopup(dir, extAnchor, anchor),
-              onPin: (dir, pinned) => void desktop.extensionsPin(dir, pinned),
-              onMore: (dir, anchor) => openExtensionMenu(dir, anchor),
-              onManage: () => {
-                closePanel();
-                openSettingsAt("extensoes");
-              },
-              onGetMore: () => {
-                closePanel();
-                openUrl("https://chromewebstore.google.com/category/extensions", true);
-              },
-              onAdd: () => {
-                closePanel();
-                void desktop.extensionsAddUnpacked().then((result) => {
-                  if (result.ok) setNotice("Extensão carregada.");
-                });
-              },
+              left: toolsAnchor.left,
+              top: toolsAnchor.top,
+              mac: isMac,
+              onRun: (id) => runTool(id),
               onClose: closePanel,
             },
           }
-        : panel === "extmenu" && desktop && extMenu && extMenuInfo
+        : panel === "extensions" && desktop
           ? {
-              kind: "extmenu",
-              key: extMenu.dir,
+              kind: "extensions",
               props: {
-                data: {
-                  dir: extMenuInfo.dir,
-                  name: extMenuInfo.name,
-                  icon: extMenuInfo.icon,
-                  summary: extMenuInfo.access.summary,
-                  hosts: extMenuInfo.access.hosts,
-                  permissions: extMenuInfo.access.permissions,
-                  pinned: extMenuInfo.pinned,
-                  hasPopup: Boolean(extMenuInfo.popup),
-                  hasOptions: Boolean(extMenuInfo.options),
-                  hasSidePanel: Boolean(extMenuInfo.sidePanel),
-                  update: extMenuInfo.update,
-                  activeOnly: extMenu.activeOnly === true,
-                  host: activeHost,
-                  blockedHere: activeHost !== null && extMenuInfo.blocked.includes(activeHost),
-                  blocked: extMenuInfo.blocked,
+                extensions: extensionList.map((item) => ({
+                  dir: item.dir,
+                  name: item.name,
+                  icon: item.icon,
+                  summary: item.access.summary,
+                  pinned: item.pinned,
+                  enabled: item.enabled && item.loaded,
+                  kind: item.kind,
+                  update: item.update,
+                })),
+                right: extAnchor
+                  ? Math.max(8, Math.round(window.innerWidth - extAnchor.x - extAnchor.width))
+                  : 12,
+                onOpen: (dir, anchor) => openExtensionPopup(dir, extAnchor, anchor),
+                onPin: (dir, pinned) => void desktop.extensionsPin(dir, pinned),
+                onMore: (dir, anchor) => openExtensionMenu(dir, anchor),
+                onManage: () => {
+                  closePanel();
+                  openSettingsAt("extensoes");
                 },
-                left: Math.max(8, Math.round(Math.min(extMenu.anchor.x, window.innerWidth - 312))),
-                top: Math.round(extMenu.anchor.y + extMenu.anchor.height + 4),
-                onAction: (action) => runExtensionAction(extMenu.dir, action),
+                onGetMore: () => {
+                  closePanel();
+                  openUrl("https://chromewebstore.google.com/category/extensions", true);
+                },
+                onAdd: () => {
+                  closePanel();
+                  void desktop.extensionsAddUnpacked().then((result) => {
+                    if (result.ok) setNotice("Extensão carregada.");
+                  });
+                },
                 onClose: closePanel,
               },
             }
-          : basePanelSpec;
+          : panel === "extmenu" && desktop && extMenu && extMenuInfo
+            ? {
+                kind: "extmenu",
+                key: extMenu.dir,
+                props: {
+                  data: {
+                    dir: extMenuInfo.dir,
+                    name: extMenuInfo.name,
+                    icon: extMenuInfo.icon,
+                    summary: extMenuInfo.access.summary,
+                    hosts: extMenuInfo.access.hosts,
+                    permissions: extMenuInfo.access.permissions,
+                    pinned: extMenuInfo.pinned,
+                    hasPopup: Boolean(extMenuInfo.popup),
+                    hasOptions: Boolean(extMenuInfo.options),
+                    hasSidePanel: Boolean(extMenuInfo.sidePanel),
+                    update: extMenuInfo.update,
+                    activeOnly: extMenu.activeOnly === true,
+                    host: activeHost,
+                    blockedHere: activeHost !== null && extMenuInfo.blocked.includes(activeHost),
+                    blocked: extMenuInfo.blocked,
+                  },
+                  left: Math.max(
+                    8,
+                    Math.round(Math.min(extMenu.anchor.x, window.innerWidth - 312)),
+                  ),
+                  top: Math.round(extMenu.anchor.y + extMenu.anchor.height + 4),
+                  onAction: (action) => runExtensionAction(extMenu.dir, action),
+                  onClose: closePanel,
+                },
+              }
+            : basePanelSpec;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -2406,6 +2509,19 @@ export function AgzosBrowser() {
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
           onExtensionsMenu={desktop ? (anchor) => void openExtensionsMenu(anchor) : undefined}
           reader={readerButton}
+          pageTheme={v47.pageThemeButton}
+          pdf={v47.pdfButton}
+          colors={
+            desktop
+              ? {
+                  open: panel === "colors",
+                  onToggle: (anchor) => {
+                    if (justDismissed("colors")) return;
+                    v47.toggleColors(rectOfDom(anchor));
+                  },
+                }
+              : null
+          }
           extensionsOpen={panel === "extensions" || panel === "extmenu"}
           pinnedExtensions={extensionList
             .filter((item) => item.pinned && item.enabled && item.loaded)
@@ -2671,7 +2787,34 @@ export function AgzosBrowser() {
                         siteTabs={siteTabs}
                         onOpenUrl={(url) => openUrl(url, true)}
                         requestedSection={settingsRequest}
+                        onNotice={setNotice}
                       />
+                    ) : pageUrl === DOWNLOADS_URL ? (
+                      <DownloadsManager
+                        downloads={state.downloads}
+                        desktop={desktop}
+                        browserDark={prefs.dark}
+                        theme={prefs.features.downloadsTheme}
+                        onTheme={(downloadsTheme) => setFeatures({ downloadsTheme })}
+                        onOpenPdf={(record) => openPdfTools({ path: record.path })}
+                        onOpenSettings={() => openSettingsAt("recursos")}
+                        onNotice={setNotice}
+                      />
+                    ) : pageUrl === PDF_URL ? (
+                      <Suspense fallback={<p className="library-empty">Abrindo o PDF Tools…</p>}>
+                        <PdfToolsPage
+                          desktop={desktop}
+                          prefs={prefs.features.pdf}
+                          dark={prefs.dark}
+                          request={pdfRequest}
+                          onOpenHelp={() => openInternal(PDF_HELP_URL, "Ajuda do PDF Tools")}
+                          onOpenSettings={() => openSettingsAt("recursos")}
+                          onOpenAiSettings={() => openSettingsAt("ia")}
+                          onNotice={setNotice}
+                        />
+                      </Suspense>
+                    ) : pageUrl === PDF_HELP_URL ? (
+                      <PdfHelpPage onOpenUrl={(url) => openUrl(url, true)} version={appVersion} />
                     ) : pageUrl === SCRATCHPAD_URL ? (
                       <ScratchpadPage
                         desktop={desktop}

@@ -33,6 +33,9 @@ export const INTERNAL_PAGES: Record<string, string> = {
   "agzos://configuracoes": "Configurações",
   "agzos://discador": "Discador",
   "agzos://scratchpad": "API Scratchpad",
+  "agzos://downloads": "Downloads",
+  "agzos://pdf": "PDF Tools",
+  "agzos://ajuda/pdf-tools": "Ajuda do PDF Tools",
 };
 
 /** Outros nomes que levam às mesmas páginas (como o chrome://settings). */
@@ -43,6 +46,8 @@ const INTERNAL_ALIASES: Record<string, string> = {
   "agzos://bookmarks": "agzos://favoritos",
   "agzos://speed-dial": "agzos://discador",
   "agzos://speeddial": "agzos://discador",
+  "agzos://pdf-tools": "agzos://pdf",
+  "agzos://help/pdf-tools": "agzos://ajuda/pdf-tools",
 };
 
 export function resolveInput(raw: string, engine: EngineId): Entry | null {

@@ -58,6 +58,16 @@ const MIGRATIONS = [
     CREATE INDEX history_visits_url ON history_visits (url_id);
     CREATE INDEX history_urls_last ON history_urls (last_visit)`,
   },
+  {
+    // 4.7: etiquetas e o que o Chromium precisa para retomar com Range (ETag,
+    // Last-Modified e a cadeia de redirecionamentos).
+    version: 5,
+    name: "downloads_manager",
+    sql: `ALTER TABLE downloads ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE downloads ADD COLUMN etag TEXT NOT NULL DEFAULT '';
+    ALTER TABLE downloads ADD COLUMN last_modified TEXT NOT NULL DEFAULT '';
+    ALTER TABLE downloads ADD COLUMN url_chain TEXT NOT NULL DEFAULT '[]'`,
+  },
 ];
 
 // Como o Chrome: o histórico guarda 90 dias.
@@ -88,7 +98,8 @@ function historyFilter(terms, columns) {
 }
 
 const DOWNLOAD_STATES = ["progressing", "completed", "cancelled", "interrupted"];
-const DOWNLOAD_LIMIT = 200;
+// 4.7: o gerenciador busca no histórico local (nome, URL, domínio, etiqueta).
+const DOWNLOAD_LIMIT = 2000;
 
 // Seções do snapshot da casca que o renderer pode ler e gravar (ver persistence/snapshot.ts).
 const STATE_SECTIONS = [
@@ -101,6 +112,8 @@ const STATE_SECTIONS = [
   "dial",
   // 4.5: notas por página.
   "notes",
+  // 4.7: ColorTools (histórico e paletas).
+  "colors",
 ];
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 
@@ -158,8 +171,16 @@ function openDatabase(file) {
   );
   const updateDownload = db.prepare(
     `UPDATE downloads SET filename = ?, path = ?, total_bytes = ?, received_bytes = ?, state = ?,
-       ended_at = ? WHERE id = ?`,
+       ended_at = ?, tags = ?, etag = ?, last_modified = ?, url_chain = ? WHERE id = ?`,
   );
+  const jsonList = (value) => {
+    try {
+      const list = JSON.parse(value || "[]");
+      return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  };
 
   // Download que estava em andamento quando o app fechou não tem como continuar.
   db.prepare(
@@ -393,10 +414,12 @@ function openDatabase(file) {
       return db
         .prepare(
           `SELECT id, url, filename, path, mime, total_bytes AS totalBytes,
-             received_bytes AS receivedBytes, state, started_at AS startedAt, ended_at AS endedAt
+             received_bytes AS receivedBytes, state, started_at AS startedAt, ended_at AS endedAt,
+             tags, etag, last_modified AS lastModified, url_chain AS urlChain
            FROM downloads ORDER BY id DESC LIMIT ?`,
         )
-        .all(DOWNLOAD_LIMIT);
+        .all(DOWNLOAD_LIMIT)
+        .map((row) => ({ ...row, tags: jsonList(row.tags), urlChain: jsonList(row.urlChain) }));
     },
     addDownload(record) {
       const result = insertDownload.run(
@@ -419,6 +442,10 @@ function openDatabase(file) {
         record.receivedBytes ?? 0,
         DOWNLOAD_STATES.includes(record.state) ? record.state : "interrupted",
         record.endedAt ?? null,
+        JSON.stringify(Array.isArray(record.tags) ? record.tags : []),
+        String(record.etag ?? ""),
+        String(record.lastModified ?? ""),
+        JSON.stringify(Array.isArray(record.urlChain) ? record.urlChain : []),
         id,
       );
     },

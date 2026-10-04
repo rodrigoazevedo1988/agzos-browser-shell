@@ -25,6 +25,8 @@ import { DEFAULT_SOUND_TICK, type SoundTick } from "@/features/sounds/sounds";
 import { DEFAULT_GESTURES, type GesturePrefs } from "@/features/gestures/gestures";
 import { TERMINAL_HEIGHT } from "@/features/terminal/model";
 import { DEFAULT_TERMINAL, type TerminalSettings } from "@/features/terminal/config";
+import { defaultFeaturePrefs, type FeaturePrefs } from "../feature-prefs";
+import { emptyColorLibrary, type ColorLibrary } from "@/features/colors/color";
 
 export const HOME_URL = "agzos://inicio";
 export const HISTORY_URL = "agzos://historico";
@@ -34,6 +36,10 @@ export const SETTINGS_URL = "agzos://configuracoes";
 export const DIAL_URL = "agzos://discador";
 /** API Scratchpad (4.5): reenviar requisições capturadas da guia. */
 export const SCRATCHPAD_URL = "agzos://scratchpad";
+/** 4.7: gerenciador de downloads (Ctrl+J), PDF Tools e a ajuda dele. */
+export const DOWNLOADS_URL = "agzos://downloads";
+export const PDF_URL = "agzos://pdf";
+export const PDF_HELP_URL = "agzos://ajuda/pdf-tools";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 /** Workspace de toda guia sem `workspaceId` (o primeiro, que não pode ser apagado). */
@@ -134,6 +140,8 @@ export type Prefs = {
   terminalCwd: string;
   /** Terminal 4.1: posição, aparência, aliases, IA, SSH e voz. */
   terminal: TerminalSettings;
+  /** 4.7: Configurações > Recursos (downloads, tema da página, ColorTools, PDF Tools). */
+  features: FeaturePrefs;
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
@@ -179,6 +187,7 @@ export const defaultPrefs: Prefs = {
   terminalShell: "",
   terminalCwd: "",
   terminal: DEFAULT_TERMINAL,
+  features: defaultFeaturePrefs,
 };
 
 export type ViewNav = { canBack: boolean; canForward: boolean };
@@ -202,6 +211,8 @@ export type BrowserState = {
   dial: QuickLink[];
   /** Notas por página (4.5), pela chave de noteKeyOf. */
   notes: Record<string, PageNote>;
+  /** 4.7: ColorTools (histórico e paletas). */
+  colors: ColorLibrary;
   bookmarks: BookmarkNode[];
   prefs: Prefs;
   // Só em memória.
@@ -254,6 +265,7 @@ export const initialState: BrowserState = {
   links: defaultLinks,
   dial: defaultDial,
   notes: {},
+  colors: emptyColorLibrary,
   bookmarks: [],
   prefs: defaultPrefs,
   nextId: 2,

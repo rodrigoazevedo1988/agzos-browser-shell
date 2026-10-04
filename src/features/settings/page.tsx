@@ -1,4 +1,5 @@
 import {
+  Blocks,
   Check,
   Cpu,
   Download,
@@ -41,6 +42,13 @@ import { Toggle } from "@/features/ui/toggle";
 import { ACTION_LABELS, GESTURES } from "@/features/gestures/gestures";
 import { InstalledAppsSetting } from "./apps-rows";
 import { ExtensionsSetting, WidevineSetting } from "./v45-rows";
+import {
+  ColorToolsSettings,
+  DownloadsFeatureSettings,
+  PageThemeSettings,
+  PdfToolsSettings,
+} from "./v47-rows";
+import { desktopBridge } from "@/features/browser/desktop";
 import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
 import {
   SshConnectionsSetting,
@@ -91,6 +99,7 @@ export type SettingsSectionId =
   | "desempenho"
   | "inicializacao"
   | "downloads"
+  | "recursos"
   | "atalhos"
   | "sobre";
 
@@ -119,6 +128,8 @@ export type SettingsPageProps = {
   onOpenUrl?: (url: string) => void;
   /** Seção pedida de fora (4.5: "Extensões" da barra e das Ferramentas). */
   requestedSection?: { id: SettingsSectionId; at: number } | null;
+  /** 4.7: avisos da casca (regras de download, senhas esquecidas…). */
+  onNotice?: (text: string) => void;
 };
 
 type Row = { id: string; label: string; keywords?: string; node: ReactNode };
@@ -409,7 +420,7 @@ export function SettingsPage(props: SettingsPageProps) {
             label: "Tick do teclado",
             keywords: "som tecla mecanico suave maquina escrever",
             node: (
-              <label className="settings-select">
+              <label className="sf-select">
                 <span>Tick do teclado</span>
                 <span className="settings-inline">
                   <select
@@ -688,7 +699,7 @@ export function SettingsPage(props: SettingsPageProps) {
                   label: "Hibernar depois de",
                   keywords: "minutos tempo memoria",
                   node: (
-                    <label className="settings-select">
+                    <label className="sf-select">
                       <span>Hibernar depois de</span>
                       <select
                         value={prefs.hibernateMinutes}
@@ -926,6 +937,67 @@ export function SettingsPage(props: SettingsPageProps) {
         ],
       });
     }
+
+    // 4.7: Configurações > Recursos.
+    const featureProps = {
+      desktop: desktop ? desktopBridge() : null,
+      features: prefs.features,
+      setFeatures: (patch: Partial<Prefs["features"]>) =>
+        setPrefs({ features: { ...prefs.features, ...patch } }),
+      isMac: props.isMac,
+      ...(props.onNotice ? { onNotice: props.onNotice } : {}),
+    };
+    list.push({
+      id: "recursos",
+      label: "Recursos",
+      icon: Blocks,
+      rows: [
+        {
+          id: "recurso-downloads",
+          label: "Downloads",
+          keywords: "gerenciador pasta tipo regra etiqueta exportar ctrl+j",
+          node: (
+            <section className="sf-card">
+              <h3>Downloads</h3>
+              <DownloadsFeatureSettings {...featureProps} />
+            </section>
+          ),
+        },
+        {
+          id: "recurso-tema",
+          label: "Tema da página",
+          keywords: "dark lightning escuro claro site domínio lua sol",
+          node: (
+            <section className="sf-card">
+              <h3>Tema da página (Dark / Lightning)</h3>
+              <PageThemeSettings {...featureProps} />
+            </section>
+          ),
+        },
+        {
+          id: "recurso-cores",
+          label: "ColorTools",
+          keywords: "cor conta-gotas paleta gradiente hex rgb hsl colorzilla",
+          node: (
+            <section className="sf-card">
+              <h3>ColorTools</h3>
+              <ColorToolsSettings {...featureProps} />
+            </section>
+          ),
+        },
+        {
+          id: "recurso-pdf",
+          label: "PDF Tools",
+          keywords: "pdf editar comprimir ocr senha nuvem ia resumo",
+          node: (
+            <section className="sf-card">
+              <h3>PDF Tools</h3>
+              <PdfToolsSettings {...featureProps} />
+            </section>
+          ),
+        },
+      ],
+    });
 
     list.push({
       id: "atalhos",
