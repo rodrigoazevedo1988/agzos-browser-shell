@@ -727,6 +727,9 @@ describe("PWA instalável", () => {
       `exec /usr/bin/open -n -a "/Applications/Agzos Browser.app" --args "--agzos-pwa=${id}"`,
     );
     expect(bundle["Contents/Info.plist"]).toContain("<string>Mail &amp; Co</string>");
+    // 4.7.1: LSUIElement marcava o .app do PWA como acessório e ele não ganhava ícone
+    // nem presença no Dock — abria parecendo mais uma janela do navegador.
+    expect(bundle["Contents/Info.plist"]).not.toContain("LSUIElement");
     expect(pwa.fileNameOf("...")).toBe("App");
   });
 

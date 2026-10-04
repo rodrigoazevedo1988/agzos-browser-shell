@@ -177,6 +177,19 @@ app.on("open-file", (event, file) => {
   else pendingSystemFiles.push(file);
 });
 
+// O mesmo vale para o atalho de um PWA instalado: o lock é adquirido aqui, no
+// carregamento do módulo, mas o app só fica pronto bem depois (banco, janelas
+// restauradas, extensões, Widevine). Um clique no ícone nesse meio-tempo chegava como
+// "second-instance" sem nenhum ouvinte e se perdia em silêncio — o usuário clicava no app
+// e acabava no navegador, que era o único sintoma visível. Registramos aqui e guardamos
+// o argv até dar para abrir a janela do PWA (mesmo esquema do open-file acima).
+const pendingSecondInstances = [];
+let handleSecondInstance = null;
+app.on("second-instance", (_event, argv, workingDirectory) => {
+  if (handleSecondInstance) handleSecondInstance(argv, workingDirectory);
+  else pendingSecondInstances.push([argv, workingDirectory]);
+});
+
 const isDevelopment = process.argv.some((argument) => argument.startsWith("--dev-url="));
 const developmentUrl = process.argv
   .find((argument) => argument.startsWith("--dev-url="))
@@ -611,6 +624,21 @@ function isShown(ctx, id) {
     !ctx.rejected.has(id) &&
     !ctx.failed.has(id)
   );
+}
+
+/**
+ * Sai do modo tela cheia da página: a casca volta a mostrar barra lateral e toolbar e a
+ * guia volta ao retângulo dela. Chamado pelo leave-html-full-screen e também pelos
+ * caminhos em que ele não chega (no macOS, o vídeo indo para o PiP tira o elemento da
+ * tela cheia sem esse evento): a janela saindo da tela cheia e a própria página avisando
+ * que não tem mais elemento em tela cheia (agzos:page-fullscreen). Sem isso o
+ * fullscreenActive ficava preso: a barra lateral sumia e a página cobria a janela toda.
+ */
+function leaveHtmlFullscreen(ctx) {
+  if (!ctx.fullscreenActive || ctx.window.isDestroyed()) return;
+  ctx.fullscreenActive = false;
+  setTimeout(() => applyLayout(ctx), 50);
+  send(ctx, "agzos:fullscreen", { active: false });
 }
 
 function applyLayout(ctx) {
@@ -2005,10 +2033,7 @@ function wireView(view) {
   });
   contents.on("leave-html-full-screen", () => {
     const ctx = ctxNow();
-    if (!ctx) return;
-    ctx.fullscreenActive = false;
-    setTimeout(() => applyLayout(ctx), 50);
-    send(ctx, "agzos:fullscreen", { active: false });
+    if (ctx) leaveHtmlFullscreen(ctx);
   });
   contents.on("context-menu", (event, params) => {
     event.preventDefault();
@@ -2187,7 +2212,10 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   window.on("hide", dismissPanel);
   window.on("maximize", saveBoundsSoon);
   window.on("unmaximize", saveBoundsSoon);
-  window.on("leave-full-screen", () => setTimeout(() => applyLayout(ctx), 50));
+  window.on("leave-full-screen", () => {
+    leaveHtmlFullscreen(ctx);
+    setTimeout(() => applyLayout(ctx), 50);
+  });
   // Gestos (4.0): botões laterais do mouse no Windows/Linux (WM_APPCOMMAND) e o deslizar
   // de três dedos do macOS. O page-preload também vê os botões; ver windowGesture.
   window.on("app-command", (_event, command) => {
@@ -2382,9 +2410,9 @@ async function checkHibernation() {
           hiddenSince: entry.hiddenSince,
           audible: contents.isCurrentlyAudible(),
           loading: contents.isLoading(),
-          capturing:
-            capturingContents.has(contents) ||
-            (pipContents.has(contents) && (await pictureInPictureActive(contents))),
+          // O estado de PiP chega por evento (pipContents), sem sondar a página: um
+          // round-trip por frame a cada minuto segurava o processo principal.
+          capturing: capturingContents.has(contents) || pipContents.has(contents),
           pendingPermission: hasPendingPermission(contents),
           fullscreen: ctx.fullscreenActive && id === ctx.activeTabId,
           devtools: contents.isDevToolsOpened(),
@@ -2828,18 +2856,6 @@ async function togglePictureInPicture(contents) {
     console.error("Agzos: picture-in-picture falhou.", error);
     return { ok: false, active: false, reason: "erro" };
   }
-}
-
-/** O PiP ainda está aberto? (o usuário pode ter fechado a janela flutuante.) */
-async function pictureInPictureActive(contents) {
-  for (const frame of liveFrames(contents)) {
-    const active = await frame
-      .executeJavaScript("Boolean(document.pictureInPictureElement)")
-      .catch(() => false);
-    if (active) return true;
-  }
-  pipContents.delete(contents);
-  return false;
 }
 
 // --- Prévia da guia (cartão ao pausar o mouse; ver hover-card.cjs). ---
@@ -3638,6 +3654,24 @@ function registerIpc() {
       focused: payload.focused === true,
       field,
     });
+  });
+
+  // PiP avisado pela própria página (ver PIP no page-preload.cjs). Mantém o pipContents
+  // sempre certo sem sondar a aba: era essa sondagem, a cada verificação de hibernação, que
+  // travava a barra lateral e a navegação.
+  ipcMain.on("agzos:pip", (event, payload) => {
+    if (!payload || typeof payload.active !== "boolean") return;
+    if (payload.active) pipContents.add(event.sender);
+    else pipContents.delete(event.sender);
+  });
+
+  // A página saiu da tela cheia (fullscreenchange sem elemento). Normalmente o
+  // leave-html-full-screen já cuidou disso; quando ele não vem (vídeo em tela cheia indo
+  // para o PiP no macOS), a casca ficava sem barra lateral e com a página por cima.
+  ipcMain.on("agzos:page-fullscreen", (event, payload) => {
+    if (!payload || payload.active !== false) return;
+    const where = tabOfContents.get(event.sender.id);
+    if (where && where.id === where.ctx.activeTabId) leaveHtmlFullscreen(where.ctx);
   });
 
   // Autofill: a casca pede para preencher usuário/senha na guia; o main injeta nos campos
@@ -5657,7 +5691,6 @@ function openTerminalPip(ctx) {
     minWidth: 360,
     minHeight: 200,
     show: false,
-    alwaysOnTop: true,
     autoHideMenuBar: true,
     backgroundColor: background,
     ...(process.platform === "darwin" ? {} : { icon: path.join(__dirname, "icons", "icon.png") }),
@@ -5668,7 +5701,10 @@ function openTerminalPip(ctx) {
       sandbox: true,
     },
   });
-  pip.setAlwaysOnTop(true, "floating");
+  // O terminal solto é uma janela normal, não flutuante: ele fica atrás do navegador
+  // quando você mexe numa aba e só vem para a frente quando você clica nele. Antes ele
+  // nascia com alwaysOnTop e setAlwaysOnTop("floating"), o que o deixava grudado na frente
+  // de tudo — inclusive na frente das abas, do menu ⋯ e do que aparecesse por cima.
   const id = pip.webContents.id;
   terminalPipOwner.set(id, ctx);
   ctx.terminalPip = pip;
@@ -6233,6 +6269,20 @@ function openInBrowser(url) {
   );
 }
 
+/**
+ * Põe a janela do PWA na frente. No macOS o atalho roda o Agzos de novo (open -n), essa
+ * segunda instância sai na hora e o sistema devolve o foco ao app que estava na frente: sem
+ * ativar o Agzos, a janela do PWA nascia atrás e o que se via era o navegador. focus() de
+ * janela não ativa o app no macOS; app.focus({ steal: true }) ativa.
+ */
+function bringPwaForward(win) {
+  if (win.isDestroyed()) return;
+  if (process.platform === "darwin") app.focus({ steal: true });
+  win.show();
+  win.moveTop();
+  win.focus();
+}
+
 function openPwaWindow(id, url = null) {
   const record = pwaStore?.get(id);
   if (!record) return false;
@@ -6240,8 +6290,7 @@ function openPwaWindow(id, url = null) {
   if (current && !current.isDestroyed()) {
     if (url) void current.webContents.loadURL(url).catch(() => {});
     if (current.isMinimized()) current.restore();
-    current.show();
-    current.focus();
+    bringPwaForward(current);
     return true;
   }
   const ses = session.fromPartition(`persist:pwa-${id}`);
@@ -6292,9 +6341,9 @@ function openPwaWindow(id, url = null) {
   pwaWindows.set(id, win);
   const contents = win.webContents;
   applyChromeIdentity(contents);
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => bringPwaForward(win));
   // Sem tela em branco se a página demorar.
-  setTimeout(() => !win.isDestroyed() && !win.isVisible() && win.show(), 3000).unref?.();
+  setTimeout(() => !win.isDestroyed() && !win.isVisible() && bringPwaForward(win), 3000).unref?.();
   let timer = null;
   const saveBounds = () => {
     clearTimeout(timer);
@@ -6853,9 +6902,14 @@ app.whenReady().then(() => {
     Number(process.env.AGZOS_HIBERNATE_CHECK_MS) || CHECK_INTERVAL_MS,
   ).unref();
   // Segunda execução (atalho de PWA, ícone do app clicado de novo): vem para esta.
-  app.on("second-instance", (_event, argv, workingDirectory) => {
+  handleSecondInstance = (argv, workingDirectory) => {
     const id = pwaArgOf(argv);
-    if (id && openPwaWindow(id)) return;
+    // O id veio do atalho: o usuário quer o app do PWA. Se não der para abrir, avisamos
+    // em vez de cair no navegador — cair ali é indistinguível de "o PWA abriu numa aba".
+    if (id) {
+      if (openPwaWindow(id)) return;
+      console.error(`Agzos: atalho de PWA ${id} sem app salvo; a janela do app não abriu.`);
+    }
     const files = filesOfArgv(argv, { cwd: workingDirectory });
     if (files.length) {
       openSystemFiles(files);
@@ -6867,7 +6921,10 @@ app.whenReady().then(() => {
       ctx.window.show();
       ctx.window.focus();
     } else if (!openSavedWindows()) createWindow();
-  });
+  };
+  for (const [pendingArgv, pendingCwd] of pendingSecondInstances.splice(0)) {
+    handleSecondInstance(pendingArgv, pendingCwd);
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && !openSavedWindows()) createWindow();
   });

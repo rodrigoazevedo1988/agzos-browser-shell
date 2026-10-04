@@ -112,6 +112,37 @@ function send(channel, payload) {
   }
 }
 
+// --- Vídeo em Picture-in-Picture (avisa o main por evento, nunca por sondagem) ---
+
+// O main precisa saber se a guia está em PiP para não hiberná-la (a janela flutuante
+// fecharia). Antes isso era conferido sondando a página com executeJavaScript a cada
+// verificação de hibernação: um round-trip por frame, a cada minuto, segurando o
+// processo principal — o que travava a barra lateral e a navegação. O preload escuta os
+// eventos do próprio navegador e avisa na hora, o que também cobre o PiP iniciado pelo
+// player da página (o botão do site), e não só pelo nosso atalho.
+for (const type of ["enterpictureinpicture", "leavepictureinpicture"]) {
+  document.addEventListener(type, (event) => {
+    const video = event.target;
+    if (!video || video.tagName !== "VIDEO") return;
+    send("agzos:pip", { active: type === "enterpictureinpicture", url: location.href });
+    // O vídeo saindo da tela cheia direto para o PiP (macOS) nem sempre gera o
+    // leave-html-full-screen; o main confere e só age se tinha ficado preso.
+    if (window === window.top && !document.fullscreenElement) {
+      send("agzos:page-fullscreen", { active: false });
+    }
+  });
+}
+
+// --- Tela cheia da página (rede de segurança do leave-html-full-screen) ---
+
+// Só o quadro de cima fala pela guia: um iframe sem elemento em tela cheia não diz nada
+// sobre a página toda.
+if (window === window.top) {
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) send("agzos:page-fullscreen", { active: false });
+  });
+}
+
 // --- Formulário de login à vista (aviso passivo) e foco num campo (aviso explícito) ---
 
 let lastScan = "";

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="4.7.0"
+VERSION="4.7.2"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
@@ -10,6 +10,13 @@ ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
 cd /var/www/agzos-browser
+# Toda release precisa da entrada no changelog (é dela que saem as notas do latest.json e
+# o diálogo "Atualizado com sucesso"). Conferimos aqui, antes dos ~30 min de build: depois
+# do empacotamento seria tarde demais.
+bun run scripts/release-notes.ts "$VERSION" >/dev/null || {
+  echo "Adicione a entrada de $VERSION no topo de src/features/browser/changelog.ts e tente de novo." >&2
+  exit 1
+}
 sed -i -E "s/\"version\": \"[0-9.]+\"/\"version\": \"$VERSION\"/" package.json
 bun run desktop:build
 for f in "${ELECTRON_FILES[@]}"; do
@@ -70,7 +77,7 @@ APPJSON="{ \"name\": \"agzos-browser\", \"productName\": \"Agzos Browser\", \"ve
 ARTIFACTS="/var/www/agzosagency/browser-artifacts-v${VERSION//./}"
 mkdir -p "$ARTIFACTS"
 # zip/xorriso reaproveitam arquivos existentes; recomeça do zero a cada build.
-rm -f "$ARTIFACTS"/Agnos-Browser-*
+rm -f "$ARTIFACTS"/Agzos-Browser-*
 
 rm -rf v$VERSION && mkdir v$VERSION && cd v$VERSION
 
@@ -90,7 +97,7 @@ node /var/www/agzos-browser/scripts/brand-win.mjs win/AgzosBrowser.exe /var/www/
 (cd win/locales && ls | grep -v -E '^(en-US|pt-BR)\.pak$' | xargs rm -f)
 # Windows: a VMP vai depois de mexer no .exe (marca e ícone).
 vmp_sign win
-(cd win && zip -qr9 "$ARTIFACTS/Agnos-Browser-win32-x64.zip" .)
+(cd win && zip -qr9 "$ARTIFACTS/Agzos-Browser-win32-x64.zip" .)
 echo "Win OK"
 
 # Linux
@@ -106,7 +113,7 @@ rm -f linux/resources/default_app.asar
 mv linux/electron linux/agzos-browser
 chmod +x linux/agzos-browser
 (cd linux/locales && ls | grep -v -E '^(en-US|pt-BR)\.pak$' | xargs rm -f)
-tar -czf "$ARTIFACTS/Agnos-Browser-linux-x64.tar.gz" -C linux .
+tar -czf "$ARTIFACTS/Agzos-Browser-linux-x64.tar.gz" -C linux .
 echo "Linux OK"
 
 # Mac
@@ -169,14 +176,19 @@ PY
     exit 1
   fi
 
-  (cd mac-$arch && zip -qry9 "$ARTIFACTS/Agnos-Browser-mac-$arch.app.zip" "Agzos Browser.app")
+  (cd mac-$arch && zip -qry9 "$ARTIFACTS/Agzos-Browser-mac-$arch.app.zip" "Agzos Browser.app")
   
   rm -rf dmgstage-$arch && mkdir dmgstage-$arch
   cp -a "$APP" "dmgstage-$arch/"
   ln -s /Applications "dmgstage-$arch/Applications"
-  xorriso -as mkisofs -quiet -R -J -V "Agzos Browser" -o "$ARTIFACTS/Agnos-Browser-mac-$arch.dmg" "dmgstage-$arch"
+  xorriso -as mkisofs -quiet -R -J -V "Agzos Browser" -o "$ARTIFACTS/Agzos-Browser-mac-$arch.dmg" "dmgstage-$arch"
   echo "Mac $arch OK"
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.7.0: gerenciador de downloads (Ctrl+J), tema Dark por site, ColorTools e PDF Tools local (editar, comprimir, senha, OCR)."
+# As notas do manifesto saem do changelog.ts, que é a fonte única das novidades (é o que
+# o diálogo "Atualizado com sucesso" mostra). Escrever o resumo à mão em dois lugares já
+# fez o latest.json divergir do changelog uma vez; agora o script falha se a versão
+# publicada não tiver entrada no CHANGELOG, em vez de publicar notas de outra release.
+NOTES="$(bun run scripts/release-notes.ts "$VERSION")"
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "$NOTES"

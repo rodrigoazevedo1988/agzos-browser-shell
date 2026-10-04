@@ -7,6 +7,24 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.7.2",
+    date: "2026-10-04",
+    items: [
+      "Vídeo em Picture-in-Picture não some mais com a barra lateral. No Mac, levar um vídeo da tela cheia para o PiP deixava o navegador achando que a página continuava em tela cheia: a barra lateral e as barras sumiam e a página ficava por cima de tudo. Agora a própria página avisa quando sai da tela cheia, e sair da tela cheia da janela também devolve o layout.",
+      "O atalho de um PWA traz o app para a frente. No Mac, com o navegador já aberto, a janela do app nascia atrás das outras e o que aparecia era o navegador; agora o Agzos é ativado e a janela do app vem para a frente.",
+    ],
+  },
+  {
+    version: "4.7.1",
+    date: "2026-10-04",
+    items: [
+      "Vídeo em Picture-in-Picture não trava mais a janela. A cada minuto o app conferia, em cada aba, se havia vídeo em PiP, chamando a página um frame por vez; isso segurava o navegador inteiro e a barra lateral, a barra de guias e a navegação travavam. Agora a própria página avisa quando o vídeo entra e sai do PiP, então nada é perguntado a ela — e a Guia em PiP também não hiberna mais sozinha, o que fechava a janela flutuante. Vale para o PiP ligado pelo botão do site, não só pelo atalho do app.",
+      "O atalho de um PWA instalado abre o app de verdade. O clique no ícone chegava ao navegador já aberto e, às vezes, virava só mais uma janela do navegador. O aviso de segunda instância agora é registrado antes do app terminar de abrir e espera a hora de abrir a janela do PWA.",
+      "No Mac, o app de um PWA ganhou ícone e presença próprias. Ele era gravado como aplicativo acessório e não aparecia no Dock, o que dava a impressão de que o site continuava preso ao navegador.",
+      "Terminal solto não fica mais grudado na frente de tudo. A janela flutuante nascia sempre por cima — inclusive sobre as abas, o menu ⋯ e o que aparecesse acima. Agora é uma janela normal: ela vai para trás do navegador quando você mexe numa aba e só vem para a frente quando você clica nela. Continua do mesmo jeito para lembrar posição e tamanho.",
+    ],
+  },
+  {
     version: "4.7.0",
     date: "2026-10-04",
     items: [

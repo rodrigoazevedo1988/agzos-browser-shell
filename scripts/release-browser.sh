@@ -8,13 +8,18 @@ ARTIFACTS=""
 ASSUME_YES=0
 NOTES=""
 
+# A partir da 4.7.1 o nome canônico é "Agzos-Browser-*" (grafia do produto, igual à do
+# APK no Android). Até a 4.7.0 os artefatos saíram como "Agnos-Browser-*" — um typo que
+# virou contrato. O build novo sempre gera o canônico; a compatibilidade fica na
+# leitura (pkg_name), porque a política KEEP=2 mantém a versão antiga publicada ao lado
+# da nova e a página de download precisa linkar o nome que existe em cada uma.
 EXPECTED=(
-  "Agnos-Browser-win32-x64.zip"
-  "Agnos-Browser-linux-x64.tar.gz"
-  "Agnos-Browser-mac-arm64.dmg"
-  "Agnos-Browser-mac-x64.dmg"
-  "Agnos-Browser-mac-arm64.app.zip"
-  "Agnos-Browser-mac-x64.app.zip"
+  "Agzos-Browser-win32-x64.zip"
+  "Agzos-Browser-linux-x64.tar.gz"
+  "Agzos-Browser-mac-arm64.dmg"
+  "Agzos-Browser-mac-x64.dmg"
+  "Agzos-Browser-mac-arm64.app.zip"
+  "Agzos-Browser-mac-x64.app.zip"
 )
 
 while [[ $# -gt 0 ]]; do
@@ -44,10 +49,9 @@ for file in "${EXPECTED[@]}"; do
     exit 1
   fi
 done
-
 TARGET="$DEST/v$VERSION"
 mkdir -p "$TARGET"
-cp -f "$ARTIFACTS"/Agnos-Browser-*.zip "$ARTIFACTS"/Agnos-Browser-*.tar.gz "$ARTIFACTS"/Agnos-Browser-*.dmg "$TARGET/"
+cp -f "$ARTIFACTS"/Agzos-Browser-*.zip "$ARTIFACTS"/Agzos-Browser-*.tar.gz "$ARTIFACTS"/Agzos-Browser-*.dmg "$TARGET/"
 ( cd "$ARTIFACTS" && sha256sum "${EXPECTED[@]}" > "$TARGET/SHA256SUMS.txt" )
 
 # Feed da atualização automática (electron/updater.cjs): versão nova, pacote de cada
@@ -57,10 +61,10 @@ python3 - "$TARGET" "$VERSION" "$NOTES" "$DEST/latest.json" <<'PY'
 import datetime, hashlib, json, os, sys
 target, version, notes, out = sys.argv[1:5]
 packages = {
-    "win32-x64": "Agnos-Browser-win32-x64.zip",
-    "linux-x64": "Agnos-Browser-linux-x64.tar.gz",
-    "darwin-arm64": "Agnos-Browser-mac-arm64.app.zip",
-    "darwin-x64": "Agnos-Browser-mac-x64.app.zip",
+    "win32-x64": "Agzos-Browser-win32-x64.zip",
+    "linux-x64": "Agzos-Browser-linux-x64.tar.gz",
+    "darwin-arm64": "Agzos-Browser-mac-arm64.app.zip",
+    "darwin-x64": "Agzos-Browser-mac-x64.app.zip",
 }
 files = {}
 for key, name in packages.items():
@@ -77,8 +81,11 @@ manifest = {
     "files": files,
 }
 tmp = out + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(manifest, f, indent=2)
+with open(tmp, "w", encoding="utf-8") as f:
+    # ensure_ascii=False: as notas vêm do changelog em português e saem legíveis no
+    # arquivo. O JSON continua válido dos dois jeitos (o app faz JSON.parse), mas ler o
+    # manifesto no disco com \u00ed não ajuda ninguém.
+    json.dump(manifest, f, indent=2, ensure_ascii=False)
 os.replace(tmp, out)
 print(f"latest.json: {version} ({len(files)} pacotes)")
 PY
@@ -113,17 +120,41 @@ PREVIOUS=$(echo "$REMAINING" | sed -n 2p)
 
 size_of() { du -h "$DEST/$1" | cut -f1; }
 
+# Nome real do pacote dentro de uma versão publicada. Até a 4.7.0 os arquivos saíram
+# como "Agnos-Browser-*"; da 4.7.1 em diante como "Agzos-Browser-*". A política KEEP=2
+# mantém as duas lado a lado, então a página precisa linkar o nome que existe de fato
+# em cada diretório — senão o link da versão antiga daria 404 depois do próximo deploy.
+pkg_name() { # diretório, nome canônico
+  local dir="$1" canonical="$2" legacy="Agnos-Browser-${canonical#Agzos-Browser-}"
+  if [[ -f "$DEST/$dir/$canonical" ]]; then echo "$canonical"
+  elif [[ -f "$DEST/$dir/$legacy" ]]; then echo "$legacy"
+  else echo "$canonical"  # ainda não publicado: mostra o canônico
+  fi
+}
+
+# Uma linha de download. $3 = rótulo, $4 = dica, $5 = nome canônico, $6 = rótulo de formato.
+render_dl() {
+  local dir="$1" label="$2" hint="$3" canonical="$4" format="$5"
+  local file; file="$(pkg_name "$dir" "$canonical")"
+  printf '  <a class="dl" href="%s/%s"><span><strong>%s</strong><small>%s</small></span><span class="size">%s · %s</span></a>\n' \
+    "$dir" "$file" "$label" "$hint" "$format" "$(size_of "$dir/$file")"
+}
+
 render_version() {
   local dir="$1" tag="$2"
-  cat <<EOF
-  <h2>$tag · <a class="sums" href="$dir/SHA256SUMS.txt">SHA256SUMS.txt</a></h2>
-  <a class="dl" href="$dir/Agnos-Browser-win32-x64.zip"><span><strong>Windows</strong><small>portátil x64 — extraia o ZIP e execute <code>AgzosBrowser.exe</code></small></span><span class="size">ZIP · $(size_of "$dir/Agnos-Browser-win32-x64.zip")</span></a>
-  <a class="dl" href="$dir/Agnos-Browser-linux-x64.tar.gz"><span><strong>Linux</strong><small>x64 — extraia e execute <code>agzos-browser</code></small></span><span class="size">TAR.GZ · $(size_of "$dir/Agnos-Browser-linux-x64.tar.gz")</span></a>
-  <a class="dl" href="$dir/Agnos-Browser-mac-arm64.dmg"><span><strong>macOS Apple Silicon</strong><small>arm64 — abra o DMG e arraste para Applications</small></span><span class="size">DMG · $(size_of "$dir/Agnos-Browser-mac-arm64.dmg")</span></a>
-  <a class="dl" href="$dir/Agnos-Browser-mac-x64.dmg"><span><strong>macOS Intel</strong><small>x64 — abra o DMG e arraste para Applications</small></span><span class="size">DMG · $(size_of "$dir/Agnos-Browser-mac-x64.dmg")</span></a>
-  <a class="dl" href="$dir/Agnos-Browser-mac-arm64.app.zip"><span><strong>macOS Apple Silicon — compactado</strong><small>alternativa menor ao DMG</small></span><span class="size">ZIP · $(size_of "$dir/Agnos-Browser-mac-arm64.app.zip")</span></a>
-  <a class="dl" href="$dir/Agnos-Browser-mac-x64.app.zip"><span><strong>macOS Intel — compactado</strong><small>alternativa menor ao DMG</small></span><span class="size">ZIP · $(size_of "$dir/Agnos-Browser-mac-x64.app.zip")</span></a>
-EOF
+  printf '  <h2>%s · <a class="sums" href="%s/SHA256SUMS.txt">SHA256SUMS.txt</a></h2>\n' "$tag" "$dir"
+  render_dl "$dir" "Windows" 'portátil x64 — extraia o ZIP e execute <code>AgzosBrowser.exe</code>' \
+    "Agzos-Browser-win32-x64.zip" "ZIP"
+  render_dl "$dir" "Linux" 'x64 — extraia e execute <code>agzos-browser</code>' \
+    "Agzos-Browser-linux-x64.tar.gz" "TAR.GZ"
+  render_dl "$dir" "macOS Apple Silicon" 'arm64 — abra o DMG e arraste para Applications' \
+    "Agzos-Browser-mac-arm64.dmg" "DMG"
+  render_dl "$dir" "macOS Intel" 'x64 — abra o DMG e arraste para Applications' \
+    "Agzos-Browser-mac-x64.dmg" "DMG"
+  render_dl "$dir" "macOS Apple Silicon — compactado" 'alternativa menor ao DMG' \
+    "Agzos-Browser-mac-arm64.app.zip" "ZIP"
+  render_dl "$dir" "macOS Intel — compactado" 'alternativa menor ao DMG' \
+    "Agzos-Browser-mac-x64.app.zip" "ZIP"
 }
 
 {

@@ -245,7 +245,10 @@ function macBundleFiles({ id, name, appBundle, exec, args }) {
       "<key>CFBundleIconFile</key><string>icon</string>",
       "<key>CFBundlePackageType</key><string>APPL</string>",
       "<key>CFBundleVersion</key><string>1</string>",
-      "<key>LSUIElement</key><true/>",
+      // Sem LSUIElement: ele marcava o .app do PWA como acessório, e aí o app não
+      // ganhava ícone nem presença própria no Dock — abria parecendo mais uma janela do
+      // navegador. App de verdade leva ícone, nome e task separados.
+      "<key>NSHighResolutionCapable</key><true/>",
       "</dict></plist>",
       "",
     ].join("\n"),

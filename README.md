@@ -156,9 +156,9 @@ Baixe a versão mais recente em **[agzosagency.com.br/browser](https://agzosagen
 
 | Sistema                       | Pacote                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| Windows 10/11 (x64)           | `Agnos-Browser-win32-x64.zip`: descompacte e abra `AgzosBrowser.exe`   |
+| Windows 10/11 (x64)           | `Agzos-Browser-win32-x64.zip`: descompacte e abra `AgzosBrowser.exe`   |
 | macOS (Apple Silicon / Intel) | `.dmg` ou `.app.zip` (`mac-arm64` / `mac-x64`)                         |
-| Linux (x64)                   | `Agnos-Browser-linux-x64.tar.gz`: descompacte e rode `./agzos-browser` |
+| Linux (x64)                   | `Agzos-Browser-linux-x64.tar.gz`: descompacte e rode `./agzos-browser` |
 
 O app procura atualizações sozinho (`latest.json` com SHA-256 de cada pacote). Depois de
 atualizar, ele mostra o aviso **"Atualizado com sucesso"** com as novidades da versão.

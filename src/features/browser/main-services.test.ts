@@ -161,14 +161,14 @@ describe("atualização automática", () => {
 
   it("manifesto: HTTPS, pacote no mesmo servidor e SHA-256 válido", () => {
     const feed = "https://agzosagency.com.br/browser/latest.json";
-    const file = { url: "v1.4.0/Agnos-Browser-linux-x64.tar.gz", sha256: "a".repeat(64), size: 10 };
+    const file = { url: "v1.4.0/Agzos-Browser-linux-x64.tar.gz", sha256: "a".repeat(64), size: 10 };
     const manifest = parseManifest(
       { version: "1.4.0", files: { "linux-x64": file } },
       feed,
       "linux-x64",
     );
     expect(manifest.asset?.url).toBe(
-      "https://agzosagency.com.br/browser/v1.4.0/Agnos-Browser-linux-x64.tar.gz",
+      "https://agzosagency.com.br/browser/v1.4.0/Agzos-Browser-linux-x64.tar.gz",
     );
     expect(parseManifest({ version: "1.4.0", files: {} }, feed, "linux-x64").asset).toBeNull();
     const bad =
@@ -329,7 +329,7 @@ describe("atualização automática", () => {
         mode: 0o755,
       },
     );
-    const archive = path.join(root, "Agnos-Browser-linux-x64.tar.gz");
+    const archive = path.join(root, "Agzos-Browser-linux-x64.tar.gz");
     execFileSync("tar", ["-czf", archive, "-C", pkg, "."]);
     const bytes = fs.readFileSync(archive);
     let sha = crypto.createHash("sha256").update(bytes).digest("hex");

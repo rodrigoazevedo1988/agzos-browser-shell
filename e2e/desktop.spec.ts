@@ -1389,7 +1389,7 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
           notes: "teste",
           files: {
             "linux-x64": {
-              url: "v99.0.0/Agnos-Browser-linux-x64.tar.gz",
+              url: "v99.0.0/Agzos-Browser-linux-x64.tar.gz",
               sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
               size: bytes.length,
             },
@@ -1398,7 +1398,7 @@ test("1.6: atualização encontra a versão nova, confere, baixa e instala ao re
       );
       return;
     }
-    if (request.url === "/browser/v99.0.0/Agnos-Browser-linux-x64.tar.gz") {
+    if (request.url === "/browser/v99.0.0/Agzos-Browser-linux-x64.tar.gz") {
       response.end(bytes);
       return;
     }
@@ -3236,12 +3236,15 @@ test("4.1: terminal embaixo, à direita e flutuante sem perder as sessões; tema
     const pip = app.windows().find((page) => page.url().endsWith("/terminal.html"))!;
     await expect(window.getByRole("region", { name: "Terminal" })).toHaveCount(0);
     await expect.poll(() => terminalText(pip)).toContain("MARCA=25");
+    // 4.7.1: o terminal solto é uma janela normal, não flutuante. Antes ele nascia com
+    // alwaysOnTop e ficava grudado na frente de tudo; o pedido foi deixá-lo sob o
+    // navegador e sem ficar sempre sobreposto.
     const onTop = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().some(
         (win) => win.getTitle().startsWith("Terminal") && win.isAlwaysOnTop(),
       ),
     );
-    expect(onTop).toBe(true);
+    expect(onTop).toBe(false);
     await pip.locator(".xterm").click();
     await type(pip, "echo NA-JANELA=$((2+2))");
     await expect.poll(() => terminalText(pip)).toContain("NA-JANELA=4");
