@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="14" viewBox="0 0 1280 14" role="presentation">
+  <style>
+    .line { animation: slide 3.5s ease-in-out infinite; }
+    @keyframes slide { 0% { transform: translateX(-640px); } 100% { transform: translateX(1280px); } }
+    @media (prefers-reduced-motion: reduce) { .line { animation: none; } }
+  </style>
+  <defs>
+    <linearGradient id="dl" x1="0" x2="1">
+      <stop offset="0" stop-color="#d10a11" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#d10a11"/>
+      <stop offset="1" stop-color="#d10a11" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect y="6" width="1280" height="2" rx="1" fill="#d10a11" fill-opacity=".18"/>
+  <rect class="line" y="5" width="640" height="4" rx="2" fill="url(#dl)"/>
+</svg>

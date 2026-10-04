@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="150" viewBox="0 0 1280 150" role="img" aria-label="Plataformas e testes">
+  <style>
+    .card rect { fill: #121212; stroke: #2a2a2a; }
+    .card rect.bar { fill: #d10a11; stroke: none; }
+    .card { opacity: 0; animation: up .7s ease-out forwards; }
+    .k { font: 800 38px "Manrope", "Segoe UI", Arial, sans-serif; fill: #d10a11; }
+    .l { font: 500 16px "Manrope", "Segoe UI", Arial, sans-serif; fill: #e8e6e6; }
+    .a1 { animation-delay: .1s; } .a2 { animation-delay: .25s; } .a3 { animation-delay: .4s; } .a4 { animation-delay: .55s; }
+    .bar { animation: grow 2.4s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: left; }
+    @keyframes up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+    @keyframes grow { from { transform: scaleX(.25); } to { transform: scaleX(1); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; opacity: 1 !important; } }
+  </style>
+  <g class="card a1"><rect x="0" y="10" width="305" height="130" rx="16"/><text class="k" x="28" y="72">4</text><text class="l" x="28" y="104">pacotes: Windows, Linux e macOS</text><rect class="bar" x="28" y="118" width="250" height="4" rx="2" fill="#d10a11"/></g>
+  <g class="card a2"><rect x="325" y="10" width="305" height="130" rx="16"/><text class="k" x="353" y="72">400+</text><text class="l" x="353" y="104">testes unitários (Vitest)</text><rect class="bar" x="353" y="118" width="250" height="4" rx="2" fill="#d10a11"/></g>
+  <g class="card a3"><rect x="650" y="10" width="305" height="130" rx="16"/><text class="k" x="678" y="72">100+</text><text class="l" x="678" y="104">e2e no Electron e na web</text><rect class="bar" x="678" y="118" width="250" height="4" rx="2" fill="#d10a11"/></g>
+  <g class="card a4"><rect x="975" y="10" width="305" height="130" rx="16"/><text class="k" x="1003" y="72">Auto</text><text class="l" x="1003" y="104">atualização com SHA-256</text><rect class="bar" x="1003" y="118" width="250" height="4" rx="2" fill="#d10a11"/></g>
+</svg>

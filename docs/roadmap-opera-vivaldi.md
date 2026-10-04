@@ -100,7 +100,7 @@ src/features/browser/
 
 - `better-sqlite3` em `userData/agzos.db`, com migrations versionadas. Tabelas: `history`, `bookmarks`, `downloads`, `site_settings`, `sessions`, `workspaces`, `notes`.
 - A API é exposta pelo preload como `agzosDesktop.db.*`, com métodos específicos (`history.search(q)`) e **nunca SQL cru** vindo do renderer.
-- A versão web (Lovable) mantém um adapter em `localStorage`/IndexedDB com a mesma interface, o que preserva a regra do `AGENTS.md` para o MVP web:
+- A versão web mantém um adapter em `localStorage`/IndexedDB com a mesma interface, o que preserva a regra do `AGENTS.md` para o MVP web:
 
 ```ts
 interface BrowserStore {
@@ -209,5 +209,5 @@ export const store: BrowserStore = desktopBridge()?.db ?? localStore;
 - **Extensões + adblock** disputam o `webRequest`. Definir desde já um "request pipeline" central no main.
 - **Castlabs ECS** acompanha o Electron com atraso. Verificar a compatibilidade com o Electron 44 antes de adotar.
 - **Memória**: split view e painéis multiplicam os renderers. A hibernação (PWR-008) deve chegar antes ou junto do 2.0.
-- **Lovable**: o renderer precisa continuar funcionando na web (fallback iframe + stores em `localStorage`). Todo recurso só de desktop fica atrás de `desktopBridge()`.
+- **Versão web**: o renderer precisa continuar funcionando na web (fallback iframe + stores em `localStorage`). Todo recurso só de desktop fica atrás de `desktopBridge()`.
 - **Segurança do preload**: a API vai crescer muito. Manter métodos específicos e validados no main (nunca `eval`/SQL/`fs` genérico) e `sandbox: true` em tudo.

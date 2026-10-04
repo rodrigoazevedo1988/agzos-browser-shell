@@ -52,7 +52,6 @@ const SHARED_HOSTS = new Set([
   "azurewebsites.net",
   "cloudfront.net",
   "amazonaws.com",
-  "lovable.app",
   "onrender.com",
 ]);
 
