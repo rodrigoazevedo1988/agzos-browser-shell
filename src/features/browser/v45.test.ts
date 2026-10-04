@@ -3,10 +3,10 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import zlib from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 
 import { layerScale, regionOf } from "@/features/capture/compose";
+import { makeCrx, makeZip } from "@/features/extensions/crx-fixtures";
 import { filterPorts, killErrorText, tunnelErrorText } from "@/features/dev/ports";
 import { otherNotes } from "@/features/notes/model";
 import {
@@ -658,60 +658,17 @@ describe("4.5: API Scratchpad", () => {
   });
 });
 
-/** Zip mínimo (sem CRC, que o leitor não confere) para os testes do .crx. */
-function makeZip(files: { name: string; data: Buffer }[]) {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-  for (const file of files) {
-    const compressed = zlib.deflateRawSync(file.data);
-    const name = Buffer.from(file.name);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(8, 8);
-    local.writeUInt32LE(compressed.length, 18);
-    local.writeUInt32LE(file.data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(8, 10);
-    central.writeUInt32LE(compressed.length, 20);
-    central.writeUInt32LE(file.data.length, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(offset, 42);
-    locals.push(local, name, compressed);
-    centrals.push(central, name);
-    offset += 30 + name.length + compressed.length;
-  }
-  const directory = Buffer.concat(centrals);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(files.length, 8);
-  end.writeUInt16LE(files.length, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, directory, end]);
-}
-
-/** CRX3: "Cr24", versão 3, tamanho do cabeçalho protobuf (com a chave pública) e o zip. */
-function makeCrx(zip: Buffer, publicKey: Buffer) {
-  const keyField = Buffer.concat([Buffer.from([0x0a, publicKey.length]), publicKey]);
-  const proof = Buffer.concat([Buffer.from([0x12, keyField.length]), keyField]);
-  const head = Buffer.alloc(12);
-  head.write("Cr24", 0, "latin1");
-  head.writeUInt32LE(3, 4);
-  head.writeUInt32LE(proof.length, 8);
-  return Buffer.concat([head, proof, zip]);
-}
-
 const crx = load<{
   storeIdOf: (value: string) => string | null;
   crxDownloadUrl: (id: string, version: string) => string;
   parseCrx: (buffer: Buffer) => { zip: Buffer; publicKey: string | null };
   unzip: (buffer: Buffer) => { name: string; data: Buffer }[];
   safeEntryName: (name: string) => string | null;
+  extensionIdOfKey: (key: Buffer) => string;
 }>("crx.cjs");
-const STORE_ID = "cjpalhdlnbpafiamejdnhcphjbkeiagm";
+// 4.6.1: o id da loja sai da chave do autor (sha256 → a–p), como no Chrome.
+const STORE_KEY = Buffer.from("chave-do-autor");
+const STORE_ID = crx.extensionIdOfKey(STORE_KEY);
 
 describe("4.5: extensões (Chrome Web Store e descompactadas)", () => {
   it("id da loja a partir do link ou do próprio id; URL do .crx", () => {
@@ -744,7 +701,7 @@ describe("4.5: extensões (Chrome Web Store e descompactadas)", () => {
     expect(() => crx.parseCrx(Buffer.from("PK nada"))).toThrow();
   });
 
-  it("carrega MV3 descompactada, recusa MV2, liga/desliga e remove; loja vira pasta própria", async () => {
+  it("carrega MV3 descompactada, recusa MV1, liga/desliga e remove; loja vira pasta própria", async () => {
     const { createExtensions, readManifest } = load<{
       createExtensions: (deps: object) => {
         loadAll: () => Promise<void>;
@@ -785,10 +742,10 @@ describe("4.5: extensões (Chrome Web Store e descompactadas)", () => {
     );
     fs.writeFileSync(
       path.join(mv2, "manifest.json"),
-      JSON.stringify({ manifest_version: 2, name: "Velha", version: "1" }),
+      JSON.stringify({ manifest_version: 1, name: "Velha", version: "1" }),
     );
     expect(readManifest(mv3, fs)).toMatchObject({ name: "Minha Extensão" });
-    expect(readManifest(mv2, fs)).toEqual({ error: "mv2" });
+    expect(readManifest(mv2, fs)).toEqual({ error: "manifest" });
 
     const loaded = new Map<string, string>();
     const ses = {
@@ -813,11 +770,11 @@ describe("4.5: extensões (Chrome Web Store e descompactadas)", () => {
       ses,
       fs,
       store: { get: () => saved, set: (list: unknown) => (saved = list) },
-      download: async () => makeCrx(zip, Buffer.from("k")),
+      download: async () => makeCrx(zip, Buffer.from("chave-do-google"), STORE_KEY),
       extensionsDir: path.join(root, "Extensions"),
       chromeVersion: "140.0.0.0",
     });
-    await expect(extensions.addUnpacked(mv2)).resolves.toEqual({ ok: false, error: "mv2" });
+    await expect(extensions.addUnpacked(mv2)).resolves.toEqual({ ok: false, error: "manifest" });
     await expect(extensions.addUnpacked(mv3)).resolves.toMatchObject({ ok: true });
     expect(extensions.list()[0]).toMatchObject({
       name: "Minha Extensão",
@@ -835,7 +792,7 @@ describe("4.5: extensões (Chrome Web Store e descompactadas)", () => {
     ).resolves.toMatchObject({ ok: true });
     const storeDir = path.join(root, "Extensions", STORE_ID);
     expect(JSON.parse(fs.readFileSync(path.join(storeDir, "manifest.json"), "utf8")).key).toBe(
-      Buffer.from("k").toString("base64"),
+      STORE_KEY.toString("base64"),
     );
     expect((saved as unknown[]).length).toBe(2);
     extensions.remove(storeDir);

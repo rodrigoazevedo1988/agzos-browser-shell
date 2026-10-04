@@ -8,6 +8,8 @@ export type SidePanelApp = {
   url: string;
   /** Cor da marca (fundo do ícone na barra lateral). */
   color: string;
+  /** 4.6.1: ícone pronto (data URL), usado no painel de uma extensão. */
+  icon?: string;
 };
 
 export const SIDE_PANEL_APPS: SidePanelApp[] = [

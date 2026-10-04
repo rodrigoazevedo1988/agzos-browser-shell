@@ -8826,6 +8826,42 @@ button.download-name:hover {
   height: 18px;
   border-radius: 4px;
 }
+/* 4.6.1: versão nova de extensão (badge no quebra-cabeça, aviso no menu). */
+.has-badge {
+  position: relative;
+}
+.toolbar-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+.extension-menu-note {
+  margin: 2px 10px 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.extensions-update button,
+.extensions-update {
+  color: var(--primary);
+}
+.extensions-update button {
+  font-weight: 600;
+  text-decoration: underline;
+}
 .omnibox-action.reader-button.on {
   color: var(--primary);
 }

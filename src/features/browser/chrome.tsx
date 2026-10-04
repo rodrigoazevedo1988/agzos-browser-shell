@@ -62,7 +62,7 @@ import { useDesktopSync } from "./desktop-sync";
 import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
-import { SIDE_PANEL_APPS, panelWidthOf, sidePanelApp } from "./side-panels";
+import { SIDE_PANEL_APPS, type SidePanelApp, panelWidthOf, sidePanelApp } from "./side-panels";
 import {
   CONTROL_PANEL,
   PORTS_PANEL,
@@ -295,7 +295,11 @@ export function AgzosBrowser() {
   // 4.6: extensões (pop-up do quebra-cabeça, ícones fixados e menu de cada uma).
   const [extensionList, setExtensionList] = useState<ExtensionInfo[]>([]);
   const [extAnchor, setExtAnchor] = useState<Rect | null>(null);
-  const [extMenu, setExtMenu] = useState<{ dir: string; anchor: Rect } | null>(null);
+  const [extMenu, setExtMenu] = useState<{
+    dir: string;
+    anchor: Rect;
+    activeOnly?: boolean;
+  } | null>(null);
   const [toolsAnchor, setToolsAnchor] = useState({ left: 70, top: 160 });
   const refreshExtensions = useCallback(async () => {
     if (!desktop) return;
@@ -370,7 +374,11 @@ export function AgzosBrowser() {
     () => prefs.sidePanels.flatMap((id) => sidePanelApp(id) ?? []),
     [prefs.sidePanels],
   );
-  const openSideApp = sideApps.find((app) => app.id === sidePanel) ?? null;
+  // 4.6.1: side_panel de uma extensão (abre pelo ícone dela; não entra na barra lateral).
+  const [extSidePanel, setExtSidePanel] = useState<SidePanelApp | null>(null);
+  const openSideApp =
+    sideApps.find((app) => app.id === sidePanel) ??
+    (extSidePanel && extSidePanel.id === sidePanel ? extSidePanel : null);
   // 4.5: atalho expandido para a área principal. Só vale para o app aberto: trocar ou fechar
   // o painel volta ao tamanho menor, e nunca há duas superfícies do mesmo atalho.
   const [expandedPanel, setExpandedPanel] = useState<string | null>(null);
@@ -1258,21 +1266,66 @@ export function AgzosBrowser() {
   };
 
   // Menu de uma extensão (clique direito no ícone fixado ou "…" na lista).
-  const openExtensionMenu = (dir: string, anchor: Rect) => {
-    setExtMenu({ dir, anchor });
+  // 4.6.1: dicas da barra pelo app (o tooltip nativo cortava o atalho).
+  const darkRef = useRef(prefs.dark);
+  darkRef.current = prefs.dark;
+  const barTooltips = useMemo(
+    () =>
+      desktop
+        ? {
+            show: (text: string, anchor: Rect) =>
+              void desktop.tooltipShow(text, anchor, darkRef.current),
+            hide: () => void desktop.tooltipHide(),
+          }
+        : null,
+    [desktop],
+  );
+
+  const openExtensionMenu = (dir: string, anchor: Rect, activeOnly = false) => {
+    setExtMenu({ dir, anchor, activeOnly });
     panelRef.current = "extmenu";
     setPanel("extmenu");
   };
 
-  const openExtensionPopup = (dir: string, anchor: Rect | null) => {
+  const openExtensionSidePanel = (info: ExtensionInfo) => {
+    if (!info.sidePanel || !info.id) return;
+    if (!prefs.sidebar) setPrefs({ sidebar: true });
+    setExtSidePanel({
+      id: `ext-${info.id.slice(0, 26)}`,
+      name: info.name,
+      url: info.sidePanel,
+      color: "#5f6368",
+      ...(info.icon ? { icon: info.icon } : {}),
+    });
+    setSidePanel(`ext-${info.id.slice(0, 26)}`);
+  };
+
+  /**
+   * 4.6.1: o clique no ícone segue o manifest (como no Chrome): pop-up ancorado, painel
+   * lateral, opções numa guia ou, sem janela nenhuma, o menu dela avisando que está ativa.
+   * `popupAnchor`: onde o pop-up se alinha; `itemAnchor`: o item clicado (para o menu).
+   */
+  const openExtensionPopup = (dir: string, popupAnchor: Rect | null, itemAnchor?: Rect) => {
     setPanel(null);
     panelRef.current = null;
     const info = extensionList.find((item) => item.dir === dir);
-    if (!info?.popup) {
-      setNotice(info ? `${info.name} não tem pop-up. Veja as opções no menu dela.` : "");
-      return;
+    if (!info) return;
+    switch (info.kind) {
+      case "popup":
+        void desktop?.extensionsPopup(dir, popupAnchor ?? extAnchor);
+        return;
+      case "sidepanel":
+        openExtensionSidePanel(info);
+        return;
+      case "options":
+        if (info.options) openUrl(info.options, true);
+        return;
+      default: {
+        const anchor = itemAnchor ?? popupAnchor ?? extAnchor;
+        if (anchor) openExtensionMenu(dir, anchor, true);
+        else setNotice(`${info.name} está ativa: roda sozinha nas páginas.`);
+      }
     }
-    void desktop?.extensionsPopup(dir, anchor ?? extAnchor);
   };
 
   const runExtensionAction = (dir: string, action: ExtensionMenuAction) => {
@@ -1294,6 +1347,20 @@ export function AgzosBrowser() {
         return;
       case "options":
         if (info.options) openUrl(info.options, true);
+        return;
+      case "sidepanel":
+        openExtensionSidePanel(info);
+        return;
+      case "update":
+        void desktop
+          .extensionsUpdate(dir)
+          .then((result) =>
+            setNotice(
+              result.ok
+                ? `${info.name} atualizada.`
+                : `Não foi possível atualizar ${info.name} agora.`,
+            ),
+          );
         return;
       case "pin":
       case "unpin":
@@ -2146,12 +2213,13 @@ export function AgzosBrowser() {
                 summary: item.access.summary,
                 pinned: item.pinned,
                 enabled: item.enabled && item.loaded,
-                hasPopup: Boolean(item.popup),
+                kind: item.kind,
+                update: item.update,
               })),
               right: extAnchor
                 ? Math.max(8, Math.round(window.innerWidth - extAnchor.x - extAnchor.width))
                 : 12,
-              onOpen: (dir) => openExtensionPopup(dir, extAnchor),
+              onOpen: (dir, anchor) => openExtensionPopup(dir, extAnchor, anchor),
               onPin: (dir, pinned) => void desktop.extensionsPin(dir, pinned),
               onMore: (dir, anchor) => openExtensionMenu(dir, anchor),
               onManage: () => {
@@ -2186,6 +2254,9 @@ export function AgzosBrowser() {
                   pinned: extMenuInfo.pinned,
                   hasPopup: Boolean(extMenuInfo.popup),
                   hasOptions: Boolean(extMenuInfo.options),
+                  hasSidePanel: Boolean(extMenuInfo.sidePanel),
+                  update: extMenuInfo.update,
+                  activeOnly: extMenu.activeOnly === true,
                   host: activeHost,
                   blockedHere: activeHost !== null && extMenuInfo.blocked.includes(activeHost),
                   blocked: extMenuInfo.blocked,
@@ -2340,6 +2411,9 @@ export function AgzosBrowser() {
             .filter((item) => item.pinned && item.enabled && item.loaded)
             .map((item) => ({ dir: item.dir, name: item.name, icon: item.icon }))}
           onExtensionClick={(dir, anchor) => openExtensionPopup(dir, rectOfDom(anchor))}
+          extensionUpdates={extensionList.filter((item) => item.update).length}
+          tooltips={barTooltips}
+          mac={isMac}
           onExtensionContextMenu={(dir, anchor) => openExtensionMenu(dir, rectOfDom(anchor))}
           trailing={prefs.orientation === "vertical" ? settingsButton : null}
           omnibox={{

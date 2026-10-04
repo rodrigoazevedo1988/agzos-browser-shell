@@ -5,7 +5,16 @@
 // separado do storage dos sites. A lista fica no SQLite (meta "extensions").
 
 const path = require("node:path");
-const { crxDownloadUrl, parseCrx, storeIdOf, unzip } = require("./crx.cjs");
+const {
+  compareVersions,
+  crxDownloadUrl,
+  extensionIdOfKey,
+  parseCrx,
+  parseUpdateCheck,
+  storeIdOf,
+  unzip,
+  updateCheckUrl,
+} = require("./crx.cjs");
 
 const LIMIT = 60;
 const ID_RE = /^[a-p]{32}$/;
@@ -71,9 +80,28 @@ function accessSummary(manifest) {
   return { summary, everywhere, hosts: sites.slice(0, 50), permissions: permissions.slice(0, 50) };
 }
 
-/** Ícone do manifest mais perto de 32 px (action.default_icon ou icons). */
+/** Botão da barra: `action` (MV3) ou `browser_action`/`page_action` (MV2). */
+function actionOf(manifest) {
+  for (const key of ["action", "browser_action", "page_action"]) {
+    if (manifest[key] && typeof manifest[key] === "object") return manifest[key];
+  }
+  return {};
+}
+
+/**
+ * 4.6.1: o que o clique no ícone faz, lido do manifest (como no Chrome): o pop-up dela, o
+ * painel lateral, as opções ou nada (só fundo, content script ou atalho).
+ */
+function clickKind({ popup, sidePanel, options }) {
+  if (popup) return "popup";
+  if (sidePanel) return "sidepanel";
+  if (options) return "options";
+  return "background";
+}
+
+/** Ícone do manifest mais perto de 32 px (o do botão ou icons). */
 function iconPathOf(manifest) {
-  for (const set of [manifest.action?.default_icon, manifest.icons]) {
+  for (const set of [actionOf(manifest).default_icon, manifest.icons]) {
     if (typeof set === "string") return set;
     if (!set || typeof set !== "object") continue;
     const sizes = Object.keys(set)
@@ -125,6 +153,53 @@ function parseRecords(value) {
   return list;
 }
 
+// 4.6.1: limites do pop-up. O máximo é o do Chrome; o mínimo é usável (nunca uma faixa).
+const POPUP_LIMITS = { minWidth: 180, minHeight: 64, maxWidth: 800, maxHeight: 600 };
+
+/**
+ * Onde o pop-up fica: alinhado à direita do ícone e logo abaixo dele, dentro da área útil
+ * da tela. `anchor` é relativo ao conteúdo da janela (`content`, em coordenadas da tela).
+ */
+function popupPlacement({ anchor, content, workArea, width, height }) {
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const area = workArea ?? content;
+  const w = Math.round(
+    clamp(width, POPUP_LIMITS.minWidth, Math.min(POPUP_LIMITS.maxWidth, area.width)),
+  );
+  const y = Math.round(content.y + anchor.y + anchor.height + 4);
+  const room = Math.max(POPUP_LIMITS.minHeight, area.y + area.height - y - 8);
+  const h = Math.round(
+    clamp(height, POPUP_LIMITS.minHeight, Math.min(POPUP_LIMITS.maxHeight, room)),
+  );
+  const x = Math.round(
+    clamp(content.x + anchor.x + anchor.width - w, area.x, area.x + area.width - w),
+  );
+  return { x, y, width: w, height: h };
+}
+
+/**
+ * Medida da página do pop-up (roda nela): largura natural do conteúdo e altura nessa
+ * largura, sem contar a altura da própria janela (senão ele nunca encolhe).
+ */
+const POPUP_MEASURE = `(() => {
+  const root = document.documentElement, body = document.body;
+  if (!body) return null;
+  const saved = [root.style.width, root.style.height, root.style.minHeight];
+  root.style.width = "max-content";
+  const width = Math.ceil(root.getBoundingClientRect().width);
+  root.style.width = saved[0];
+  root.style.height = "auto";
+  root.style.minHeight = "0";
+  const style = getComputedStyle(body);
+  const height = Math.ceil(Math.max(
+    root.getBoundingClientRect().height,
+    body.getBoundingClientRect().height + parseFloat(style.marginTop) + parseFloat(style.marginBottom),
+  ));
+  root.style.height = saved[1];
+  root.style.minHeight = saved[2];
+  return { width, height, empty: !body.children.length && !body.textContent.trim() };
+})()`;
+
 /** Texto do manifest com __MSG_nome__ resolvido pela língua padrão da extensão. */
 function localized(value, messages) {
   if (typeof value !== "string") return "";
@@ -145,7 +220,10 @@ function readManifest(dir, fs) {
     return { error: "manifest" };
   }
   if (!manifest || typeof manifest !== "object") return { error: "manifest" };
-  if (manifest.manifest_version !== 3) return { error: "mv2" };
+  // MV2 ainda carrega no Electron (com aviso); MV1 e o resto não.
+  if (manifest.manifest_version !== 3 && manifest.manifest_version !== 2) {
+    return { error: "manifest" };
+  }
   let messages = {};
   if (
     typeof manifest.default_locale === "string" &&
@@ -178,12 +256,22 @@ function readManifest(dir, fs) {
     typeof value === "string" && /^[\w./-]{1,200}$/.test(value) && !value.includes("..")
       ? value
       : null;
+  const pages = {
+    popup: page(actionOf(manifest).default_popup?.replace(/^\//, "")),
+    sidePanel: page(manifest.side_panel?.default_path?.replace(/^\//, "")),
+    options: page((manifest.options_ui?.page ?? manifest.options_page)?.replace(/^\//, "")),
+  };
   return {
     name: localized(manifest.name, messages).slice(0, 120) || path.basename(dir),
     version: typeof manifest.version === "string" ? manifest.version.slice(0, 40) : "",
     description: localized(manifest.description, messages).slice(0, 300),
-    popup: page(manifest.action?.default_popup),
-    options: page(manifest.options_page ?? manifest.options_ui?.page),
+    manifestVersion: manifest.manifest_version,
+    ...pages,
+    kind: clickKind(pages),
+    updateUrl:
+      typeof manifest.update_url === "string" && /^https:\/\//.test(manifest.update_url)
+        ? manifest.update_url
+        : null,
     icon,
     access,
     manifest,
@@ -192,13 +280,15 @@ function readManifest(dir, fs) {
 
 /**
  * `ses`: sessão das guias; `store`: { get(), set(list) } (meta do SQLite);
- * `download(url)` → Buffer do .crx; `extensionsDir`: onde os da loja ficam.
+ * `download(url)` → Buffer do .crx (erro com `status` quando o servidor responde mal);
+ * `fetchText(url)` → texto (consulta de atualização); `extensionsDir`: onde os da loja ficam.
  */
 function createExtensions({
   ses,
   fs,
   store,
   download,
+  fetchText = null,
   extensionsDir,
   chromeVersion,
   runtimeDir = path.join(path.dirname(extensionsDir), "ExtensionsRuntime"),
@@ -206,6 +296,8 @@ function createExtensions({
 }) {
   let records = parseRecords(store.get());
   const errors = new Map();
+  // 4.6.1: versão nova encontrada (dir → versão). Só avisa; atualizar é com o usuário.
+  const updates = new Map();
   const save = () => store.set(records);
   const api = () => ses.extensions ?? ses;
 
@@ -246,6 +338,88 @@ function createExtensions({
     }
   }
 
+  /**
+   * Baixa o .crx da loja e descompacta em `dir`. Erros que o usuário vê: "notfound" (id
+   * que a loja não tem), "proof" (pacote sem a assinatura do autor), "download", "package".
+   */
+  async function fetchStore(storeId, dir) {
+    let data;
+    try {
+      data = await download(crxDownloadUrl(storeId, chromeVersion));
+    } catch (error) {
+      return { ok: false, error: [204, 404].includes(error?.status) ? "notfound" : "download" };
+    }
+    if (!data?.length) return { ok: false, error: "notfound" };
+    let crx;
+    try {
+      crx = parseCrx(data, storeId);
+    } catch (error) {
+      return { ok: false, error: error?.message === "proof" ? "proof" : "package" };
+    }
+    let files;
+    try {
+      files = unzip(crx.zip);
+    } catch {
+      return { ok: false, error: "package" };
+    }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      for (const file of files) {
+        const target = path.join(dir, file.name);
+        if (!target.startsWith(dir + path.sep)) {
+          fs.rmSync(dir, { recursive: true, force: true });
+          return { ok: false, error: "package" };
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file.data);
+      }
+      // Com a chave do autor, o id da extensão é o mesmo do Chrome (e um não pisa no outro).
+      const file = path.join(dir, "manifest.json");
+      const manifest = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
+      if (crx.publicKey) {
+        manifest.key = crx.publicKey;
+        fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+      }
+    } catch {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return { ok: false, error: "write" };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Até a 4.6.0 a chave gravada era a do Google (a mesma em toda extensão da loja): todas
+   * ficavam com o mesmo id e uma tomava o lugar da outra. Baixa de novo com a chave certa;
+   * sem rede, carrega sem a chave (id próprio pelo caminho) até a próxima abertura.
+   */
+  async function repairStoreKey(record) {
+    if (record.source !== "store" || !record.storeId) return;
+    const info = readManifest(record.dir, fs);
+    const key = info.manifest?.key;
+    if (
+      typeof key !== "string" ||
+      extensionIdOfKey(Buffer.from(key, "base64")) === record.storeId
+    ) {
+      return;
+    }
+    const staging = `${record.dir}.update`;
+    const fetched = await fetchStore(record.storeId, staging);
+    try {
+      if (fetched.ok) {
+        fs.rmSync(record.dir, { recursive: true, force: true });
+        fs.renameSync(staging, record.dir);
+      } else {
+        delete info.manifest.key;
+        fs.writeFileSync(
+          path.join(record.dir, "manifest.json"),
+          JSON.stringify(info.manifest, null, 2),
+        );
+      }
+    } catch {
+      // Fica como estava; a próxima abertura tenta de novo.
+    }
+  }
+
   function runtimeOf(record) {
     return path.join(runtimeDir, hash(record.dir).slice(0, 20));
   }
@@ -270,6 +444,11 @@ function createExtensions({
         error: errors.get(record.dir) ?? null,
         popup: loaded && info.popup ? `chrome-extension://${record.id}/${info.popup}` : null,
         options: loaded && info.options ? `chrome-extension://${record.id}/${info.options}` : null,
+        sidePanel:
+          loaded && info.sidePanel ? `chrome-extension://${record.id}/${info.sidePanel}` : null,
+        kind: info.kind ?? "background",
+        manifestVersion: info.manifestVersion ?? null,
+        update: updates.get(record.dir) ?? null,
         icon: info.icon ?? null,
         pinned: record.pinned,
         access: info.access ?? { summary: "", everywhere: false, hosts: [], permissions: [] },
@@ -307,7 +486,10 @@ function createExtensions({
     list,
     /** Na abertura do app: carrega as ligadas. */
     async loadAll() {
-      for (const record of records) if (record.enabled) await load(record);
+      for (const record of records) {
+        if (record.enabled) await repairStoreKey(record);
+        if (record.enabled) await load(record);
+      }
       save();
     },
     addUnpacked: (dir) => add(dir),
@@ -317,39 +499,9 @@ function createExtensions({
       if (!storeId) return { ok: false, error: "id" };
       const existing = records.find((record) => record.storeId === storeId);
       if (existing) return { ok: false, error: "exists" };
-      let crx;
-      try {
-        crx = parseCrx(await download(crxDownloadUrl(storeId, chromeVersion)));
-      } catch {
-        return { ok: false, error: "download" };
-      }
-      let files;
-      try {
-        files = unzip(crx.zip);
-      } catch {
-        return { ok: false, error: "package" };
-      }
       const dir = path.join(extensionsDir, storeId);
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-        for (const file of files) {
-          const target = path.join(dir, file.name);
-          if (!target.startsWith(dir + path.sep)) return { ok: false, error: "package" };
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, file.data);
-        }
-        // Com a chave da loja, o id da extensão é o mesmo do Chrome.
-        if (crx.publicKey) {
-          const file = path.join(dir, "manifest.json");
-          const manifest = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
-          if (!manifest.key) {
-            manifest.key = crx.publicKey;
-            fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
-          }
-        }
-      } catch {
-        return { ok: false, error: "write" };
-      }
+      const fetched = await fetchStore(storeId, dir);
+      if (!fetched.ok) return fetched;
       const result = await add(dir, { source: "store", storeId });
       if (!result.ok) {
         records = records.filter((record) => record.dir !== dir);
@@ -357,6 +509,54 @@ function createExtensions({
         fs.rmSync(dir, { recursive: true, force: true });
       }
       return result;
+    },
+    /**
+     * 4.6.1: consulta a update_url de cada extensão com id conhecido (loja ou "key" no
+     * manifest). Não instala nada: guarda a versão nova para a badge e o "Atualizar".
+     */
+    async checkUpdates() {
+      if (!fetchText) return 0;
+      for (const record of records) {
+        const info = readManifest(record.dir, fs);
+        const id = record.storeId ?? (info.manifest?.key ? record.id : null);
+        if (info.error || !info.updateUrl || !id) continue;
+        try {
+          const offered = parseUpdateCheck(
+            await fetchText(updateCheckUrl(info.updateUrl, id, info.version, chromeVersion)),
+            id,
+          );
+          if (offered && compareVersions(offered, info.version) > 0) {
+            updates.set(record.dir, offered);
+          } else updates.delete(record.dir);
+        } catch {
+          // Sem rede: tenta na próxima rodada.
+        }
+      }
+      return updates.size;
+    },
+    /** 4.6.1: baixa a versão nova da loja e recarrega (fixada e acessos continuam). */
+    async update(dir) {
+      const record = find(dir);
+      if (!record || record.source !== "store" || !record.storeId) {
+        return { ok: false, error: "id" };
+      }
+      const staging = `${record.dir}.update`;
+      const fetched = await fetchStore(record.storeId, staging);
+      if (!fetched.ok) return fetched;
+      unload(record);
+      try {
+        fs.rmSync(record.dir, { recursive: true, force: true });
+        fs.renameSync(staging, record.dir);
+      } catch {
+        fs.rmSync(staging, { recursive: true, force: true });
+        return { ok: false, error: "write" };
+      }
+      updates.delete(record.dir);
+      const loaded = record.enabled ? await load(record) : null;
+      save();
+      return record.enabled && !loaded
+        ? { ok: false, error: errors.get(dir) ?? "load" }
+        : { ok: true, id: record.id };
     },
     async setEnabled(dir, enabled) {
       const record = find(dir);
@@ -426,7 +626,12 @@ function createExtensions({
 }
 
 module.exports = {
+  POPUP_LIMITS,
+  POPUP_MEASURE,
+  popupPlacement,
   accessSummary,
+  actionOf,
+  clickKind,
   createExtensions,
   hostOfOrigin,
   parseRecords,

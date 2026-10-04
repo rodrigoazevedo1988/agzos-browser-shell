@@ -91,7 +91,8 @@ const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunn
 const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
 const { READER_WORLD, cleanArticle, readerProbeSource, readerSource } = require("./reader.cjs");
 const { createNetCapture, sendRequest } = require("./scratchpad.cjs");
-const { createExtensions } = require("./extensions.cjs");
+const { POPUP_MEASURE, createExtensions, popupPlacement } = require("./extensions.cjs");
+const { createTooltip } = require("./tooltip.cjs");
 const { captureFileName, imageFileName, isPngDataUrl } = require("./capture.cjs");
 const {
   CLI_TOOLS,
@@ -1957,6 +1958,8 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     switcherView: null,
     preview: null,
     overlay: null,
+    // 4.6.1: dica da barra (view própria; o tooltip nativo cortava no Windows).
+    tooltip: null,
   };
   const shellId = window.webContents.id;
   contexts.set(shellId, ctx);
@@ -2044,6 +2047,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     if (ctx.overlay && !ctx.overlay.view.webContents.isDestroyed()) {
       ctx.overlay.view.webContents.close();
     }
+    ctx.tooltip?.destroy();
     stopPanelDrag(ctx);
     for (const app of [...ctx.sidePanels.keys()]) unloadSidePanel(ctx, app);
     for (const [id, pending] of pendingOverlayCalls) {
@@ -2287,13 +2291,33 @@ function startExtensions() {
       },
       download: async (url) => {
         const response = await net.fetch(url, { redirect: "follow" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // 204/404: a loja não tem esse id (ou não serve para esta versão do Chromium).
+        if (!response.ok || response.status === 204) {
+          throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+        }
         return Buffer.from(await response.arrayBuffer());
+      },
+      fetchText: async (url) => {
+        const response = await net.fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return (await response.text()).slice(0, 256 * 1024);
       },
       extensionsDir: path.join(app.getPath("userData"), "Extensions"),
       chromeVersion: process.versions.chrome,
     });
-    void extensions.loadAll().catch(() => {});
+    void extensions
+      .loadAll()
+      .catch(() => {})
+      .then(() => {
+        // 4.6.1: procura versão nova depois da abertura e a cada 6 h; só avisa (badge).
+        const check = () =>
+          void extensions
+            ?.checkUpdates()
+            .then((count) => count && broadcast("agzos:extensions-changed", {}))
+            .catch(() => {});
+        setTimeout(check, 20_000).unref?.();
+        setInterval(check, 6 * 60 * 60 * 1000).unref?.();
+      });
   } catch (error) {
     extensions = null;
     console.error("Agzos: extensões indisponíveis.", error);
@@ -2354,13 +2378,16 @@ function validAnchor(anchor) {
 // 4.6: pop-up de extensão. Uma janela sem moldura na sessão das guias (as APIs chrome.*
 // da extensão funcionam), do tamanho que a página pede, alinhada à direita do ícone e
 // abaixo dele; fecha ao perder o foco (menos com o DevTools aberto).
+// 4.6.1: cada abertura é uma janela nova medida depois do load e remedida enquanto a
+// página monta (pop-ups que buscam dados crescem depois); fechar destrói a janela.
 let extensionPopup = null;
-const POPUP_LIMITS = { minWidth: 25, minHeight: 25, maxWidth: 800, maxHeight: 600 };
+// Clique no ícone da extensão aberta: o blur fecha antes do clique chegar; não reabre.
+let lastPopupClose = { dir: null, at: 0 };
 
 function closeExtensionPopup() {
   const popup = extensionPopup;
   extensionPopup = null;
-  if (popup && !popup.window.isDestroyed()) popup.window.close();
+  if (popup && !popup.window.isDestroyed()) popup.window.destroy();
 }
 
 function openExtensionPopup(ctx, info, anchor, { inspect = false } = {}) {
@@ -2377,74 +2404,74 @@ function openExtensionPopup(ctx, info, anchor, { inspect = false } = {}) {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    // Começa pequena (como no Chrome): o "preferred size" da página faz crescer até o conteúdo.
-    width: 64,
-    height: 64,
+    // Tamanho de partida razoável (se a medida atrasar, nada de faixa de 64 px).
+    width: 360,
+    height: 240,
     backgroundColor: "#ffffff",
     webPreferences: {
       session: session.defaultSession,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      enablePreferredSizeMode: true,
     },
   });
-  const popup = { window, dir: info.dir, anchor: area };
+  const popup = { window, dir: info.dir };
   extensionPopup = popup;
-  const place = (width, height) => {
+  let size = { width: 360, height: 240 };
+  const place = () => {
     if (window.isDestroyed() || ctx.window.isDestroyed()) return;
     const bounds = ctx.window.getContentBounds();
-    const w = Math.round(Math.min(POPUP_LIMITS.maxWidth, Math.max(POPUP_LIMITS.minWidth, width)));
-    const h = Math.round(
-      Math.min(POPUP_LIMITS.maxHeight, Math.max(POPUP_LIMITS.minHeight, height)),
-    );
-    const x = Math.round(bounds.x + area.x + area.width - w);
-    const y = Math.round(bounds.y + area.y + area.height + 4);
-    window.setBounds({ x: Math.max(bounds.x, x), y, width: w, height: h });
+    const workArea = screen.getDisplayMatching(bounds).workArea;
+    window.setBounds(popupPlacement({ anchor: area, content: bounds, workArea, ...size }));
   };
-  place(64, 64);
-  window.webContents.on("preferred-size-changed", (_event, size) => place(size.width, size.height));
-  // Mede a página (largura natural, depois a altura nessa largura): nem toda página de
-  // extensão dispara o "preferred size".
-  const fit = async () => {
+  place();
+  const reveal = () => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show();
+  };
+  const measure = async () => {
     if (window.isDestroyed()) return;
+    let result;
     try {
-      const width = await window.webContents.executeJavaScript(
-        `(() => { const root = document.documentElement; const old = root.style.width;
-          root.style.width = "max-content"; const w = Math.ceil(root.getBoundingClientRect().width);
-          root.style.width = old; return w; })()`,
-      );
-      const w = Math.min(
-        POPUP_LIMITS.maxWidth,
-        Math.max(POPUP_LIMITS.minWidth, Number(width) || 320),
-      );
-      place(w, window.getBounds().height);
-      const height = await window.webContents.executeJavaScript(
-        "Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))",
-      );
-      place(w, Number(height) || 240);
-      reveal();
+      result = await window.webContents.executeJavaScript(POPUP_MEASURE);
     } catch {
-      // Página fechou no meio.
+      return; // Página fechou ou navegou no meio.
     }
+    if (window.isDestroyed() || !result || result.empty) return;
+    const next = {
+      width: Number(result.width) || size.width,
+      height: Number(result.height) || size.height,
+    };
+    if (Math.abs(next.width - size.width) > 1 || Math.abs(next.height - size.height) > 1) {
+      size = next;
+      place();
+    }
+    reveal();
   };
-  window.webContents.on("did-finish-load", () => {
-    void fit();
-    setTimeout(() => void fit(), 350);
-  });
+  // Mede logo após o load e segue medindo: rápido nos primeiros segundos, depois devagar.
+  let timer = null;
+  const watch = (startedAt) => {
+    clearTimeout(timer);
+    if (window.isDestroyed()) return;
+    void measure().then(() => {
+      if (window.isDestroyed()) return;
+      timer = setTimeout(() => watch(startedAt), Date.now() - startedAt < 2500 ? 120 : 600);
+    });
+  };
+  window.webContents.on("did-finish-load", () => watch(Date.now()));
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isWebUrl(url)) send(ctx, "agzos:open-request", { url });
     return { action: "deny" };
   });
-  // Aparece já no tamanho medido (ou depois de 800 ms, se a medida não vier).
-  const reveal = () => {
-    if (!window.isDestroyed() && !window.isVisible()) window.show();
-  };
-  setTimeout(reveal, 800);
+  // Página que não termina o load: aparece no tamanho de partida.
+  setTimeout(reveal, 1500);
   window.on("blur", () => {
-    if (!window.isDestroyed() && !window.webContents.isDevToolsOpened()) window.close();
+    if (window.isDestroyed() || window.webContents.isDevToolsOpened()) return;
+    lastPopupClose = { dir: info.dir, at: Date.now() };
+    if (extensionPopup === popup) extensionPopup = null;
+    window.destroy();
   });
   window.on("closed", () => {
+    clearTimeout(timer);
     if (extensionPopup === popup) extensionPopup = null;
   });
   void window.loadURL(info.popup).catch(() => {});
@@ -2875,6 +2902,7 @@ async function openPanelLayer(ctx, model) {
   }
   const opening = !layer.model;
   layer.model = model;
+  ctx.tooltip?.hide();
   // O popup de autofill aparece sozinho ao abrir a página de login: não tira o foco dela
   // (o usuário pode estar digitando no site).
   const passive = model.kind === "autofill";
@@ -3557,9 +3585,11 @@ function registerIpc() {
   ipcMain.handle("sidepanel:show", (event, { app, url } = {}) => {
     const ctx = ctxOfEvent(event);
     if (!ctx || typeof app !== "string" || !/^[a-z0-9-]{1,30}$/.test(app)) return;
-    if (typeof url !== "string" || !/^https:\/\//.test(url)) return;
+    // 4.6.1: o side_panel de uma extensão carregada também abre aqui (id "ext-…").
+    const extensionPage = /^ext-[a-p]{26}$/.test(app) && extensions?.isExtensionUrl(url);
+    if (typeof url !== "string" || (!/^https:\/\//.test(url) && !extensionPage)) return;
     // Testes: uma página local no lugar do app (sem depender da internet).
-    sidePanelView(ctx, app, process.env.AGZOS_SIDE_PANEL_URL || url);
+    sidePanelView(ctx, app, extensionPage ? url : process.env.AGZOS_SIDE_PANEL_URL || url);
     ctx.sidePanel = app;
     layoutSidePanels(ctx);
   });
@@ -3822,6 +3852,34 @@ function registerIpc() {
     return result;
   });
 
+  // 4.6.1: dica dos botões da barra (texto curto da casca, área do botão na janela).
+  ipcMain.handle("tooltip:show", (event, { text, anchor, dark } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const area = validAnchor(anchor);
+    // Com um painel aberto a dica não aparece (nem fica por cima da camada).
+    if (!ctx || !area || ctx.overlay?.model) return;
+    ctx.tooltip ??= createTooltip({
+      window: ctx.window,
+      createView: () => createLayerView(WebContentsView),
+    });
+    return ctx.tooltip.show(text, area, Boolean(dark));
+  });
+
+  ipcMain.handle("tooltip:hide", (event) => {
+    ctxOfEvent(event)?.tooltip?.hide();
+  });
+
+  // 4.6.1: atualizar a extensão da loja quando o usuário pede (a badge só avisa).
+  ipcMain.handle("extensions:update", (_event, { dir } = {}) =>
+    extensions ? extensionsChanged(extensions.update(String(dir ?? ""))) : { ok: false },
+  );
+
+  ipcMain.handle("extensions:check-updates", async () => {
+    const count = (await extensions?.checkUpdates().catch(() => 0)) ?? 0;
+    broadcast("agzos:extensions-changed", {});
+    return { count };
+  });
+
   // 4.6: alfinete (ícone fixo na barra).
   ipcMain.handle("extensions:pin", (_event, { dir, pinned } = {}) => {
     const result = extensions?.setPinned(String(dir ?? ""), Boolean(pinned)) ?? { ok: false };
@@ -3834,6 +3892,11 @@ function registerIpc() {
     const ctx = ctxOfEvent(event);
     const info = extensions?.info(String(dir ?? ""));
     if (!ctx || !info?.popup) return { ok: false };
+    // O clique no ícone do pop-up aberto só fecha (como no Chrome).
+    if (lastPopupClose.dir === info.dir && Date.now() - lastPopupClose.at < 400) {
+      lastPopupClose = { dir: null, at: 0 };
+      return { ok: true, closed: true };
+    }
     openExtensionPopup(ctx, info, validAnchor(anchor));
     return { ok: true };
   });

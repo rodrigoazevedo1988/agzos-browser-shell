@@ -32,6 +32,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { type BarTooltips, useBarTooltips } from "./bar-tooltip";
 import { OmniboxField, type OmniboxFieldProps } from "./omnibox-field";
 
 export type ToolbarProps = {
@@ -78,6 +79,11 @@ export type ToolbarProps = {
   /** 4.6: extensões fixadas (alfinete): ícone na barra, clique abre o pop-up dela. */
   pinnedExtensions?: { dir: string; name: string; icon: string | null }[];
   onExtensionClick?: (dir: string, anchor: DOMRect) => void;
+  /** 4.6.1: dicas pelo app (desktop) e atalhos no jeito do sistema. */
+  tooltips?: BarTooltips | null;
+  mac?: boolean;
+  /** 4.6.1: extensões com versão nova na loja (badge no quebra-cabeça). */
+  extensionUpdates?: number;
   onExtensionContextMenu?: (dir: string, anchor: DOMRect) => void;
   extensionsOpen?: boolean;
   /** Botão extra no fim da barra (o "⋯" nas guias verticais). */
@@ -104,6 +110,15 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
       const timer = window.setTimeout(() => setCopied(false), 1400);
       return () => window.clearTimeout(timer);
     }, [copied]);
+    const tips = useBarTooltips(props.tooltips ?? null);
+    // Atalho no jeito do sistema: "Ctrl+J" (Windows/Linux) ou "⌘J" (Mac).
+    const keys = (combo: string) =>
+      props.mac
+        ? combo
+            .replace(/Ctrl\+/g, "⌘")
+            .replace(/Alt\+/g, "⌥")
+            .replace(/Shift\+/g, "⇧")
+        : combo;
     const copyLink = () => {
       if (!props.shareUrl) return;
       void Promise.resolve(props.onCopyLink(props.shareUrl)).then(() => setCopied(true));
@@ -111,6 +126,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
     return (
       <div
         className="toolbar"
+        {...tips}
         onContextMenu={(event) => {
           // No campo de endereço vale o menu de texto (copiar/colar).
           if ((event.target as HTMLElement).closest("input")) return;
@@ -141,7 +157,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
           <Button
             variant="ghost"
             size="icon"
-            title="Recarregar (Ctrl/⌘ R)"
+            title={`Recarregar (${keys("Ctrl+R")})`}
             aria-label="Recarregar"
             onClick={props.onReload}
           >
@@ -184,7 +200,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               type="button"
               className="zoom-pill"
               onClick={props.onResetZoom}
-              title="Voltar ao tamanho padrão (Ctrl/⌘ 0)"
+              title={`Voltar ao tamanho padrão (${keys("Ctrl+0")})`}
               aria-label={`Zoom ${Math.round(props.zoom * 100)} %, voltar para 100 %`}
             >
               {Math.round(props.zoom * 100)}%
@@ -223,8 +239,8 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 onClick={props.reader.onToggle}
                 title={
                   props.reader.active
-                    ? "Sair do modo leitura (Ctrl/⌘ Alt R)"
-                    : "Modo leitura (Ctrl/⌘ Alt R)"
+                    ? `Sair do modo leitura (${keys("Ctrl+Alt+R")})`
+                    : `Modo leitura (${keys("Ctrl+Alt+R")})`
                 }
                 aria-label="Modo leitura"
                 aria-pressed={props.reader.active}
@@ -273,7 +289,9 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               className={cn("omnibox-action", "fav-button", props.favorite && "on")}
               onClick={props.onToggleFavorite}
               title={
-                props.favorite ? "Editar favorito (Ctrl/⌘ D)" : "Adicionar aos favoritos (Ctrl/⌘ D)"
+                props.favorite
+                  ? `Editar favorito (${keys("Ctrl+D")})`
+                  : `Adicionar aos favoritos (${keys("Ctrl+D")})`
               }
               aria-label="Favoritar página"
               aria-pressed={props.favorite}
@@ -320,7 +338,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               variant={props.pip.active ? "default" : "ghost"}
               size="icon"
               onClick={props.pip.onToggle}
-              title="Picture-in-picture (Ctrl/⌘ Shift P)"
+              title={`Picture-in-picture (${keys("Ctrl+Shift+P")})`}
               aria-label={props.pip.active ? "Sair do picture-in-picture" : "Picture-in-picture"}
               aria-pressed={props.pip.active}
             >
@@ -333,7 +351,7 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               size="icon"
               className={cn("downloads-button", props.downloads.active > 0 && "active")}
               onClick={props.onToggleDownloads}
-              title="Downloads (Ctrl/⌘ J)"
+              title={`Downloads (${keys("Ctrl+J")})`}
               aria-label="Downloads"
               style={
                 props.downloads.fraction !== null
@@ -375,10 +393,20 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               onClick={(event) =>
                 props.onExtensionsMenu?.(event.currentTarget.getBoundingClientRect())
               }
-              title="Extensões"
+              title={
+                props.extensionUpdates
+                  ? `Extensões: ${props.extensionUpdates === 1 ? "1 atualização disponível" : `${props.extensionUpdates} atualizações disponíveis`}`
+                  : "Extensões"
+              }
               aria-label="Extensões"
+              className={props.extensionUpdates ? "has-badge" : undefined}
             >
               <Puzzle />
+              {props.extensionUpdates ? (
+                <span className="toolbar-badge" aria-hidden="true">
+                  {props.extensionUpdates}
+                </span>
+              ) : null}
             </Button>
           )}
           <Button

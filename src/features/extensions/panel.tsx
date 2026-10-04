@@ -11,7 +11,17 @@ export type ExtensionRow = {
   summary: string;
   pinned: boolean;
   enabled: boolean;
-  hasPopup: boolean;
+  /** 4.6.1: o que o clique faz, lido do manifest. */
+  kind: "popup" | "sidepanel" | "options" | "background";
+  /** 4.6.1: versão nova na loja. */
+  update: string | null;
+};
+
+const OPEN_TITLE: Record<ExtensionRow["kind"], (name: string) => string> = {
+  popup: (name) => `Abrir ${name}`,
+  sidepanel: (name) => `Abrir ${name} no painel lateral`,
+  options: (name) => `${name} não tem pop-up: abre as opções`,
+  background: (name) => `${name} roda sozinha nas páginas (sem janela)`,
 };
 
 type Rect = { x: number; y: number; width: number; height: number };
@@ -40,7 +50,7 @@ export function ExtensionsPanel({
   extensions: ExtensionRow[];
   /** Distância da borda direita da janela até o botão (o pop-up alinha com ele). */
   right: number;
-  onOpen: (dir: string) => void;
+  onOpen: (dir: string, anchor: Rect) => void;
   onPin: (dir: string, pinned: boolean) => void;
   onMore: (dir: string, anchor: Rect) => void;
   onManage: () => void;
@@ -88,13 +98,9 @@ export function ExtensionsPanel({
                 className="extensions-panel-open"
                 disabled={!item.enabled}
                 title={
-                  item.enabled
-                    ? item.hasPopup
-                      ? `Abrir ${item.name}`
-                      : `${item.name} não tem pop-up`
-                    : `${item.name} está desligada`
+                  item.enabled ? OPEN_TITLE[item.kind](item.name) : `${item.name} está desligada`
                 }
-                onClick={() => onOpen(item.dir)}
+                onClick={(event) => onOpen(item.dir, rectOf(event.currentTarget))}
               >
                 {item.icon ? (
                   <img src={item.icon} alt="" />
@@ -105,7 +111,13 @@ export function ExtensionsPanel({
                 )}
                 <span className="extensions-panel-text">
                   <strong>{item.name}</strong>
-                  <small>{item.enabled ? item.summary : "Desligada"}</small>
+                  <small>
+                    {!item.enabled
+                      ? "Desligada"
+                      : item.update
+                        ? `Atualização ${item.update} disponível`
+                        : item.summary}
+                  </small>
                 </span>
               </button>
               <button

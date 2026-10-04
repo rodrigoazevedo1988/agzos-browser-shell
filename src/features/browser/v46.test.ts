@@ -91,7 +91,7 @@ describe("4.6: extensões no estilo Chrome/Edge", () => {
 
   it("main: pop-up ancorado (janela sem moldura que fecha ao perder o foco) e DevTools", () => {
     const main = read("electron/main.cjs");
-    expect(main).toContain("enablePreferredSizeMode: true");
+    expect(main).toContain("POPUP_MEASURE");
     expect(main).toContain('window.on("blur"');
     expect(main).toContain('openDevTools({ mode: "detach" })');
     expect(main).toContain('ipcMain.handle("extensions:site-access"');

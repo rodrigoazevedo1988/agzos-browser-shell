@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-VERSION="4.6.0"
+VERSION="4.6.1"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs tooltip.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -179,4 +179,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.6.0: extensões em pop-up como no Chrome/Edge (fixar, pop-up ancorado, acesso por site), caderno do modo leitura na barra de URL, Ferramentas só na barra lateral com o visual do app e barra lateral redimensionável."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.6.1: extensões da Chrome Web Store instalam de verdade (id certo, erro real, aviso de atualização), pop-up que não encolhe ao trocar de extensão, clique pelo manifest (pop-up, painel lateral, opções ou ativa), Manifest V2 e dica da barra inteira."

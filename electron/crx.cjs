@@ -2,6 +2,7 @@
 // carrega extensão descompactada, então o app tira o cabeçalho e descompacta o zip numa
 // pasta própria. Sem módulo nativo: zlib do Node e leitura do diretório central do zip.
 
+const crypto = require("node:crypto");
 const zlib = require("node:zlib");
 
 const LIMITS = { entries: 5000, total: 256 * 1024 * 1024 };
@@ -11,6 +12,43 @@ function storeIdOf(value) {
   const text = String(value ?? "").trim();
   const match = /(?:^|\/)([a-p]{32})(?:[/?#]|$)/.exec(text);
   return match ? match[1] : null;
+}
+
+/**
+ * Consulta de atualização (protocolo gupdate do Chromium, o mesmo da update_url do
+ * manifest): responde XML com a versão nova ou "noupdate".
+ */
+function updateCheckUrl(base, id, version, chromeVersion) {
+  const url = new URL(base);
+  url.searchParams.set("response", "updatecheck");
+  url.searchParams.set("prodversion", chromeVersion);
+  url.searchParams.set("acceptformat", "crx2,crx3");
+  url.searchParams.set("x", `id=${id}&v=${version}&uc`);
+  return url.toString();
+}
+
+/** XML do gupdate → versão oferecida para `id`, ou null. */
+function parseUpdateCheck(xml, id) {
+  const text = String(xml ?? "");
+  for (const app of text.matchAll(/<app\b([^>]*)>([\s\S]*?)<\/app>/g)) {
+    if (!new RegExp(`appid="${id}"`).test(app[1])) continue;
+    const check = /<updatecheck\b([^>]*)\/?>/.exec(app[2]);
+    if (!check || !/\bstatus="ok"/.test(check[1])) return null;
+    const version = /\bversion="([\d.]{1,40})"/.exec(check[1]);
+    return version ? version[1] : null;
+  }
+  return null;
+}
+
+/** Compara versões "1.2.10" (positivo: a é maior). */
+function compareVersions(a, b) {
+  const left = String(a).split(".").map(Number);
+  const right = String(b).split(".").map(Number);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (left[index] || 0) - (right[index] || 0);
+    if (diff) return diff;
+  }
+  return 0;
 }
 
 /** URL de download do .crx para a versão do Chromium do app. */
@@ -65,11 +103,20 @@ function protoFields(buffer) {
   return fields;
 }
 
+/** Id de extensão de uma chave pública (DER): sha256, 16 bytes, cada nibble vira a–p. */
+function extensionIdOfKey(key) {
+  return [...crypto.createHash("sha256").update(key).digest().subarray(0, 16)]
+    .map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15)))
+    .join("");
+}
+
 /**
  * .crx → { zip, publicKey }. A chave pública (base64) vai para o "key" do manifest: o id da
- * extensão fica o mesmo da loja (algumas dependem dele).
+ * extensão fica o mesmo da loja (algumas dependem dele). O CRX3 da loja traz duas provas,
+ * a do autor e a do próprio Google (igual em todas): vale a chave cujo id é `expectedId`.
+ * Sem ela, erro "proof" (o CRX_REQUIRED_PROOF_MISSING do Chrome).
  */
-function parseCrx(buffer) {
+function parseCrx(buffer, expectedId = null) {
   if (buffer.length < 16 || buffer.toString("latin1", 0, 4) !== "Cr24") throw new Error("crx");
   const version = buffer.readUInt32LE(4);
   if (version === 2) {
@@ -77,30 +124,29 @@ function parseCrx(buffer) {
     const signatureLength = buffer.readUInt32LE(12);
     const start = 16 + keyLength + signatureLength;
     if (start > buffer.length) throw new Error("crx");
-    return {
-      zip: buffer.subarray(start),
-      publicKey: buffer.subarray(16, 16 + keyLength).toString("base64"),
-    };
+    const key = buffer.subarray(16, 16 + keyLength);
+    if (expectedId && extensionIdOfKey(key) !== expectedId) throw new Error("proof");
+    return { zip: buffer.subarray(start), publicKey: key.toString("base64") };
   }
   if (version !== 3) throw new Error("crx");
   const headerLength = buffer.readUInt32LE(8);
   const start = 12 + headerLength;
   if (start > buffer.length) throw new Error("crx");
-  let publicKey = null;
+  const keys = [];
   try {
-    // CrxFileHeader: sha256_with_rsa = 2 (AsymmetricKeyProof: public_key = 1).
+    // CrxFileHeader: sha256_with_rsa = 2, sha256_with_ecdsa = 3 (AsymmetricKeyProof:
+    // public_key = 1).
     const header = protoFields(buffer.subarray(12, start));
-    for (const proof of header.filter((item) => item.field === 2 && item.wire === 2)) {
+    for (const proof of header.filter((item) => [2, 3].includes(item.field) && item.wire === 2)) {
       const key = protoFields(proof.value).find((item) => item.field === 1 && item.wire === 2);
-      if (key) {
-        publicKey = key.value.toString("base64");
-        break;
-      }
+      if (key) keys.push(key.value);
     }
   } catch {
-    publicKey = null;
+    keys.length = 0;
   }
-  return { zip: buffer.subarray(start), publicKey };
+  const key = expectedId ? keys.find((item) => extensionIdOfKey(item) === expectedId) : keys[0];
+  if (expectedId && !key) throw new Error("proof");
+  return { zip: buffer.subarray(start), publicKey: key ? key.toString("base64") : null };
 }
 
 /** Nome de arquivo do zip seguro para gravar (sem "..", sem caminho absoluto). */
@@ -156,4 +202,14 @@ function unzip(buffer) {
   return files;
 }
 
-module.exports = { crxDownloadUrl, parseCrx, safeEntryName, storeIdOf, unzip };
+module.exports = {
+  compareVersions,
+  crxDownloadUrl,
+  extensionIdOfKey,
+  parseCrx,
+  parseUpdateCheck,
+  safeEntryName,
+  storeIdOf,
+  unzip,
+  updateCheckUrl,
+};

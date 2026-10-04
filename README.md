@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.6.0-D10A11?style=for-the-badge">
+  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.6.1-D10A11?style=for-the-badge">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-44-0E0E0E?style=for-the-badge&logo=electron&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/React-19-0E0E0E?style=for-the-badge&logo=react&logoColor=61DAFB">
   <img alt="Plataformas" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0E0E0E?style=for-the-badge">
@@ -84,7 +84,7 @@ casca única, com tema escuro ou claro e efeito de vidro.
     <td width="50%" valign="top">
       <h3>🧩 Extensões</h3>
       <ul>
-        <li>Manifest V3 descompactadas ou instaladas pelo link da Chrome Web Store</li>
+        <li>Manifest V3 e V2, descompactadas ou instaladas pelo link da Chrome Web Store, com aviso de atualização</li>
         <li>Pop-up no estilo Chrome/Edge: fixar na barra, pop-up da extensão ancorado no ícone e acesso por site</li>
         <li>Widevine (Electron da castLabs) para conteúdo protegido, só reprodução</li>
       </ul>
@@ -108,19 +108,19 @@ casca única, com tema escuro ou claro e efeito de vidro.
 
 ## ✦ Prints
 
-|                                     Ferramentas na barra lateral                                      |                                        Pop-up de extensões                                         |
-| :---------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------: |
-|   <img src="docs/prints/4.6.0/03-menu-ferramentas-escuro.png" alt="Menu Ferramentas" width="100%">    |    <img src="docs/prints/4.6.0/06-popup-extensoes.png" alt="Pop-up de extensões" width="100%">     |
-|                                    **Pop-up da extensão ancorado**                                    |                                        **Menu da extensão**                                        |
-| <img src="docs/prints/4.6.0/08-popup-da-extensao-ancorado.png" alt="Pop-up da extensão" width="100%"> | <img src="docs/prints/4.6.0/10-menu-permissoes-e-remover.png" alt="Menu da extensão" width="100%"> |
-|                                       **Portas e túnel HTTPS**                                        |                                        **Mira de elemento**                                        |
-|         <img src="docs/prints/4.5.1/06-portas-e-tunel.png" alt="Portas e túnel" width="100%">         |     <img src="docs/prints/4.5.1/05-mira-de-elemento.png" alt="Mira de elemento" width="100%">      |
-|                                          **API Scratchpad**                                           |                                          **Modo leitura**                                          |
-|         <img src="docs/prints/4.5.1/12-api-scratchpad.png" alt="API Scratchpad" width="100%">         |      <img src="docs/prints/4.6.0/05-modo-leitura-ligado.png" alt="Modo leitura" width="100%">      |
-|                                        **Barra lateral larga**                                        |                                           **Tema claro**                                           |
-|    <img src="docs/prints/4.6.0/11-barra-lateral-larga.png" alt="Barra lateral larga" width="100%">    |     <img src="docs/prints/4.6.0/13-menu-ferramentas-claro.png" alt="Tema claro" width="100%">      |
+|                                   Ferramentas na barra lateral                                   |                                        Pop-up de extensões                                         |
+| :----------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------: |
+| <img src="docs/prints/4.6.0/03-menu-ferramentas-escuro.png" alt="Menu Ferramentas" width="100%"> |    <img src="docs/prints/4.6.0/06-popup-extensoes.png" alt="Pop-up de extensões" width="100%">     |
+|                                 **Pop-up da extensão ancorado**                                  |                                        **Menu da extensão**                                        |
+| <img src="docs/prints/4.6.1/02-volume-master-pop-up.png" alt="Pop-up da extensão" width="100%">  | <img src="docs/prints/4.6.0/10-menu-permissoes-e-remover.png" alt="Menu da extensão" width="100%"> |
+|                                     **Portas e túnel HTTPS**                                     |                                        **Mira de elemento**                                        |
+|      <img src="docs/prints/4.5.1/06-portas-e-tunel.png" alt="Portas e túnel" width="100%">       |     <img src="docs/prints/4.5.1/05-mira-de-elemento.png" alt="Mira de elemento" width="100%">      |
+|                                        **API Scratchpad**                                        |                                          **Modo leitura**                                          |
+|      <img src="docs/prints/4.5.1/12-api-scratchpad.png" alt="API Scratchpad" width="100%">       |      <img src="docs/prints/4.6.0/05-modo-leitura-ligado.png" alt="Modo leitura" width="100%">      |
+|                                     **Barra lateral larga**                                      |                                           **Tema claro**                                           |
+| <img src="docs/prints/4.6.0/11-barra-lateral-larga.png" alt="Barra lateral larga" width="100%">  |     <img src="docs/prints/4.6.0/13-menu-ferramentas-claro.png" alt="Tema claro" width="100%">      |
 
-Galerias completas: [4.6.0](docs/prints/4.6.0/README.md) · [4.5.1](docs/prints/4.5.1/README.md)
+Galerias completas: [4.6.1](docs/prints/4.6.1/README.md) · [4.6.0](docs/prints/4.6.0/README.md) · [4.5.1](docs/prints/4.5.1/README.md)
 
 <p align="right"><a href="#topo">↑ topo</a></p>
 
@@ -258,6 +258,7 @@ publicação atualiza o `latest.json` que o app consulta. Cada versão ganha uma
 - [Roadmap Opera/Vivaldi](docs/roadmap-opera-vivaldi.md): diagnóstico e evolução por fases
 - PRDs por versão em [`docs/prd/`](docs/prd/), por exemplo:
   - [4.6: extensões em pop-up, leitura na barra de URL e ferramentas sem repetição](docs/prd/v4.6-extensoes-popup-leitura-barra.md)
+  - [4.6.1: Chrome Web Store, pop-up que não encolhe e clique pelo manifest](docs/prd/v4.6.1-web-store-popup-manifest.md)
   - [4.5: Session Tabs, portas e túnel, Scratchpad, extensões, Widevine e leitura](docs/prd/v4.5-dev-sessoes-extensoes-leitura.md)
   - [4.1.3: PWA instalável e Agzos AI no estilo do Claude](docs/prd/v4.1.3-pwa-e-agzos-ai-estilo-claude.md)
   - [4.0: IA, gestos, terminal e GPU](docs/prd/v4.0-ia-gestos-terminal-gpu.md)

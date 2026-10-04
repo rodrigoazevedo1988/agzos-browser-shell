@@ -7,6 +7,18 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.6.1",
+    date: "2026-10-04",
+    items: [
+      "Instalar da Chrome Web Store funciona: cole o link da loja (ou o id) em Configurações → Extensões. O app baixava o pacote mas gravava a chave do Google em vez da do autor, e toda extensão da loja ficava com o mesmo id (uma tomava o lugar da outra). As que já estavam instaladas são corrigidas sozinhas na próxima abertura.",
+      "Erros de verdade: id que a loja não tem, pacote sem a assinatura do autor (CRX_REQUIRED_PROOF_MISSING) ou sem conexão aparecem como erro; nada finge que instalou.",
+      "Atualizações: o app consulta a loja (update_url do manifest) e mostra uma badge no quebra-cabeça. Atualizar é com você, pelo menu da extensão ou em Configurações; nada muda sozinho no meio da sessão.",
+      "Pop-up que não encolhe: cada abertura cria uma janela nova, medida depois do load e de novo enquanto a página monta. Trocar de extensão fecha a anterior; nada de faixa pequena herdada, e o pop-up nunca passa da tela.",
+      "O clique segue o manifest: pop-up quando tem, side_panel no painel lateral do navegador, só opções abre as opções, e extensão só de fundo mostra que está ativa (no menu dela, sem janela vazia). O menu só traz o que a extensão tem. Manifest V2 também carrega.",
+      "Dicas da barra pelo app: “Downloads (Ctrl+J)” e as outras aparecem inteiras e dentro da janela, com o atalho no jeito do sistema (Ctrl+ no Windows e Linux, ⌘ no Mac).",
+    ],
+  },
+  {
     version: "4.6.0",
     date: "2026-10-04",
     items: [

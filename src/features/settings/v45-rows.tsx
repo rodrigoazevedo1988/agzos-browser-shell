@@ -15,7 +15,11 @@ function extensionErrorText(error: string | undefined) {
     case "manifest":
       return "A pasta não tem um manifest.json válido.";
     case "mv2":
-      return "Essa extensão é Manifest V2. O Agzos carrega só Manifest V3.";
+      return "Essa extensão usa um Manifest que o Chromium não carrega mais.";
+    case "notfound":
+      return "A Chrome Web Store não tem uma extensão com esse id (ou ela saiu da loja).";
+    case "proof":
+      return "O pacote veio sem a assinatura do autor (CRX_REQUIRED_PROOF_MISSING). Não instalado.";
     case "exists":
       return "Essa extensão já está na lista.";
     case "limit":
@@ -23,7 +27,7 @@ function extensionErrorText(error: string | undefined) {
     case "id":
       return "Cole o link da extensão na Chrome Web Store (ou o id de 32 letras).";
     case "download":
-      return "Não foi possível baixar da Chrome Web Store.";
+      return "Não foi possível baixar da Chrome Web Store (sem conexão ou loja fora do ar).";
     case "package":
       return "O pacote baixado não abriu.";
     case "write":
@@ -36,7 +40,7 @@ function extensionErrorText(error: string | undefined) {
 }
 
 /**
- * Extensões (4.5): Manifest V3 descompactadas e da Chrome Web Store (quando o Chromium do
+ * Extensões (4.5): Manifest V3 (e V2, 4.6.1) descompactadas e da Chrome Web Store (quando o Chromium do
  * Electron dá conta da extensão). Ligar, desligar, recarregar e remover. Elas rodam só nas
  * guias normais; o storage delas fica separado do dos sites.
  */
@@ -131,13 +135,36 @@ export function ExtensionsSetting({ onOpenUrl }: { onOpenUrl: (url: string) => v
                 <span title={item.dir}>
                   {item.source === "store" ? "Chrome Web Store" : item.dir}
                 </span>
+                {item.update && (
+                  <span className="extensions-update">
+                    Versão {item.update} disponível.{" "}
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        report(
+                          await desktop.extensionsUpdate(item.dir),
+                          `${item.name} atualizada para ${item.update}.`,
+                        );
+                        setBusy(false);
+                        void refresh();
+                      }}
+                    >
+                      Atualizar
+                    </button>
+                  </span>
+                )}
                 {item.error && (
                   <span className="extensions-error">{extensionErrorText(item.error)}</span>
                 )}
-                {(item.popup || item.options) && (
+                {(item.popup || item.options || item.sidePanel) && (
                   <span className="extensions-links">
-                    {item.popup && (
-                      <button type="button" onClick={() => onOpenUrl(item.popup!)}>
+                    {(item.popup ?? item.sidePanel) && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenUrl((item.popup ?? item.sidePanel)!)}
+                      >
                         Abrir
                       </button>
                     )}

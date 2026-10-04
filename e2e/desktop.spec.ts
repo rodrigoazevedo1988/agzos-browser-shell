@@ -4223,8 +4223,9 @@ test("4.6: extensões em pop-up: abrir ancorado, fixar, acesso ao site e remover
     await pinned.click({ button: "right" });
     const menu = layer.getByRole("menu", { name: "Menu de Agzos Pop-up" });
     await expect(menu).toBeVisible();
+    // 4.6.1: só o que existe no manifest (esta não tem página de opções).
+    await expect(menu.getByRole("menuitem", { name: "Opções" })).toHaveCount(0);
     for (const item of [
-      "Opções",
       "Desafixar da barra",
       "Exibir permissões",
       "Gerenciar extensão",
@@ -4260,6 +4261,217 @@ test("4.6: extensões em pop-up: abrir ancorado, fixar, acesso ao site e remover
     await expect(pinned).toHaveCount(0);
     await window.getByRole("button", { name: "Extensões" }).click();
     await expect(panel).toContainText("Nenhuma extensão instalada");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.6.1: o manifest decide o clique; pop-ups trocados não encolhem; reinício mantém", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-ext461-"));
+  const make = (name: string, manifest: object, files: Record<string, string> = {}) => {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(
+      path.join(dir, "manifest.json"),
+      JSON.stringify({ manifest_version: 3, name, version: "1.0", ...manifest }),
+    );
+    for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), text);
+    return dir;
+  };
+  const dirs = [
+    // Pop-up que monta depois (busca dados): cresce depois do load.
+    make(
+      "Larga",
+      { action: { default_popup: "p.html" } },
+      {
+        "p.html":
+          '<!doctype html><body style="margin:0;width:420px"><h1>Larga</h1><script src="p.js"></script></body>',
+        "p.js":
+          'setTimeout(() => { const box = document.createElement("div"); box.style.height = "300px"; document.body.append(box); }, 700);',
+      },
+    ),
+    make(
+      "Pequena",
+      { action: { default_popup: "p.html" } },
+      {
+        "p.html": '<!doctype html><body style="margin:0;width:220px;height:90px">Pequena</body>',
+      },
+    ),
+    make("SoOpcoes", { options_page: "o.html" }, { "o.html": "<title>Opções SoOpcoes</title>" }),
+    make("SoFundo", { background: { service_worker: "sw.js" } }, { "sw.js": "" }),
+    make(
+      "Lateral",
+      { side_panel: { default_path: "s.html" } },
+      {
+        "s.html": "<title>Painel Lateral</title><p>painel</p>",
+      },
+    ),
+    // MV2 também entra (4.6.1).
+    make(
+      "Antiga",
+      {
+        manifest_version: 2,
+        browser_action: { default_popup: "p.html" },
+      },
+      { "p.html": '<body style="width:200px;height:60px">mv2</body>' },
+    ),
+  ];
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  type Bridge = {
+    extensionsAddUnpacked: () => Promise<{ ok: boolean; error?: string }>;
+    extensionsList: () => Promise<{ list: { dir: string; kind: string; loaded: boolean }[] }>;
+    extensionsPin: (dir: string, pinned: boolean) => Promise<unknown>;
+  };
+  const popup = async () =>
+    app.evaluate(({ BrowserWindow }) => {
+      const wins = BrowserWindow.getAllWindows().filter((item) =>
+        item.webContents.getURL().startsWith("chrome-extension://"),
+      );
+      const win = wins.find((item) => item.isVisible());
+      return { count: wins.length, url: win?.webContents.getURL() ?? "", bounds: win?.getBounds() };
+    });
+  try {
+    for (const dir of dirs) {
+      await app.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as never;
+      }, dir);
+      const result = await window.evaluate(() =>
+        (window as never as { agzosDesktop: Bridge }).agzosDesktop.extensionsAddUnpacked(),
+      );
+      expect(result).toMatchObject({ ok: true });
+    }
+    const kinds = await window.evaluate(async () => {
+      const desktop = (window as never as { agzosDesktop: Bridge }).agzosDesktop;
+      const { list } = await desktop.extensionsList();
+      for (const item of list) await desktop.extensionsPin(item.dir, true);
+      return list.map((item) => item.kind);
+    });
+    expect(kinds).toEqual(["popup", "popup", "options", "background", "sidepanel", "popup"]);
+    const icon = (name: string) => window.getByRole("button", { name, exact: true });
+
+    // Pop-up que cresce depois do load: acompanha o conteúdo.
+    await icon("Larga").click();
+    await expect.poll(async () => (await popup()).bounds?.width ?? 0).toBe(420);
+    await expect.poll(async () => (await popup()).bounds?.height ?? 0).toBeGreaterThan(300);
+    // Trocar de extensão: a anterior some (janela destruída) e a nova tem o tamanho dela.
+    await icon("Pequena").click();
+    await expect.poll(async () => (await popup()).url).toMatch(/\/p\.html$/);
+    await expect.poll(async () => (await popup()).bounds?.width ?? 0).toBe(220);
+    await expect.poll(async () => (await popup()).bounds?.height ?? 0).toBe(90);
+    expect((await popup()).count).toBe(1);
+    // Voltar para a larga: nada de faixa pequena herdada.
+    await icon("Larga").click();
+    await expect.poll(async () => (await popup()).bounds?.width ?? 0).toBe(420);
+    await expect.poll(async () => (await popup()).bounds?.height ?? 0).toBeGreaterThan(300);
+    expect((await popup()).count).toBe(1);
+    // MV2 com browser_action.default_popup.
+    await icon("Antiga").click();
+    await expect.poll(async () => (await popup()).bounds?.width ?? 0).toBe(216);
+    await app.evaluate(({ BrowserWindow }) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.webContents.getURL().startsWith("chrome-extension://")) win.destroy();
+      }
+    });
+
+    // Sem pop-up, com opções: o clique abre as opções numa guia.
+    await icon("SoOpcoes").click();
+    await expect(tabs(window)).toHaveCount(2);
+    await expect
+      .poll(() =>
+        app.evaluate(({ webContents }) =>
+          webContents.getAllWebContents().some((item) => /\/o\.html$/.test(item.getURL())),
+        ),
+      )
+      .toBe(true);
+    expect((await popup()).count).toBe(0);
+
+    // Só fundo: nenhuma janela vazia; o menu dela avisa que está ativa.
+    await icon("SoFundo").click();
+    const layer = await overlayPage(app);
+    const menu = layer.getByRole("menu", { name: "Menu de SoFundo" });
+    await expect(menu).toContainText("SoFundo está ativa.");
+    await expect(menu.getByRole("menuitem", { name: "Opções" })).toHaveCount(0);
+    await expect(menu.getByRole("menuitem", { name: "Inspecionar pop-up" })).toHaveCount(0);
+    expect((await popup()).count).toBe(0);
+    await layer.keyboard.press("Escape");
+
+    // side_panel: abre no painel lateral do navegador.
+    await icon("Lateral").click();
+    await expect
+      .poll(() =>
+        app.evaluate(({ webContents }) =>
+          webContents.getAllWebContents().some((item) => /\/s\.html$/.test(item.getURL())),
+        ),
+      )
+      .toBe(true);
+    await expect(window.getByRole("complementary", { name: "Painel Lateral" })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+
+  // Reiniciar mantém as extensões instaladas e carregadas.
+  ({ app, window } = await launch(profile));
+  try {
+    await expect
+      .poll(() =>
+        window.evaluate(async () => {
+          const { list } = await (
+            window as never as { agzosDesktop: Bridge }
+          ).agzosDesktop.extensionsList();
+          return list.filter((item) => item.loaded).length;
+        }),
+      )
+      .toBe(6);
+    await expect(window.getByRole("button", { name: "Larga", exact: true })).toBeVisible();
+  } finally {
+    await app.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("4.6.1: dica da barra inteira, dentro da janela (não o tooltip nativo)", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/baixar`);
+    await go(window, `${origin}/arquivo/relatorio.txt`);
+    const downloads = window.getByRole("button", { name: "Downloads", exact: true });
+    await expect(downloads).toBeVisible();
+    await window.keyboard.press("Escape");
+    const box = (await downloads.boundingBox())!;
+    await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const tip = () =>
+      app.evaluate(({ BrowserWindow, webContents }) => {
+        const win = BrowserWindow.getAllWindows()[0]!;
+        const view = win.contentView.children.find(
+          (child) =>
+            "webContents" in child &&
+            (child as { webContents: Electron.WebContents }).webContents
+              .getURL()
+              .startsWith("data:text/html") &&
+            child.getVisible(),
+        ) as { webContents: Electron.WebContents; getBounds: () => Electron.Rectangle } | undefined;
+        void webContents;
+        return view
+          ? view.webContents
+              .executeJavaScript('document.getElementById("t").textContent')
+              .then((text: string) => ({
+                text,
+                bounds: view.getBounds(),
+                width: win.getContentBounds().width,
+              }))
+          : null;
+      });
+    await expect
+      .poll(async () => (await tip())?.text ?? "")
+      .toBe(process.platform === "darwin" ? "Downloads (⌘J)" : "Downloads (Ctrl+J)");
+    const shown = (await tip())!;
+    expect(shown.bounds.x + shown.bounds.width).toBeLessThanOrEqual(shown.width);
+    expect(shown.bounds.y).toBeGreaterThanOrEqual(box.y + box.height);
+    // O título nativo sai (não aparece por cima, cortado).
+    await expect(downloads).not.toHaveAttribute("title");
+    await window.mouse.move(400, 300);
+    await expect.poll(async () => (await tip()) === null).toBe(true);
   } finally {
     await app.close();
   }

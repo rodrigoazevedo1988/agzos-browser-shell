@@ -1,7 +1,9 @@
 import {
+  ArrowUpCircle,
   Bug,
   Check,
   Eye,
+  PanelRight,
   Pin,
   PinOff,
   Settings,
@@ -25,6 +27,15 @@ export type ExtensionMenuData = {
   pinned: boolean;
   hasPopup: boolean;
   hasOptions: boolean;
+  /** 4.6.1: tem side_panel no manifest. */
+  hasSidePanel: boolean;
+  /** 4.6.1: versão nova na loja. */
+  update: string | null;
+  /**
+   * 4.6.1: o clique no ícone abriu este menu porque a extensão não tem janela (só roda
+   * em segundo plano): o menu avisa que ela está ativa.
+   */
+  activeOnly: boolean;
   /** Host da guia ativa (null: não é um site). */
   host: string | null;
   /** A extensão está sem acesso a esse host. */
@@ -33,7 +44,16 @@ export type ExtensionMenuData = {
 };
 
 export type ExtensionMenuAction =
-  "allow" | "block" | "options" | "pin" | "unpin" | "manage" | "inspect" | "remove";
+  | "allow"
+  | "block"
+  | "options"
+  | "sidepanel"
+  | "update"
+  | "pin"
+  | "unpin"
+  | "manage"
+  | "inspect"
+  | "remove";
 
 /**
  * Menu de uma extensão (4.6): clique direito no ícone fixado ou "…" na lista. Mesmo
@@ -75,6 +95,12 @@ export function ExtensionMenu({
           <small>{data.summary}</small>
         </span>
       </div>
+      {data.activeOnly && (
+        <p className="extension-menu-note" role="status">
+          <strong>{data.name} está ativa.</strong> Ela não tem janela própria: roda sozinha nas
+          páginas. Os ajustes dela ficam neste menu.
+        </p>
+      )}
       <div className="app-menu-group" role="group" aria-label="Acesso ao site">
         <p className="extension-menu-label">
           {data.host ? `Acesso a ${data.host}` : "Acesso ao site: abra um site"}
@@ -105,16 +131,39 @@ export function ExtensionMenu({
         </button>
       </div>
       <div className="app-menu-group">
-        <button
-          type="button"
-          role="menuitem"
-          className="app-menu-item"
-          disabled={!data.hasOptions}
-          onClick={() => run("options")}
-        >
-          <Settings aria-hidden="true" />
-          <span>Opções</span>
-        </button>
+        {data.update && (
+          <button
+            type="button"
+            role="menuitem"
+            className="app-menu-item"
+            onClick={() => run("update")}
+          >
+            <ArrowUpCircle aria-hidden="true" />
+            <span>Atualizar para {data.update}</span>
+          </button>
+        )}
+        {data.hasSidePanel && (
+          <button
+            type="button"
+            role="menuitem"
+            className="app-menu-item"
+            onClick={() => run("sidepanel")}
+          >
+            <PanelRight aria-hidden="true" />
+            <span>Abrir no painel lateral</span>
+          </button>
+        )}
+        {data.hasOptions && (
+          <button
+            type="button"
+            role="menuitem"
+            className="app-menu-item"
+            onClick={() => run("options")}
+          >
+            <Settings aria-hidden="true" />
+            <span>Opções</span>
+          </button>
+        )}
         <button
           type="button"
           role="menuitem"
@@ -163,16 +212,17 @@ export function ExtensionMenu({
           <Settings2 aria-hidden="true" />
           <span>Gerenciar extensão</span>
         </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="app-menu-item"
-          disabled={!data.hasPopup}
-          onClick={() => run("inspect")}
-        >
-          <Bug aria-hidden="true" />
-          <span>Inspecionar pop-up</span>
-        </button>
+        {data.hasPopup && (
+          <button
+            type="button"
+            role="menuitem"
+            className="app-menu-item"
+            onClick={() => run("inspect")}
+          >
+            <Bug aria-hidden="true" />
+            <span>Inspecionar pop-up</span>
+          </button>
+        )}
       </div>
       <div className="app-menu-group">
         {confirming ? (

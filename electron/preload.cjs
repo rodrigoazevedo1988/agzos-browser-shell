@@ -220,6 +220,10 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   widevineStatus: () => ipcRenderer.invoke("widevine:status"),
   // 4.6
   extensionsPin: (dir, pinned) => ipcRenderer.invoke("extensions:pin", { dir, pinned }),
+  tooltipShow: (text, anchor, dark) => ipcRenderer.invoke("tooltip:show", { text, anchor, dark }),
+  tooltipHide: () => ipcRenderer.invoke("tooltip:hide"),
+  extensionsUpdate: (dir) => ipcRenderer.invoke("extensions:update", { dir }),
+  extensionsCheckUpdates: () => ipcRenderer.invoke("extensions:check-updates"),
   extensionsPopup: (dir, anchor) => ipcRenderer.invoke("extensions:popup", { dir, anchor }),
   extensionsSiteAccess: (dir, tabId, allowed) =>
     ipcRenderer.invoke("extensions:site-access", { dir, tabId, allowed }),

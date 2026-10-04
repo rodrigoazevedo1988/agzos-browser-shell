@@ -847,8 +847,8 @@ export function SettingsPage(props: SettingsPageProps) {
         rows: [
           {
             id: "extensoes-lista",
-            label: "Extensões (Manifest V3)",
-            keywords: "extensão extensao chrome web store descompactada mv3 plugin addon",
+            label: "Extensões (Manifest V3 e V2)",
+            keywords: "extensão extensao chrome web store descompactada mv3 mv2 plugin addon",
             node: <ExtensionsSetting onOpenUrl={(url) => props.onOpenUrl?.(url)} />,
           },
           {

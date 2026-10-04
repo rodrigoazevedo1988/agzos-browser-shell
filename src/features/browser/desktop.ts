@@ -452,7 +452,13 @@ export type ExtensionInfo = {
   pinned: boolean;
   access: { summary: string; everywhere: boolean; hosts: string[]; permissions: string[] };
   blocked: string[];
+  /** 4.6.1: o que o clique faz (lido do manifest), painel lateral e versão nova. */
+  kind: ExtensionKind;
+  sidePanel: string | null;
+  manifestVersion: number | null;
+  update: string | null;
 };
+export type ExtensionKind = "popup" | "sidepanel" | "options" | "background";
 export type ExtensionResult = { ok: boolean; error?: string; canceled?: boolean; id?: string };
 export type WidevineStatus = {
   state: "unavailable" | "loading" | "ready" | "error";
@@ -749,8 +755,17 @@ export type DesktopBridge = {
   widevineStatus(): Promise<WidevineStatus>;
   // --- 4.6 ---
   extensionsPin(dir: string, pinned: boolean): Promise<{ ok: boolean }>;
+  /** 4.6.1: dica dos botões da barra (view do main; o tooltip nativo cortava). */
+  tooltipShow(text: string, anchor: DesktopRect, dark: boolean): Promise<void>;
+  tooltipHide(): Promise<void>;
+  /** 4.6.1: atualiza da loja (versão avisada pela badge) e procura versões novas. */
+  extensionsUpdate(dir: string): Promise<ExtensionResult>;
+  extensionsCheckUpdates(): Promise<{ count: number }>;
   /** Abre o pop-up da extensão ancorado na área do ícone (coordenadas da janela). */
-  extensionsPopup(dir: string, anchor: DesktopRect | null): Promise<{ ok: boolean }>;
+  extensionsPopup(
+    dir: string,
+    anchor: DesktopRect | null,
+  ): Promise<{ ok: boolean; closed?: boolean }>;
   /** Acesso da extensão ao site da guia: ler e alterar (true) ou nenhum (false). */
   extensionsSiteAccess(dir: string, tabId: number, allowed: boolean): Promise<{ ok: boolean }>;
   /** Abre o pop-up da extensão com o DevTools dele. */

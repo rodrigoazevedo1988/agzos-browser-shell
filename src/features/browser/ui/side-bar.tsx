@@ -75,7 +75,8 @@ const ICONS: Record<string, LucideIcon> = {
 export function SidePanelIcon({ app }: { app: SidePanelApp }) {
   const Icon = ICONS[app.id] ?? MessageCircle;
   // Google primeiro, /favicon.ico do site depois; os dois falhando, o ícone genérico.
-  const sources = faviconSources(app.url, 64);
+  // Extensão (4.6.1): o ícone dela, sem buscar nada fora.
+  const sources = app.icon ? [app.icon] : faviconSources(app.url, 64);
   const [attempt, setAttempt] = useState(0);
   const [ok, setOk] = useState(false);
   const source = sources[attempt];
