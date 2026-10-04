@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.6.1-D10A11?style=for-the-badge">
+  <img alt="Versão" src="https://img.shields.io/badge/vers%C3%A3o-4.6.2-D10A11?style=for-the-badge">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-44-0E0E0E?style=for-the-badge&logo=electron&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/React-19-0E0E0E?style=for-the-badge&logo=react&logoColor=61DAFB">
   <img alt="Plataformas" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0E0E0E?style=for-the-badge">

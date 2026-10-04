@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.6.2",
+    date: "2026-10-04",
+    items: [
+      "Conteúdo protegido no Windows e no macOS: o app agora sai com a assinatura VMP da castLabs, que a Netflix, o Disney+, o Prime Video e o Max exigem além do Widevine. No Linux esses serviços já tocavam.",
+    ],
+  },
+  {
     version: "4.6.1",
     date: "2026-10-04",
     items: [

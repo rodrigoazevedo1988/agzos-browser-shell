@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="4.6.1"
+VERSION="4.6.2"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
@@ -179,4 +179,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.6.1: extensões da Chrome Web Store instalam de verdade (id certo, erro real, aviso de atualização), pop-up que não encolhe ao trocar de extensão, clique pelo manifest (pop-up, painel lateral, opções ou ativa), Manifest V2 e dica da barra inteira."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.6.2: Windows e macOS saem com a assinatura VMP da castLabs: Netflix, Disney+, Prime Video e Max passam a tocar (Linux já tocava)."
