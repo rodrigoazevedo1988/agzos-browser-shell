@@ -45,6 +45,7 @@ export type CommandId =
   | "ports.open"
   | "scratchpad.open"
   | "scratchpad.capture"
+  | "extensions.open"
   | "tab.new-right"
   | "tab.reopen-closed"
   | "tab.duplicate"
@@ -146,6 +147,10 @@ export type CommandContext = {
     toggleNotes: () => void;
     /** 4.5: API Scratchpad; com `tabId`, já capturando as requisições daquela guia. */
     openScratchpad: (tabId: number | null) => void;
+    /** 4.5: liga/desliga a mira na guia (avisa quando a guia não é um site). */
+    inspect: (tabId: number) => void;
+    /** 4.5: Configurações → Extensões. */
+    openExtensions: () => void;
   };
 };
 
@@ -631,8 +636,17 @@ export const commands: Command[] = [
     id: "page.inspect",
     label: "Mira de elemento (cores, fonte e classes Tailwind)",
     shortcuts: [{ key: "c", shift: true }],
-    enabled: onDesktopPage,
-    run: ({ desktop }, tabId) => void desktop?.inspectorToggle(tabId),
+    // Sempre habilitado no app: fora de um site, a casca explica em vez de não fazer nada.
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.inspect(tabId),
+  },
+  {
+    id: "extensions.open",
+    label: "Extensões",
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.openExtensions(),
   },
   {
     id: "page.capture",
@@ -646,7 +660,8 @@ export const commands: Command[] = [
     id: "page.reader",
     label: "Modo leitura",
     shortcuts: [{ key: "r", alt: true }],
-    enabled: onDesktopPage,
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
     run: ({ ui }, tabId) => ui.toggleReader(tabId),
   },
   {

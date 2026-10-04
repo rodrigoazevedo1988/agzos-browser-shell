@@ -3307,7 +3307,9 @@ function registerIpc() {
     if (typeof options?.session === "string" && !options?.private) {
       sessionTabSessions.add(view.webContents.session);
     }
-    view.setBackgroundColor(options?.dark ? "#0E0E0E" : "#FFFDFD");
+    // Fundo base da página branco, como no Chrome: com o tema escuro (padrão desde a 4.5) um
+    // fundo escuro aqui deixava sites sem cor de fundo pretos, com texto preto.
+    view.setBackgroundColor("#FFFFFF");
     view.setBounds(HIDDEN_RECT);
     ctx.views.set(id, { view, hiddenSince: null });
     tabOfContents.set(view.webContents.id, { ctx, id });

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="4.5.0"
+VERSION="4.5.1"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
@@ -179,4 +179,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.5.0: Session Tabs, painel de portas com túnel HTTPS, API Scratchpad, mira de elemento (Ctrl+Shift+C), extensões, Widevine, captura de tela, modo leitura, notas, tema escuro padrão e atalho lateral que expande para a tela toda."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.5.1: ferramentas visíveis na página inicial, no Discador e na barra (Ferramentas e Extensões), botão de Session Tab, “Tela toda” no painel lateral, aviso da mira e sites sem fundo de volta ao branco."

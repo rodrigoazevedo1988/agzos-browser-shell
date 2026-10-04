@@ -3957,7 +3957,10 @@ test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
       dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as never;
     }, dir);
     await go(window, "agzos://configuracoes");
-    await window.getByRole("button", { name: "Extensões" }).first().click();
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Extensões" })
+      .click();
     await expect(window.getByText(/Este build não traz o Widevine/)).toBeVisible();
     await window.getByRole("button", { name: "Carregar descompactada…" }).click();
     await expect(
@@ -3976,7 +3979,10 @@ test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
 
     // Desligada: a página recarregada não recebe mais o script.
     await tabs(window).first().click();
-    await window.getByRole("button", { name: "Extensões" }).first().click();
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Extensões" })
+      .click();
     await list.getByRole("switch", { name: "Agzos E2E Ext ligada" }).click();
     await expect(list.getByRole("switch", { name: "Agzos E2E Ext ligada" })).toHaveAttribute(
       "aria-checked",
@@ -4077,6 +4083,55 @@ test("4.5: captura, modo leitura, nota e tema persistem", async () => {
     await expect(notesAgain.getByRole("region", { name: "Outras notas" })).toContainText(
       "Artigo de teste",
     );
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5.1: ferramentas visíveis na página inicial, no Discador e na barra", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    const grid = window.getByRole("region", { name: "Ferramentas" });
+    await expect(grid.getByRole("button", { name: /Nova Session Tab/ })).toBeVisible();
+    await expect(grid.getByRole("button", { name: /Portas em uso/ })).toBeVisible();
+    await expect(grid.getByRole("button", { name: /API Scratchpad/ })).toBeVisible();
+    // Mira pela grade sem site aberto: a casca explica.
+    await grid.getByRole("button", { name: /Mira de elemento/ }).click();
+    await expect(window.locator(".agzos-notice")).toContainText("Abra um site primeiro");
+    // Session Tab pelo botão ao lado da guia anônima.
+    await window.getByRole("button", { name: "Nova Session Tab" }).first().click();
+    await expect(window.locator(".browser-tab.session-tab")).toHaveCount(1);
+    // Site aberto: a mira da grade (na página inicial) liga nele.
+    const page = `${origin}/mira`;
+    await go(window, page);
+    await expect(tabs(window).last()).toContainText("Mira");
+    await window.keyboard.press(`${MOD}+t`);
+    await window
+      .getByRole("region", { name: "Ferramentas" })
+      .getByRole("button", { name: /Mira de elemento/ })
+      .click();
+    await expect(window.locator(".agzos-notice")).toContainText("Mira ligada");
+    await expect(tabs(window).nth(1)).toHaveClass(/active/);
+    expect(
+      await app.evaluate(({ webContents }, url) => {
+        const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+        return contents.executeJavaScriptInIsolatedWorld(4132, [
+          { code: "Boolean(window.__agzosInspector)" },
+        ]);
+      }, page),
+    ).toBe(true);
+    // Discador também tem a grade; Extensões abre as Configurações já na seção.
+    await window.keyboard.press(`${MOD}+t`);
+    await window
+      .getByRole("button", { name: /Discador/ })
+      .first()
+      .click();
+    const dialGrid = window.getByRole("region", { name: "Ferramentas" });
+    await dialGrid.getByRole("button", { name: /Extensões/ }).click();
+    await expect(window.getByRole("button", { name: "Carregar descompactada…" })).toBeVisible();
+    // Barra: botões Ferramentas e Extensões.
+    await expect(window.getByRole("button", { name: "Ferramentas" })).toBeVisible();
+    await expect(window.getByRole("button", { name: "Extensões" }).first()).toBeVisible();
   } finally {
     await app.close();
   }

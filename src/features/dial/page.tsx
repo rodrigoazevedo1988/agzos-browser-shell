@@ -7,6 +7,8 @@ import { HomeNav } from "@/features/browser/ui/home-nav";
 import { SiteIcon } from "@/features/browser/ui/site-icon";
 import { HOVER_SOUND, KEY_SOUND } from "@/features/sounds/sounds";
 import { cn } from "@/lib/utils";
+import { ToolsGrid } from "@/features/tools/tools-grid";
+import type { ToolId } from "@/features/tools/tools";
 
 import { categoriesOf, dialHref, filterDial, type DialScope } from "./dial";
 
@@ -25,6 +27,8 @@ export function DialPage({
   onRemove,
   onMove,
   onHome,
+  onTool,
+  mac = false,
 }: {
   links: QuickLink[];
   engineName: string;
@@ -36,6 +40,9 @@ export function DialPage({
   onRemove: (url: string) => void;
   onMove: (url: string, index: number) => void;
   onHome: () => void;
+  /** 4.5: ferramentas abaixo da grade; só no app. */
+  onTool?: ((id: ToolId) => void) | undefined;
+  mac?: boolean;
 }) {
   const [scope, setScope] = useState<DialScope>("general");
   const [query, setQuery] = useState("");
@@ -210,6 +217,7 @@ export function DialPage({
             : "Nenhum site nesta categoria."}
         </p>
       )}
+      {onTool && <ToolsGrid onTool={onTool} mac={mac} className="dial-tools" />}
     </div>
   );
 }

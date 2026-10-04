@@ -20,7 +20,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import symbolUrl from "@/assets/agzos-symbol-red.svg";
 import { Button } from "@/components/ui/button";
@@ -117,6 +117,8 @@ export type SettingsPageProps = {
   siteTabs?: { id: number; url: string; title: string }[];
   /** Abre um endereço numa guia nova (popup e opções de extensão, 4.5). */
   onOpenUrl?: (url: string) => void;
+  /** Seção pedida de fora (4.5: "Extensões" da barra e das Ferramentas). */
+  requestedSection?: { id: SettingsSectionId; at: number } | null;
 };
 
 type Row = { id: string; label: string; keywords?: string; node: ReactNode };
@@ -160,7 +162,14 @@ function shortcutRows(isMac: boolean): Row[] {
  */
 export function SettingsPage(props: SettingsPageProps) {
   const { prefs, setPrefs, desktop } = props;
-  const [section, setSection] = useState<SettingsSectionId>("aparencia");
+  const [section, setSection] = useState<SettingsSectionId>(
+    props.requestedSection?.id ?? "aparencia",
+  );
+  const requestedAt = props.requestedSection?.at;
+  useEffect(() => {
+    if (props.requestedSection) setSection(props.requestedSection.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAt]);
   const [query, setQuery] = useState("");
 
   const sections = useMemo<Section[]>(() => {

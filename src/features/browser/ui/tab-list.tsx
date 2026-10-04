@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, Plus, VenetianMask } from "lucide-react";
+import { Layers, PanelLeftClose, PanelLeftOpen, Plus, VenetianMask } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -27,6 +27,8 @@ type ListProps = {
   handlers: TabHandlers;
   onNewTab: () => void;
   onNewPrivateTab: () => void;
+  /** 4.5: Session Tab (login separado); só no app. */
+  onNewSessionTab?: (() => void) | undefined;
   onStripMenu: (event: MouseEvent) => void;
   /** Guia arrastada para `index` da ordem exibida (contada sem ela). */
   onMoveTab: (id: number, index: number) => void;
@@ -278,6 +280,18 @@ export function TabStrip(props: ListProps) {
       >
         <VenetianMask />
       </Button>
+      {props.onNewSessionTab && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={props.onNewSessionTab}
+          title="Nova Session Tab: login separado só nesta guia (Ctrl/⌘ Alt N)"
+          aria-label="Nova Session Tab"
+          className="new-tab session-new"
+        >
+          <Layers />
+        </Button>
+      )}
     </div>
   );
 }
@@ -346,6 +360,17 @@ export function TabRail({
               >
                 <VenetianMask />
               </Button>
+              {props.onNewSessionTab && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={props.onNewSessionTab}
+                  title="Nova Session Tab: login separado só nesta guia"
+                  aria-label="Nova Session Tab"
+                >
+                  <Layers />
+                </Button>
+              )}
             </div>
           </>
         )}

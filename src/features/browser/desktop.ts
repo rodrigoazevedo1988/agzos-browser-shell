@@ -359,6 +359,8 @@ export type PortInfo = {
   /** Só em 127.0.0.1/::1 (não aparece na rede). */
   local: boolean;
   project: { name: string; dir: string } | null;
+  /** Projeto de código (package.json, Cargo.toml…): vem primeiro na lista. */
+  dev: boolean;
   /** Processo do próprio Agzos (não dá para matar). */
   self: boolean;
 };

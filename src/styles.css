@@ -7670,6 +7670,10 @@ button.download-name:hover {
 /* 4.5: Session Tab. Faixa e ponto na cor da sessão (cookies e storage só dela). */
 .browser-tab.session-tab {
   box-shadow: inset 0 3px 0 var(--session-color);
+  background: color-mix(in oklab, var(--session-color) 14%, transparent);
+}
+.browser-tab.session-tab.active {
+  background: color-mix(in oklab, var(--session-color) 22%, var(--background));
 }
 .browser-tab.session-tab::before {
   content: "";
@@ -7870,7 +7874,7 @@ button.download-name:hover {
 }
 .ports-tunnel a {
   display: inline-flex;
-  flex: 1;
+  flex: 1 1 100%;
   align-items: center;
   gap: 5px;
   min-width: 0;
@@ -8572,4 +8576,99 @@ button.download-name:hover {
     flex-basis: 260px;
     width: 260px;
   }
+}
+
+/* 4.5.1: entradas visíveis das ferramentas (página inicial, Discador, painel lateral). */
+.side-panel-head .side-panel-expand {
+  height: 28px;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.side-panel-head .side-panel-expand svg {
+  width: 14px;
+  height: 14px;
+}
+.tools-grid {
+  width: min(880px, 100%);
+  margin: 28px auto 0;
+  text-align: left;
+}
+.tools-grid h2 {
+  margin: 0 0 10px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tools-grid ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tool-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--card) 88%, transparent);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+.tool-card:hover,
+.tool-card:focus-visible {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+.tool-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+.tool-icon svg {
+  width: 17px;
+  height: 17px;
+}
+.tool-card strong {
+  font-size: 13px;
+}
+.tool-card small {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.tool-card kbd {
+  margin-top: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted-foreground);
+  font:
+    10.5px/1.6 ui-monospace,
+    monospace;
+}
+.dial-tools {
+  margin-top: 32px;
+  padding: 0 24px 32px;
+}
+.new-tab.session-new svg {
+  color: #2563eb;
 }

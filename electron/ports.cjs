@@ -136,14 +136,14 @@ function projectOf(cwd, { readJson, exists, home = "" }) {
   for (let depth = 0; depth < 6 && dir !== root && dir !== home; depth += 1) {
     const json = readJson(path.join(dir, "package.json"));
     if (json && typeof json.name === "string" && json.name.trim()) {
-      return { name: json.name.trim().slice(0, 80), dir };
+      return { name: json.name.trim().slice(0, 80), dir, code: true };
     }
     for (const marker of ["Cargo.toml", "pyproject.toml", "go.mod", "composer.json", "Gemfile"]) {
-      if (exists(path.join(dir, marker))) return { name: path.basename(dir), dir };
+      if (exists(path.join(dir, marker))) return { name: path.basename(dir), dir, code: true };
     }
     dir = path.dirname(dir);
   }
-  return { name: path.basename(cwd), dir: cwd };
+  return { name: path.basename(cwd), dir: cwd, code: false };
 }
 
 /** Linha de comando → pasta provável do projeto (Windows, onde não há cwd de outro processo). */

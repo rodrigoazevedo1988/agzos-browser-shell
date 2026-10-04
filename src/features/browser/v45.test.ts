@@ -127,12 +127,18 @@ describe("4.5: painel de portas (leitura do sistema)", () => {
     expect(ports.projectOf("/home/ana/leadmobi/apps/web", helpers)).toEqual({
       name: "leadmobi",
       dir: "/home/ana/leadmobi",
+      code: true,
     });
     expect(ports.projectOf("/home/ana/api/cmd", helpers)).toEqual({
       name: "api",
       dir: "/home/ana/api",
+      code: true,
     });
-    expect(ports.projectOf("/srv/coisa", helpers)).toEqual({ name: "coisa", dir: "/srv/coisa" });
+    expect(ports.projectOf("/srv/coisa", helpers)).toEqual({
+      name: "coisa",
+      dir: "/srv/coisa",
+      code: false,
+    });
     expect(ports.projectOf("/home/ana", helpers)).toBeNull();
     expect(ports.projectOf("/", helpers)).toBeNull();
     expect(
@@ -1115,6 +1121,7 @@ describe("4.5: painel de portas (casca)", () => {
       addresses: ["::"],
       local: false,
       project: { name: "leadmobi", dir: "/x" },
+      dev: true,
       self: false,
     },
     {
@@ -1125,6 +1132,7 @@ describe("4.5: painel de portas (casca)", () => {
       addresses: ["127.0.0.1"],
       local: true,
       project: null,
+      dev: false,
       self: false,
     },
   ];

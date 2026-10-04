@@ -49,6 +49,7 @@ import {
 import {
   desktopBridge,
   type DesktopPermissionRequest,
+  type ExtensionInfo,
   type GestureEvent,
   type NativeMenuItem,
   type PwaTabState,
@@ -69,6 +70,8 @@ import { PortsPanel } from "@/features/dev/ports-panel";
 import { NotesPanel } from "@/features/notes/panel";
 import { READER_FONT, ReaderView } from "@/features/reader/view";
 import { ScratchpadPage } from "@/features/scratchpad/page";
+import type { SettingsSectionId } from "@/features/settings/page";
+import { TOOLS, shortcutText, type ToolId } from "@/features/tools/tools";
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -270,6 +273,11 @@ export function AgzosBrowser() {
   );
   const [scratchTarget, setScratchTarget] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 4.5: seção das Configurações pedida de fora ("Extensões" da barra e das Ferramentas).
+  const [settingsRequest, setSettingsRequest] = useState<{
+    id: SettingsSectionId;
+    at: number;
+  } | null>(null);
   const activeTab = activeTabOf(state);
   const current = entryOf(activeTab);
   const noteKey = current.kind === "home" ? null : noteKeyOf(current.url);
@@ -1129,6 +1137,97 @@ export function AgzosBrowser() {
     return desktop.onUpdate(setUpdate);
   }, [desktop]);
 
+  // 4.5: Configurações já na seção pedida (numa guia de configurações, aberta ou nova).
+  const openSettingsAt = (id: SettingsSectionId) => {
+    setSettingsRequest({ id, at: Date.now() });
+    const open = state.tabs.find((tab) => entryOf(tab).url === SETTINGS_URL);
+    if (open) dispatch({ type: "tab/activate", id: open.id });
+    else openInternal(SETTINGS_URL, "Configurações");
+  };
+
+  // 4.5: mira de elemento, com aviso na casca (ligou, desligou ou não dá nesta guia).
+  const inspect = async (tabId: number) => {
+    if (!desktop) return;
+    const tab = state.tabs.find((item) => item.id === tabId);
+    if (!tab || entryOf(tab).kind !== "page") {
+      setNotice(
+        "A mira funciona em sites: abra uma página e use Ctrl+Shift+C ou Ferramentas → Mira.",
+      );
+      return;
+    }
+    const result = await desktop.inspectorToggle(tabId);
+    if (!result.ok) setNotice("Não foi possível ligar a mira nesta página.");
+    else if (result.active) {
+      setNotice("Mira ligada: passe o mouse e clique num elemento da página. Esc sai.");
+    } else setNotice("Mira desligada.");
+  };
+
+  // 4.5: Ferramentas da página inicial, do Discador e da barra. Mira e modo leitura usam a
+  // guia de site aberta (ou a última de site, se a atual for a página inicial).
+  const runTool = (id: ToolId) => {
+    if (id === "page.inspect" || id === "page.reader") {
+      const target =
+        current.kind === "page"
+          ? activeTab.id
+          : state.tabs.find((tab) => tab.id === lastWebTab.current && entryOf(tab).kind === "page")
+              ?.id;
+      if (target === undefined) {
+        setNotice(
+          id === "page.inspect"
+            ? "Abra um site primeiro: a mira mostra as cores e as classes de um elemento da página."
+            : "Abra um artigo primeiro: o modo leitura mostra só o texto dele.",
+        );
+        return;
+      }
+      if (target !== activeTab.id) {
+        dispatch({ type: "tab/activate", id: target });
+        window.setTimeout(() => runCommandRef.current(id, target), 400);
+      } else runCommandRef.current(id, target);
+      return;
+    }
+    runCommandRef.current(id, activeTab.id);
+  };
+
+  // 4.5: botão "Ferramentas" da barra: menu com as ferramentas e os atalhos.
+  const openToolsMenu = async (anchor: DOMRect) => {
+    const choice = await showMenu(
+      anchor.left,
+      anchor.bottom + 4,
+      TOOLS.map((tool) => ({
+        id: tool.id,
+        label: tool.shortcut
+          ? `${tool.label}    ${shortcutText(tool.shortcut, isMac)}`
+          : tool.label,
+      })),
+    );
+    if (choice) runTool(choice as ToolId);
+  };
+
+  // 4.5: botão "Extensões" da barra (como o quebra-cabeça do Chrome).
+  const openExtensionsMenu = async (anchor: DOMRect) => {
+    if (!desktop) return;
+    const { list } = await desktop.extensionsList().catch(() => ({ list: [] as ExtensionInfo[] }));
+    const items: NativeMenuItem[] = [];
+    for (const item of list.filter((extension) => extension.enabled)) {
+      if (item.popup) items.push({ id: `popup:${item.popup}`, label: `Abrir ${item.name}` });
+      else items.push({ id: "none", label: item.name, enabled: false });
+      if (item.options)
+        items.push({ id: `popup:${item.options}`, label: `   Opções de ${item.name}` });
+    }
+    if (!items.length) items.push({ id: "none", label: "Nenhuma extensão ligada", enabled: false });
+    items.push({ separator: true });
+    items.push({ id: "add", label: "Carregar extensão descompactada…" });
+    items.push({ id: "manage", label: "Gerenciar extensões…" });
+    const choice = await showMenu(anchor.left, anchor.bottom + 4, items);
+    if (!choice || choice === "none") return;
+    if (choice.startsWith("popup:")) openUrl(choice.slice("popup:".length), true);
+    else if (choice === "add") {
+      const result = await desktop.extensionsAddUnpacked();
+      if (result.ok) setNotice("Extensão carregada.");
+      else if (!result.canceled) openSettingsAt("extensoes");
+    } else openSettingsAt("extensoes");
+  };
+
   // 4.5: captura. As fotos (guia e janela inteira) saem antes do diálogo aparecer.
   const takeCapture = async () => {
     if (!desktop || capture) return;
@@ -1156,6 +1255,10 @@ export function AgzosBrowser() {
     }
     const tab = state.tabs.find((item) => item.id === tabId);
     if (!tab) return;
+    if (entryOf(tab).kind !== "page") {
+      setNotice("O modo leitura abre em sites: abra um artigo e tente de novo.");
+      return;
+    }
     const result = await desktop.readerExtract(tabId);
     if (!result.ok) {
       setNotice(
@@ -1221,6 +1324,8 @@ export function AgzosBrowser() {
       capture: () => void takeCapture(),
       toggleReader: (tabId) => void toggleReader(tabId),
       toggleNotes: () => setPrefs({ notesOpen: !prefs.notesOpen }),
+      inspect: (tabId) => void inspect(tabId),
+      openExtensions: () => openSettingsAt("extensoes"),
       openScratchpad: (tabId) => {
         setScratchTarget(tabId);
         const open = state.tabs.find((tab) => entryOf(tab).url === SCRATCHPAD_URL);
@@ -1545,6 +1650,7 @@ export function AgzosBrowser() {
       dispatch({ type: "tab/new", private: true });
       setTimeout(focusOmnibox, 50);
     },
+    onNewSessionTab: desktop ? () => runCommandRef.current("tab.new-session", null) : undefined,
     onStripMenu: openStripMenu,
     onMoveTab: (id: number, index: number) => dispatch({ type: "tab/move", id, index }),
     groups: state.groups,
@@ -2067,6 +2173,8 @@ export function AgzosBrowser() {
           onToggleKey={() => togglePanel("key")}
           onToggleDark={() => setPrefs({ dark: !prefs.dark })}
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
+          onToolsMenu={desktop ? (anchor) => void openToolsMenu(anchor) : undefined}
+          onExtensionsMenu={desktop ? (anchor) => void openExtensionsMenu(anchor) : undefined}
           trailing={prefs.orientation === "vertical" ? settingsButton : null}
           omnibox={{
             currentUrl: current.url,
@@ -2262,6 +2370,8 @@ export function AgzosBrowser() {
                   onRequestAddLink={() => setLinkDialog("home")}
                   onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
                   onOpenDial={() => openInternal(DIAL_URL, "Discador")}
+                  onTool={desktop ? runTool : undefined}
+                  mac={isMac}
                   internal={(pageUrl) =>
                     pageUrl === HISTORY_URL ? (
                       <HistoryPage store={historyStore} onOpen={openUrl} />
@@ -2281,6 +2391,8 @@ export function AgzosBrowser() {
                         onRemove={(url) => dispatch({ type: "dial/remove", url })}
                         onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
                         onHome={() => dispatch({ type: "nav/home" })}
+                        onTool={desktop ? runTool : undefined}
+                        mac={isMac}
                       />
                     ) : pageUrl === SETTINGS_URL ? (
                       <SettingsPage
@@ -2312,6 +2424,7 @@ export function AgzosBrowser() {
                         onReset={() => dispatch({ type: "tabs/reset" })}
                         siteTabs={siteTabs}
                         onOpenUrl={(url) => openUrl(url, true)}
+                        requestedSection={settingsRequest}
                       />
                     ) : pageUrl === SCRATCHPAD_URL ? (
                       <ScratchpadPage

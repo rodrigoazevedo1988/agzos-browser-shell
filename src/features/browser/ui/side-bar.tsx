@@ -487,14 +487,16 @@ export function SidePanel({
           <RefreshCw />
         </Button>
         <Button
-          variant="ghost"
-          size="icon"
-          title={expanded ? "Recolher para o painel lateral" : "Expandir para a tela toda"}
+          variant={expanded ? "default" : "outline"}
+          size="sm"
+          className="side-panel-expand"
+          title={expanded ? "Voltar para o painel lateral" : "Abrir este painel na tela toda"}
           aria-label={expanded ? `Recolher ${app.name}` : `Expandir ${app.name}`}
           aria-pressed={expanded}
           onClick={() => onExpand(!expanded)}
         >
           {expanded ? <Minimize2 /> : <Maximize2 />}
+          {expanded ? "Recolher" : "Tela toda"}
         </Button>
         <Button
           variant="ghost"

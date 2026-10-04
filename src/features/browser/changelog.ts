@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.5.1",
+    date: "2026-10-03",
+    items: [
+      "As ferramentas da 4.5 agora estão à vista: uma grade “Ferramentas” na página inicial e no Discador (Nova Session Tab, Portas em uso, API Scratchpad, Mira de elemento, Capturar tela, Modo leitura, Notas e Extensões) e dois botões novos na barra: Ferramentas (chave inglesa) e Extensões (quebra-cabeça), que lista as extensões ligadas para abrir.",
+      "Botão de Session Tab ao lado do botão de guia anônima, e as Session Tabs ganharam fundo na cor da sessão.",
+      "Painel lateral: o botão “Tela toda” (e “Recolher”) agora tem nome e fica no cabeçalho do painel.",
+      "Mira de elemento: avisa quando liga, desliga ou quando a guia não é um site; pela grade, liga na guia do site aberto. Modo leitura também explica quando não dá.",
+      "Correção: sites sem cor de fundo voltam a aparecer brancos (como no Chrome) com o tema escuro. No painel de portas, os projetos de código vêm primeiro e a URL do túnel aparece inteira.",
+    ],
+  },
+  {
     version: "4.5.0",
     date: "2026-10-03",
     items: [

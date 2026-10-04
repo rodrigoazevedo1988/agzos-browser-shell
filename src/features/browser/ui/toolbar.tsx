@@ -16,7 +16,9 @@ import {
   AppWindow,
   MonitorDown,
   Sun,
+  Puzzle,
   VenetianMask,
+  Wrench,
 } from "lucide-react";
 import {
   forwardRef,
@@ -69,6 +71,10 @@ export type ToolbarProps = {
   onToggleKey: () => void;
   onToggleDark: () => void;
   onToggleAi: () => void;
+  /** 4.5: menu "Ferramentas" (Session Tab, portas, Scratchpad, mira, captura…). */
+  onToolsMenu?: ((anchor: DOMRect) => void) | undefined;
+  /** 4.5: menu das extensões (como o quebra-cabeça do Chrome). */
+  onExtensionsMenu?: ((anchor: DOMRect) => void) | undefined;
   /** Botão extra no fim da barra (o "⋯" nas guias verticais). */
   trailing?: ReactNode;
   /** Sugestões da omnibox (histórico, favoritos, abas, buscador). */
@@ -317,6 +323,30 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               }
             >
               <Download />
+            </Button>
+          )}
+          {props.onExtensionsMenu && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(event) =>
+                props.onExtensionsMenu?.(event.currentTarget.getBoundingClientRect())
+              }
+              title="Extensões"
+              aria-label="Extensões"
+            >
+              <Puzzle />
+            </Button>
+          )}
+          {props.onToolsMenu && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(event) => props.onToolsMenu?.(event.currentTarget.getBoundingClientRect())}
+              title="Ferramentas: Session Tab, portas, Scratchpad, mira, captura, leitura, notas"
+              aria-label="Ferramentas"
+            >
+              <Wrench />
             </Button>
           )}
           <Button

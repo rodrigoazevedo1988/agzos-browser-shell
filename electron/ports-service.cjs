@@ -130,15 +130,20 @@ function createPortsService({ execFile, fs, platform, home = "", protectedPids =
     const cwds = await cwdsOf(pids);
     const own = new Set(protectedPids());
     groups = new Map(ports.filter((item) => item.pid).map((item) => [item.pid, item.pids]));
-    return ports.map((item) => {
-      const cwd = item.pid ? cwds.get(item.pid) : undefined;
-      const project = cwd ? projectOf(cwd, { readJson, exists, home }) : null;
-      return {
-        ...item,
-        project: project ? { name: project.name, dir: project.dir } : null,
-        self: item.pids.some((pid) => own.has(pid)),
-      };
-    });
+    // Projetos de código (package.json, Cargo.toml…) primeiro: o servidor de dev aparece no
+    // topo, antes dos serviços do sistema.
+    return ports
+      .map((item) => {
+        const cwd = item.pid ? cwds.get(item.pid) : undefined;
+        const project = cwd ? projectOf(cwd, { readJson, exists, home }) : null;
+        return {
+          ...item,
+          project: project ? { name: project.name, dir: project.dir } : null,
+          dev: Boolean(project?.code),
+          self: item.pids.some((pid) => own.has(pid)),
+        };
+      })
+      .sort((a, b) => Number(b.dev) - Number(a.dev) || a.port - b.port);
   }
 
   /**

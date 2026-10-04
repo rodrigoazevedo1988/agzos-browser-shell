@@ -7,6 +7,8 @@ import { KEY_SOUND } from "@/features/sounds/sounds";
 import { engines } from "./engines";
 import type { QuickLink } from "./types";
 import type { Prefs } from "./store/state";
+import { ToolsGrid } from "@/features/tools/tools-grid";
+import type { ToolId } from "@/features/tools/tools";
 import { HomeNav } from "./ui/home-nav";
 import { SiteIcon } from "./ui/site-icon";
 
@@ -19,6 +21,8 @@ export function StartPage({
   onRequestAdd,
   onRemove,
   onOpenDial,
+  onTool,
+  mac = false,
 }: {
   links: QuickLink[];
   engine: (typeof engines)[number];
@@ -31,6 +35,9 @@ export function StartPage({
   onRemove: (url: string) => void;
   /** "Discador" no topo: a grade de sites na mesma guia (3.0). */
   onOpenDial: () => void;
+  /** 4.5: ferramentas (Session Tab, portas, Scratchpad, mira…); só no app. */
+  onTool?: ((id: ToolId) => void) | undefined;
+  mac?: boolean;
 }) {
   const [query, setQuery] = useState("");
 
@@ -116,6 +123,7 @@ export function StartPage({
             </button>
           </div>
         </div>
+        {onTool && <ToolsGrid onTool={onTool} mac={mac} />}
       </div>
       <div className="privacy-note">
         <ShieldCheck />
