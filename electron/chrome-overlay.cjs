@@ -25,6 +25,10 @@ const OVERLAY_KINDS = new Set([
   "workspaces",
   "group",
   "sideapps",
+  // 4.6: extensões, menu de cada extensão e Ferramentas.
+  "extensions",
+  "extmenu",
+  "tools",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;

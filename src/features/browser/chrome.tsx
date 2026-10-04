@@ -63,7 +63,14 @@ import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
 import { SIDE_PANEL_APPS, panelWidthOf, sidePanelApp } from "./side-panels";
-import { CONTROL_PANEL, PORTS_PANEL, SideBar, SidePanel, type SideMoreAnchor } from "./ui/side-bar";
+import {
+  CONTROL_PANEL,
+  PORTS_PANEL,
+  SideBar,
+  SideBarResize,
+  SidePanel,
+  type SideMoreAnchor,
+} from "./ui/side-bar";
 import { CaptureDialog, type CaptureSources } from "@/features/capture/dialog";
 import { composeLayers } from "@/features/capture/compose";
 import { PortsPanel } from "@/features/dev/ports-panel";
@@ -71,7 +78,16 @@ import { NotesPanel } from "@/features/notes/panel";
 import { READER_FONT, ReaderView } from "@/features/reader/view";
 import { ScratchpadPage } from "@/features/scratchpad/page";
 import type { SettingsSectionId } from "@/features/settings/page";
-import { TOOLS, shortcutText, type ToolId } from "@/features/tools/tools";
+import type { ToolId } from "@/features/tools/tools";
+import type { ExtensionMenuAction } from "@/features/extensions/menu";
+
+type Rect = { x: number; y: number; width: number; height: number };
+const rectOfDom = (box: DOMRect): Rect => ({
+  x: Math.round(box.left),
+  y: Math.round(box.top),
+  width: Math.round(box.width),
+  height: Math.round(box.height),
+});
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -136,7 +152,10 @@ type Panel =
   | "group"
   | "folder"
   | "login"
-  | "sideapps";
+  | "sideapps"
+  | "extensions"
+  | "extmenu"
+  | "tools";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -273,6 +292,21 @@ export function AgzosBrowser() {
   );
   const [scratchTarget, setScratchTarget] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 4.6: extensões (pop-up do quebra-cabeça, ícones fixados e menu de cada uma).
+  const [extensionList, setExtensionList] = useState<ExtensionInfo[]>([]);
+  const [extAnchor, setExtAnchor] = useState<Rect | null>(null);
+  const [extMenu, setExtMenu] = useState<{ dir: string; anchor: Rect } | null>(null);
+  const [toolsAnchor, setToolsAnchor] = useState({ left: 70, top: 160 });
+  const refreshExtensions = useCallback(async () => {
+    if (!desktop) return;
+    const result = await desktop.extensionsList().catch(() => ({ list: [] as ExtensionInfo[] }));
+    setExtensionList(result.list);
+  }, [desktop]);
+  useEffect(() => {
+    if (!desktop) return;
+    void refreshExtensions();
+    return desktop.onExtensionsChanged(() => void refreshExtensions());
+  }, [desktop, refreshExtensions]);
   // 4.5: seção das Configurações pedida de fora ("Extensões" da barra e das Ferramentas).
   const [settingsRequest, setSettingsRequest] = useState<{
     id: SettingsSectionId;
@@ -283,6 +317,28 @@ export function AgzosBrowser() {
   const noteKey = current.kind === "home" ? null : noteKeyOf(current.url);
   // Modo leitura da guia ativa (cobre só a área da página).
   const activeReader = readers[activeTab.id] ?? null;
+  // 4.6: guias cuja página (nesta URL) tem artigo legível: o caderno aparece na barra.
+  const [readableTabs, setReadableTabs] = useState<Record<number, string>>({});
+  useEffect(() => {
+    if (!desktop) return;
+    return desktop.onTabEvent((event) => {
+      if (event.type !== "readable") return;
+      setReadableTabs((current) => {
+        const known = current[event.id] === event.url;
+        if (event.readable === known) return current;
+        const next = { ...current };
+        if (event.readable) next[event.id] = event.url;
+        else delete next[event.id];
+        return next;
+      });
+    });
+  }, [desktop]);
+  const readerButton =
+    desktop &&
+    current.kind === "page" &&
+    (activeReader !== null || readableTabs[activeTab.id] === current.url)
+      ? { active: activeReader !== null, onToggle: () => void toggleReader(activeTab.id) }
+      : null;
   const nav = navState(state, desktop !== null);
   // A barra mostra só as guias do workspace ativo.
   const orderedTabs = useMemo(
@@ -1188,44 +1244,71 @@ export function AgzosBrowser() {
     runCommandRef.current(id, activeTab.id);
   };
 
-  // 4.5: botão "Ferramentas" da barra: menu com as ferramentas e os atalhos.
-  const openToolsMenu = async (anchor: DOMRect) => {
-    const choice = await showMenu(
-      anchor.left,
-      anchor.bottom + 4,
-      TOOLS.map((tool) => ({
-        id: tool.id,
-        label: tool.shortcut
-          ? `${tool.label}    ${shortcutText(tool.shortcut, isMac)}`
-          : tool.label,
-      })),
-    );
-    if (choice) runTool(choice as ToolId);
+  // 4.6: menu Ferramentas (barra lateral), no visual do app (não é menu nativo).
+  const openToolsMenu = (anchor: DOMRect) => {
+    setToolsAnchor({ left: Math.round(anchor.right + 8), top: Math.round(anchor.top) });
+    togglePanel("tools");
   };
 
-  // 4.5: botão "Extensões" da barra (como o quebra-cabeça do Chrome).
-  const openExtensionsMenu = async (anchor: DOMRect) => {
-    if (!desktop) return;
-    const { list } = await desktop.extensionsList().catch(() => ({ list: [] as ExtensionInfo[] }));
-    const items: NativeMenuItem[] = [];
-    for (const item of list.filter((extension) => extension.enabled)) {
-      if (item.popup) items.push({ id: `popup:${item.popup}`, label: `Abrir ${item.name}` });
-      else items.push({ id: "none", label: item.name, enabled: false });
-      if (item.options)
-        items.push({ id: `popup:${item.options}`, label: `   Opções de ${item.name}` });
+  // 4.6: quebra-cabeça da barra: pop-up com as extensões (não abre guia).
+  const openExtensionsMenu = (anchor: DOMRect) => {
+    setExtAnchor(rectOfDom(anchor));
+    void refreshExtensions();
+    togglePanel("extensions");
+  };
+
+  // Menu de uma extensão (clique direito no ícone fixado ou "…" na lista).
+  const openExtensionMenu = (dir: string, anchor: Rect) => {
+    setExtMenu({ dir, anchor });
+    panelRef.current = "extmenu";
+    setPanel("extmenu");
+  };
+
+  const openExtensionPopup = (dir: string, anchor: Rect | null) => {
+    setPanel(null);
+    panelRef.current = null;
+    const info = extensionList.find((item) => item.dir === dir);
+    if (!info?.popup) {
+      setNotice(info ? `${info.name} não tem pop-up. Veja as opções no menu dela.` : "");
+      return;
     }
-    if (!items.length) items.push({ id: "none", label: "Nenhuma extensão ligada", enabled: false });
-    items.push({ separator: true });
-    items.push({ id: "add", label: "Carregar extensão descompactada…" });
-    items.push({ id: "manage", label: "Gerenciar extensões…" });
-    const choice = await showMenu(anchor.left, anchor.bottom + 4, items);
-    if (!choice || choice === "none") return;
-    if (choice.startsWith("popup:")) openUrl(choice.slice("popup:".length), true);
-    else if (choice === "add") {
-      const result = await desktop.extensionsAddUnpacked();
-      if (result.ok) setNotice("Extensão carregada.");
-      else if (!result.canceled) openSettingsAt("extensoes");
-    } else openSettingsAt("extensoes");
+    void desktop?.extensionsPopup(dir, anchor ?? extAnchor);
+  };
+
+  const runExtensionAction = (dir: string, action: ExtensionMenuAction) => {
+    if (!desktop) return;
+    const info = extensionList.find((item) => item.dir === dir);
+    if (!info) return;
+    switch (action) {
+      case "allow":
+      case "block":
+        void desktop.extensionsSiteAccess(dir, activeTab.id, action === "allow").then((result) => {
+          if (result.ok) {
+            setNotice(
+              action === "allow"
+                ? `${info.name} pode ler e alterar este site.`
+                : `${info.name} não tem mais acesso a este site.`,
+            );
+          }
+        });
+        return;
+      case "options":
+        if (info.options) openUrl(info.options, true);
+        return;
+      case "pin":
+      case "unpin":
+        void desktop.extensionsPin(dir, action === "pin");
+        return;
+      case "manage":
+        openSettingsAt("extensoes");
+        return;
+      case "inspect":
+        void desktop.extensionsInspect(dir, extMenu?.anchor ?? extAnchor);
+        return;
+      case "remove":
+        void desktop.extensionsRemove(dir).then(() => setNotice(`${info.name} foi removida.`));
+        return;
+    }
   };
 
   // 4.5: captura. As fotos (guia e janela inteira) saem antes do diálogo aparecer.
@@ -1800,7 +1883,7 @@ export function AgzosBrowser() {
       : undefined;
   // Painel aberto: no app vai para a camada acima da página (a página segue viva); na web
   // (ou se a camada falhar) é desenhado aqui mesmo.
-  const panelSpec: PanelSpec | null =
+  const basePanelSpec: PanelSpec | null =
     panel === "privacy"
       ? {
           kind: "privacy",
@@ -2037,6 +2120,83 @@ export function AgzosBrowser() {
                                   props: { ...autofillProps, mode: "site", capture: loginCapture },
                                 }
                               : null;
+  // 4.6: Ferramentas, extensões e o menu de cada extensão (camada acima da página).
+  const extMenuInfo = extMenu ? extensionList.find((item) => item.dir === extMenu.dir) : null;
+  const activeHost = current.kind === "page" ? hostOf(current.url) : null;
+  const panelSpec: PanelSpec | null =
+    panel === "tools" && desktop
+      ? {
+          kind: "tools",
+          props: {
+            left: toolsAnchor.left,
+            top: toolsAnchor.top,
+            mac: isMac,
+            onRun: (id) => runTool(id),
+            onClose: closePanel,
+          },
+        }
+      : panel === "extensions" && desktop
+        ? {
+            kind: "extensions",
+            props: {
+              extensions: extensionList.map((item) => ({
+                dir: item.dir,
+                name: item.name,
+                icon: item.icon,
+                summary: item.access.summary,
+                pinned: item.pinned,
+                enabled: item.enabled && item.loaded,
+                hasPopup: Boolean(item.popup),
+              })),
+              right: extAnchor
+                ? Math.max(8, Math.round(window.innerWidth - extAnchor.x - extAnchor.width))
+                : 12,
+              onOpen: (dir) => openExtensionPopup(dir, extAnchor),
+              onPin: (dir, pinned) => void desktop.extensionsPin(dir, pinned),
+              onMore: (dir, anchor) => openExtensionMenu(dir, anchor),
+              onManage: () => {
+                closePanel();
+                openSettingsAt("extensoes");
+              },
+              onGetMore: () => {
+                closePanel();
+                openUrl("https://chromewebstore.google.com/category/extensions", true);
+              },
+              onAdd: () => {
+                closePanel();
+                void desktop.extensionsAddUnpacked().then((result) => {
+                  if (result.ok) setNotice("Extensão carregada.");
+                });
+              },
+              onClose: closePanel,
+            },
+          }
+        : panel === "extmenu" && desktop && extMenu && extMenuInfo
+          ? {
+              kind: "extmenu",
+              key: extMenu.dir,
+              props: {
+                data: {
+                  dir: extMenuInfo.dir,
+                  name: extMenuInfo.name,
+                  icon: extMenuInfo.icon,
+                  summary: extMenuInfo.access.summary,
+                  hosts: extMenuInfo.access.hosts,
+                  permissions: extMenuInfo.access.permissions,
+                  pinned: extMenuInfo.pinned,
+                  hasPopup: Boolean(extMenuInfo.popup),
+                  hasOptions: Boolean(extMenuInfo.options),
+                  host: activeHost,
+                  blockedHere: activeHost !== null && extMenuInfo.blocked.includes(activeHost),
+                  blocked: extMenuInfo.blocked,
+                },
+                left: Math.max(8, Math.round(Math.min(extMenu.anchor.x, window.innerWidth - 312))),
+                top: Math.round(extMenu.anchor.y + extMenu.anchor.height + 4),
+                onAction: (action) => runExtensionAction(extMenu.dir, action),
+                onClose: closePanel,
+              },
+            }
+          : basePanelSpec;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -2173,8 +2333,14 @@ export function AgzosBrowser() {
           onToggleKey={() => togglePanel("key")}
           onToggleDark={() => setPrefs({ dark: !prefs.dark })}
           onToggleAi={() => setPrefs({ aiOpen: !prefs.aiOpen })}
-          onToolsMenu={desktop ? (anchor) => void openToolsMenu(anchor) : undefined}
           onExtensionsMenu={desktop ? (anchor) => void openExtensionsMenu(anchor) : undefined}
+          reader={readerButton}
+          extensionsOpen={panel === "extensions" || panel === "extmenu"}
+          pinnedExtensions={extensionList
+            .filter((item) => item.pinned && item.enabled && item.loaded)
+            .map((item) => ({ dir: item.dir, name: item.name, icon: item.icon }))}
+          onExtensionClick={(dir, anchor) => openExtensionPopup(dir, rectOfDom(anchor))}
+          onExtensionContextMenu={(dir, anchor) => openExtensionMenu(dir, rectOfDom(anchor))}
           trailing={prefs.orientation === "vertical" ? settingsButton : null}
           omnibox={{
             currentUrl: current.url,
@@ -2286,10 +2452,19 @@ export function AgzosBrowser() {
               moreOpen={panel === "sideapps"}
               onToggle={(id) => setSidePanel((open) => (open === id ? null : id))}
               onManage={manageSidePanels}
+              onTools={desktop ? (anchor) => openToolsMenu(anchor) : undefined}
               onMore={(anchor, hidden) => {
                 setSideMore({ anchor, ids: hidden.map((app) => app.id) });
                 togglePanel("sideapps");
               }}
+              width={prefs.sideBarWidth}
+            />
+          )}
+          {prefs.sidebar && !state.fullscreen && (
+            <SideBarResize
+              width={prefs.sideBarWidth}
+              desktop={desktop}
+              onResize={(sideBarWidth) => setPrefs({ sideBarWidth })}
             />
           )}
           {openSideApp && prefs.sidebar && !state.fullscreen && (
@@ -2370,8 +2545,7 @@ export function AgzosBrowser() {
                   onRequestAddLink={() => setLinkDialog("home")}
                   onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
                   onOpenDial={() => openInternal(DIAL_URL, "Discador")}
-                  onTool={desktop ? runTool : undefined}
-                  mac={isMac}
+
                   internal={(pageUrl) =>
                     pageUrl === HISTORY_URL ? (
                       <HistoryPage store={historyStore} onOpen={openUrl} />
@@ -2391,8 +2565,6 @@ export function AgzosBrowser() {
                         onRemove={(url) => dispatch({ type: "dial/remove", url })}
                         onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
                         onHome={() => dispatch({ type: "nav/home" })}
-                        onTool={desktop ? runTool : undefined}
-                        mac={isMac}
                       />
                     ) : pageUrl === SETTINGS_URL ? (
                       <SettingsPage

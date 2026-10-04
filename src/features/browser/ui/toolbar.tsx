@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpenText,
   Download,
   KeyRound,
   Check,
@@ -18,7 +19,6 @@ import {
   Sun,
   Puzzle,
   VenetianMask,
-  Wrench,
 } from "lucide-react";
 import {
   forwardRef,
@@ -54,6 +54,8 @@ export type ToolbarProps = {
    * login salvo (`saved`) ou com formulário de login; abre o popup do site. null = some.
    */
   siteKey: { saved: boolean; open: boolean; onToggle: () => void } | null;
+  /** 4.6: modo leitura (caderno na barra de URL): só quando a página tem artigo legível. */
+  reader?: { active: boolean; onToggle: () => void } | null;
   /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
   pwa?: { name: string; installed: boolean; onClick: () => void } | null;
   dark: boolean;
@@ -71,10 +73,13 @@ export type ToolbarProps = {
   onToggleKey: () => void;
   onToggleDark: () => void;
   onToggleAi: () => void;
-  /** 4.5: menu "Ferramentas" (Session Tab, portas, Scratchpad, mira, captura…). */
-  onToolsMenu?: ((anchor: DOMRect) => void) | undefined;
   /** 4.5: menu das extensões (como o quebra-cabeça do Chrome). */
   onExtensionsMenu?: ((anchor: DOMRect) => void) | undefined;
+  /** 4.6: extensões fixadas (alfinete): ícone na barra, clique abre o pop-up dela. */
+  pinnedExtensions?: { dir: string; name: string; icon: string | null }[];
+  onExtensionClick?: (dir: string, anchor: DOMRect) => void;
+  onExtensionContextMenu?: (dir: string, anchor: DOMRect) => void;
+  extensionsOpen?: boolean;
   /** Botão extra no fim da barra (o "⋯" nas guias verticais). */
   trailing?: ReactNode;
   /** Sugestões da omnibox (histórico, favoritos, abas, buscador). */
@@ -211,6 +216,22 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 <ShieldCheck />
               </button>
             </div>
+            {props.reader && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "reader-button", props.reader.active && "on")}
+                onClick={props.reader.onToggle}
+                title={
+                  props.reader.active
+                    ? "Sair do modo leitura (Ctrl/⌘ Alt R)"
+                    : "Modo leitura (Ctrl/⌘ Alt R)"
+                }
+                aria-label="Modo leitura"
+                aria-pressed={props.reader.active}
+              >
+                <BookOpenText />
+              </button>
+            )}
             {props.pwa && (
               <button
                 type="button"
@@ -325,9 +346,31 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               <Download />
             </Button>
           )}
+          {props.pinnedExtensions?.map((item) => (
+            <Button
+              key={item.dir}
+              variant="ghost"
+              size="icon"
+              className="pinned-extension"
+              title={item.name}
+              aria-label={item.name}
+              onClick={(event) =>
+                props.onExtensionClick?.(item.dir, event.currentTarget.getBoundingClientRect())
+              }
+              onContextMenu={(event) => {
+                event.preventDefault();
+                props.onExtensionContextMenu?.(
+                  item.dir,
+                  event.currentTarget.getBoundingClientRect(),
+                );
+              }}
+            >
+              {item.icon ? <img src={item.icon} alt="" /> : <Puzzle />}
+            </Button>
+          ))}
           {props.onExtensionsMenu && (
             <Button
-              variant="ghost"
+              variant={props.extensionsOpen ? "default" : "ghost"}
               size="icon"
               onClick={(event) =>
                 props.onExtensionsMenu?.(event.currentTarget.getBoundingClientRect())
@@ -336,17 +379,6 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
               aria-label="Extensões"
             >
               <Puzzle />
-            </Button>
-          )}
-          {props.onToolsMenu && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(event) => props.onToolsMenu?.(event.currentTarget.getBoundingClientRect())}
-              title="Ferramentas: Session Tab, portas, Scratchpad, mira, captura, leitura, notas"
-              aria-label="Ferramentas"
-            >
-              <Wrench />
             </Button>
           )}
           <Button

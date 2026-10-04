@@ -48,6 +48,38 @@ export const SIDE_PANELS_BEFORE_3 = ["whatsapp", "telegram", "messenger", "insta
  */
 export const SIDE_PANEL_WIDTH = { min: 320, max: 4000, initial: 400 } as const;
 
+/**
+ * Largura da barra lateral (4.6): o usuário arrasta a borda. Os ícones e os nomes se
+ * adaptam: estreita só ícones, média ícone com o nome embaixo, larga ícone e nome lado a lado.
+ */
+export const SIDE_BAR_WIDTH = { min: 48, max: 160, initial: 60 } as const;
+
+export function clampSideBarWidth(width: unknown): number {
+  const value =
+    typeof width === "number" && Number.isFinite(width) ? width : SIDE_BAR_WIDTH.initial;
+  return Math.round(Math.min(SIDE_BAR_WIDTH.max, Math.max(SIDE_BAR_WIDTH.min, value)));
+}
+
+export type SideBarMode = "compact" | "normal" | "wide";
+
+/** Modo e medidas da barra para a largura dada (px). */
+export function sideBarLayout(width: number): {
+  mode: SideBarMode;
+  icon: number;
+  image: number;
+  font: number;
+} {
+  const value = clampSideBarWidth(width);
+  const mode: SideBarMode = value < 58 ? "compact" : value < 104 ? "normal" : "wide";
+  const icon = Math.round(Math.min(34, Math.max(24, value * (mode === "wide" ? 0.22 : 0.44))));
+  return {
+    mode,
+    icon,
+    image: Math.round(icon * 0.68),
+    font: mode === "wide" ? 12.5 : Math.round(Math.min(11.5, Math.max(9.5, value / 6.6)) * 10) / 10,
+  };
+}
+
 /** Barra lateral (60 px) e o mínimo de página que fica à vista ao lado do painel. */
 const SIDE_BAR_PX = 60;
 const MIN_PAGE_PX = 360;

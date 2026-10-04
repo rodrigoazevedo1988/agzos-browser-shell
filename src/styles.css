@@ -8589,86 +8589,310 @@ button.download-name:hover {
   width: 14px;
   height: 14px;
 }
-.tools-grid {
-  width: min(880px, 100%);
-  margin: 28px auto 0;
-  text-align: left;
+.new-tab.session-new svg {
+  color: #2563eb;
 }
-.tools-grid h2 {
-  margin: 0 0 10px;
+
+/* ---------------------------------------------------------------------------
+   4.6: menu Ferramentas, pop-up de extensões e menu de cada extensão. Mesma base do
+   menu "⋯" (.app-menu): vidro translúcido, tema escuro/claro e cor de acento.
+   --------------------------------------------------------------------------- */
+.tools-menu,
+.extension-menu {
+  position: fixed;
+  width: 300px;
+}
+.tools-menu-head,
+.extension-menu .app-menu-head {
+  padding: 8px 10px 10px;
+}
+.app-menu-item.danger,
+.app-menu-item.danger svg {
+  color: var(--primary);
+}
+.extension-menu .app-menu-head img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.extension-menu-label {
+  margin: 4px 10px 2px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.tools-grid ul {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.extension-menu-check {
+  color: var(--primary) !important;
 }
-.tool-card {
+.extension-menu-permissions {
+  margin: 2px 10px 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.extension-menu-permissions p {
+  margin: 0 0 4px;
+}
+.extension-menu-confirm {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  width: 100%;
-  height: 100%;
-  padding: 12px;
+  gap: 8px;
+  margin: 4px 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  font-size: 12.5px;
+}
+.extension-menu-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.extension-menu-confirm button {
+  height: 28px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--card) 88%, transparent);
+  border-radius: 7px;
+  background: var(--card);
+  font-size: 12px;
+}
+.extension-menu-confirm button.danger {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.extensions-panel {
+  top: 104px;
+  width: 340px;
+}
+.extensions-panel-head {
+  padding: 8px 10px 6px;
+  font-size: 14px;
+}
+.extensions-panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+.extensions-panel-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 9px;
+}
+.extensions-panel-list li:hover {
+  background: var(--muted);
+}
+.extensions-panel-list li.off {
+  opacity: 0.6;
+}
+.extensions-panel-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  background: transparent;
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition:
-    border-color 0.15s ease,
-    transform 0.15s ease;
 }
-.tool-card:hover,
-.tool-card:focus-visible {
-  border-color: var(--primary);
-  transform: translateY(-1px);
+.extensions-panel-open img,
+.extensions-panel-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
 }
-.tool-icon {
+.extensions-panel-icon {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  margin-bottom: 4px;
-  border-radius: 9px;
   background: color-mix(in oklab, var(--primary) 16%, transparent);
   color: var(--primary);
 }
-.tool-icon svg {
-  width: 17px;
-  height: 17px;
+.extensions-panel-icon svg {
+  width: 15px;
+  height: 15px;
 }
-.tool-card strong {
+.extensions-panel-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.extensions-panel-text strong,
+.extensions-panel-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extensions-panel-text strong {
   font-size: 13px;
 }
-.tool-card small {
+.extensions-panel-text small {
   color: var(--muted-foreground);
   font-size: 11.5px;
-  line-height: 1.35;
 }
-.tool-card kbd {
-  margin-top: auto;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+.extensions-panel-pin,
+.extensions-panel-more {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--muted-foreground);
-  font:
-    10.5px/1.6 ui-monospace,
-    monospace;
+  cursor: pointer;
 }
-.dial-tools {
-  margin-top: 32px;
-  padding: 0 24px 32px;
+.extensions-panel-pin:hover,
+.extensions-panel-more:hover {
+  background: var(--accent);
+  color: var(--foreground);
 }
-.new-tab.session-new svg {
-  color: #2563eb;
+.extensions-panel-pin.on {
+  color: var(--primary);
+}
+.extensions-panel-pin svg,
+.extensions-panel-more svg {
+  width: 15px;
+  height: 15px;
+}
+.extensions-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  text-align: center;
+}
+.extensions-panel-empty svg {
+  width: 26px;
+  height: 26px;
+  color: var(--primary);
+}
+.extensions-panel-empty p {
+  margin: 0;
+}
+.extensions-panel-empty button,
+.extensions-panel-foot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 13px;
+}
+.extensions-panel-empty button {
+  color: var(--primary);
+  font-weight: 600;
+}
+.extensions-panel-foot {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 0;
+  border-top: 1px solid var(--border);
+}
+.extensions-panel-foot button:hover,
+.extensions-panel-empty button:hover {
+  background: var(--muted);
+}
+.extensions-panel-foot svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.pinned-extension img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+.omnibox-action.reader-button.on {
+  color: var(--primary);
+}
+
+/* 4.6: barra lateral com largura do usuário. Medidas vêm do SideBar (--side-*). */
+.side-bar {
+  flex: 0 0 var(--side-bar-w, 60px);
+  width: var(--side-bar-w, 60px);
+  overflow-x: hidden;
+}
+.side-bar .side-bar-item {
+  width: calc(var(--side-bar-w, 60px) - 8px);
+}
+.side-bar .side-app-icon {
+  width: var(--side-icon, 26px);
+  height: var(--side-icon, 26px);
+  border-radius: calc(var(--side-icon, 26px) * 0.3);
+}
+.side-bar .side-app-icon svg {
+  width: calc(var(--side-icon, 26px) * 0.58);
+  height: calc(var(--side-icon, 26px) * 0.58);
+}
+.side-bar .side-app-icon img {
+  width: var(--side-img, 18px);
+  height: var(--side-img, 18px);
+}
+.side-bar .side-bar-name {
+  max-width: calc(var(--side-bar-w, 60px) - 12px);
+  font-size: var(--side-font, 9.5px);
+}
+.side-bar-compact .side-bar-name {
+  display: none;
+}
+.side-bar-compact .side-bar-item {
+  min-height: 38px;
+}
+.side-bar-wide {
+  align-items: stretch;
+  padding-inline: 4px;
+}
+.side-bar-wide .side-bar-item {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+}
+.side-bar-wide .side-bar-name {
+  flex: 1;
+  max-width: none;
+  margin-top: 0;
+  text-align: left;
+}
+.side-bar-wide .side-bar-divider {
+  align-self: center;
+  width: calc(100% - 16px);
+}
+.side-bar-resize {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 6px;
+  width: 6px;
+  margin-left: -6px;
+  cursor: col-resize;
+}
+.side-bar-resize:hover,
+.side-bar-resize:focus-visible {
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
+  outline: 0;
 }

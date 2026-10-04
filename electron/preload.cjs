@@ -218,4 +218,11 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   extensionsReload: (dir) => ipcRenderer.invoke("extensions:reload", { dir }),
   extensionsRemove: (dir) => ipcRenderer.invoke("extensions:remove", { dir }),
   widevineStatus: () => ipcRenderer.invoke("widevine:status"),
+  // 4.6
+  extensionsPin: (dir, pinned) => ipcRenderer.invoke("extensions:pin", { dir, pinned }),
+  extensionsPopup: (dir, anchor) => ipcRenderer.invoke("extensions:popup", { dir, anchor }),
+  extensionsSiteAccess: (dir, tabId, allowed) =>
+    ipcRenderer.invoke("extensions:site-access", { dir, tabId, allowed }),
+  extensionsInspect: (dir, anchor) => ipcRenderer.invoke("extensions:inspect", { dir, anchor }),
+  onExtensionsChanged: subscribe("agzos:extensions-changed"),
 });

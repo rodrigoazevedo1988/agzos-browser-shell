@@ -2,6 +2,7 @@ import { parseBookmarks } from "../bookmarks";
 import { parseLimits } from "../control/limits";
 import {
   clampPanelWidth,
+  clampSideBarWidth,
   parsePanelWidths,
   parseSidePanels,
   withNewSidePanels,
@@ -263,6 +264,7 @@ export function parsePrefs(value: unknown): Prefs {
     ...withNewSidePanels(parseSidePanels(raw["sidePanels"]), raw["sidePanelsSeen"]),
     ...parseLimits(raw),
     sidePanelWidth: clampPanelWidth(raw["sidePanelWidth"]),
+    sideBarWidth: clampSideBarWidth(raw["sideBarWidth"]),
     sidePanelWidths: parsePanelWidths(raw["sidePanelWidths"]),
     sounds: bool("sounds"),
     soundHover: bool("soundHover"),

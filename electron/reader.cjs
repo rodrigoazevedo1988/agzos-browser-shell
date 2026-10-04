@@ -285,8 +285,34 @@ function readerPageScript() {
   };
 }
 
+/**
+ * Teste rápido (4.6): a página tem um artigo para ler? Parágrafos de verdade (texto
+ * longo, fora de menus) dentro de <article>/<main> ou soltos. Decide se o caderno do modo
+ * leitura aparece na barra de URL.
+ */
+function readerProbeScript() {
+  if (!/^https?:$/.test(location.protocol) || !document.body) return false;
+  const root =
+    document.querySelector("article, [itemprop=articleBody], main, [role=main]") ?? document.body;
+  let paragraphs = 0;
+  let chars = 0;
+  for (const paragraph of root.querySelectorAll("p")) {
+    if (paragraph.closest("nav, header, footer, aside, form, [role=navigation]")) continue;
+    const length = (paragraph.textContent || "").trim().length;
+    if (length < 80) continue;
+    paragraphs += 1;
+    chars += length;
+    if (paragraphs >= 3 && chars >= 450) return true;
+  }
+  return false;
+}
+
+function readerProbeSource() {
+  return `(${readerProbeScript.toString()})()`;
+}
+
 function readerSource() {
   return `(${readerPageScript.toString()})()`;
 }
 
-module.exports = { READER_WORLD, cleanArticle, readerSource };
+module.exports = { READER_WORLD, cleanArticle, readerProbeSource, readerSource };

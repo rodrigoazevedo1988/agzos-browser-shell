@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.6.0",
+    date: "2026-10-04",
+    items: [
+      "Extensões como no Chrome e no Edge: o quebra-cabeça da barra abre um pop-up (não uma guia) com as extensões instaladas, ícone, nome e o acesso resumido. Clique abre o pop-up da extensão ancorado no ícone; o alfinete fixa o ícone na barra; o “…” ou o clique direito trazem acesso a este site, opções, fixar, permissões, gerenciar, inspecionar pop-up e remover (com confirmação).",
+      "Acesso por site: “Nenhum acesso a este site” tira os scripts da extensão daquele site (a extensão recarrega na hora).",
+      "Modo leitura num caderno dentro da barra de URL: ele só aparece quando a página tem um artigo para ler, e o clique liga e desliga, sem abrir página nova.",
+      "As ferramentas (Session Tab, Scratchpad, mira, captura, leitura, notas, extensões) ficam só no item “Ferramentas” da barra lateral, num menu com o visual do app (vidro, tema escuro ou claro e a cor de acento). A página inicial e o Discador ficam só com a busca e os seus atalhos.",
+      "Barra lateral redimensionável: arraste a borda para deixar mais estreita (só ícones) ou mais larga (ícone e nome lado a lado); os ícones e os textos se ajustam. Duplo clique na borda volta ao tamanho padrão.",
+    ],
+  },
+  {
     version: "4.5.1",
     date: "2026-10-03",
     items: [

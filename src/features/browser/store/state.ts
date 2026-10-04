@@ -20,7 +20,7 @@ import type {
 } from "../types";
 
 import { DEFAULT_LIMITS } from "../control/limits";
-import { DEFAULT_SIDE_PANELS, SIDE_PANEL_WIDTH } from "../side-panels";
+import { DEFAULT_SIDE_PANELS, SIDE_BAR_WIDTH, SIDE_PANEL_WIDTH } from "../side-panels";
 import { DEFAULT_SOUND_TICK, type SoundTick } from "@/features/sounds/sounds";
 import { DEFAULT_GESTURES, type GesturePrefs } from "@/features/gestures/gestures";
 import { TERMINAL_HEIGHT } from "@/features/terminal/model";
@@ -101,6 +101,8 @@ export type Prefs = {
   netUpKbps: number;
   /** Largura padrão do painel lateral (px): a de quem ainda não tem largura própria. */
   sidePanelWidth: number;
+  /** Largura da barra lateral (4.6), arrastando a borda. */
+  sideBarWidth: number;
   /** Largura de cada painel (3.1.1), por id do app. */
   sidePanelWidths: Record<string, number>;
   /** Sons da interface (3.1.1): geral, hover, teclado, qual tick e volume (0–100). */
@@ -157,6 +159,7 @@ export const defaultPrefs: Prefs = {
   sidePanelsSeen: DEFAULT_SIDE_PANELS,
   ...DEFAULT_LIMITS,
   sidePanelWidth: SIDE_PANEL_WIDTH.initial,
+  sideBarWidth: SIDE_BAR_WIDTH.initial,
   sidePanelWidths: {},
   sounds: true,
   soundHover: true,

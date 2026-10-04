@@ -148,6 +148,8 @@ const PAGES: Record<string, string> = {
       <h2>Segunda parte</h2>
       <p>Mais um parágrafo longo do artigo, com <strong>negrito</strong>, um <a href="https://exemplo.com/x">link</a>
       e conteúdo bastante para o extrator, que soma pontos por vírgula, frase e tamanho.</p>
+      <p>Terceiro parágrafo do artigo de teste, também longo, para o detector saber que há
+      texto de verdade aqui, com frases completas, vírgulas e um pouco mais de conteúdo.</p>
       <ul><li>primeiro item</li><li>segundo item</li></ul>
     </article>
     <footer>Rodapé do site</footer></html>`,
@@ -4088,50 +4090,214 @@ test("4.5: captura, modo leitura, nota e tema persistem", async () => {
   }
 });
 
-test("4.5.1: ferramentas visíveis na página inicial, no Discador e na barra", async () => {
+test("4.6: ferramentas só na barra lateral, em menu com o visual do app", async () => {
   const { app, window } = await launch(tempProfile());
   try {
-    const grid = window.getByRole("region", { name: "Ferramentas" });
-    await expect(grid.getByRole("button", { name: /Nova Session Tab/ })).toBeVisible();
-    await expect(grid.getByRole("button", { name: /Portas em uso/ })).toBeVisible();
-    await expect(grid.getByRole("button", { name: /API Scratchpad/ })).toBeVisible();
-    // Mira pela grade sem site aberto: a casca explica.
-    await grid.getByRole("button", { name: /Mira de elemento/ }).click();
-    await expect(window.locator(".agzos-notice")).toContainText("Abra um site primeiro");
-    // Session Tab pelo botão ao lado da guia anônima.
-    await window.getByRole("button", { name: "Nova Session Tab" }).first().click();
-    await expect(window.locator(".browser-tab.session-tab")).toHaveCount(1);
-    // Site aberto: a mira da grade (na página inicial) liga nele.
-    const page = `${origin}/mira`;
-    await go(window, page);
-    await expect(tabs(window).last()).toContainText("Mira");
-    await window.keyboard.press(`${MOD}+t`);
-    await window
-      .getByRole("region", { name: "Ferramentas" })
-      .getByRole("button", { name: /Mira de elemento/ })
-      .click();
-    await expect(window.locator(".agzos-notice")).toContainText("Mira ligada");
-    await expect(tabs(window).nth(1)).toHaveClass(/active/);
-    expect(
-      await app.evaluate(({ webContents }, url) => {
-        const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
-        return contents.executeJavaScriptInIsolatedWorld(4132, [
-          { code: "Boolean(window.__agzosInspector)" },
-        ]);
-      }, page),
-    ).toBe(true);
-    // Discador também tem a grade; Extensões abre as Configurações já na seção.
-    await window.keyboard.press(`${MOD}+t`);
+    // Página inicial e Discador sem a grade de ferramentas.
+    await expect(window.getByRole("region", { name: "Ferramentas" })).toHaveCount(0);
     await window
       .getByRole("button", { name: /Discador/ })
       .first()
       .click();
-    const dialGrid = window.getByRole("region", { name: "Ferramentas" });
-    await dialGrid.getByRole("button", { name: /Extensões/ }).click();
-    await expect(window.getByRole("button", { name: "Carregar descompactada…" })).toBeVisible();
-    // Barra: botões Ferramentas e Extensões.
-    await expect(window.getByRole("button", { name: "Ferramentas" })).toBeVisible();
-    await expect(window.getByRole("button", { name: "Extensões" }).first()).toBeVisible();
+    await expect(window.getByRole("list", { name: "Sites do Discador" })).toBeVisible();
+    await expect(window.getByRole("region", { name: "Ferramentas" })).toHaveCount(0);
+    // Ferramentas na barra lateral abre o menu na camada (não é menu nativo).
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "Ferramentas" })
+      .click();
+    const layer = await overlayPage(app);
+    const menu = layer.getByRole("menu", { name: "Ferramentas" });
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveClass(/app-menu/);
+    await expect(menu.getByRole("menuitem", { name: /Mira de elemento/ })).toBeVisible();
+    await menu.getByRole("menuitem", { name: /Nova Session Tab/ }).click();
+    await expect(window.locator(".browser-tab.session-tab")).toHaveCount(1);
+    // Sem barra de ferramentas duplicada.
+    await expect(window.getByRole("button", { name: "Ferramentas" })).toHaveCount(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.6: caderno do modo leitura só aparece em página com artigo", async () => {
+  const { app, window } = await launch(tempProfile());
+  const reader = window.getByRole("button", { name: "Modo leitura", exact: true });
+  try {
+    await go(window, `${origin}/curta`);
+    await expect(tabs(window).first()).toContainText("Página CURTA");
+    await window.waitForTimeout(1500);
+    await expect(reader).toHaveCount(0);
+    await go(window, `${origin}/artigo`);
+    await expect(tabs(window).first()).toContainText("Artigo de teste");
+    await expect(reader).toBeVisible({ timeout: 10_000 });
+    await reader.click();
+    await expect(window.getByRole("region", { name: "Modo leitura" })).toBeVisible();
+    await expect(reader).toHaveAttribute("aria-pressed", "true");
+    await reader.click();
+    await expect(window.getByRole("region", { name: "Modo leitura" })).toHaveCount(0);
+    await expect(tabs(window)).toHaveCount(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.6: extensões em pop-up: abrir ancorado, fixar, acesso ao site e remover", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-ext-"));
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      manifest_version: 3,
+      name: "Agzos Pop-up",
+      version: "1.0",
+      action: { default_popup: "popup.html" },
+      content_scripts: [{ matches: ["<all_urls>"], js: ["c.js"], run_at: "document_end" }],
+    }),
+  );
+  fs.writeFileSync(path.join(dir, "c.js"), 'document.documentElement.dataset.agzosExt = "ok";');
+  fs.writeFileSync(
+    path.join(dir, "popup.html"),
+    '<!doctype html><body style="width:240px;height:120px;margin:0"><h1>Pop-up</h1></body>',
+  );
+  const { app, window } = await launch(tempProfile());
+  const page = `${origin}/a`;
+  try {
+    await app.evaluate(({ dialog }, folder) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as never;
+    }, dir);
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Página A");
+    // Quebra-cabeça abre o pop-up (camada), não uma guia.
+    await window.getByRole("button", { name: "Extensões" }).click();
+    const layer = await overlayPage(app);
+    const panel = layer.getByRole("complementary", { name: "Extensões" });
+    await expect(panel).toContainText("Nenhuma extensão instalada");
+    await panel.getByRole("button", { name: "Carregar extensão descompactada…" }).click();
+    await window.getByRole("button", { name: "Extensões" }).click();
+    await expect(panel).toContainText("Agzos Pop-up");
+    await expect(panel).toContainText("Pode ler e alterar dados em todos os sites");
+    await expect(tabs(window)).toHaveCount(1);
+    // Alfinete: o ícone entra na barra.
+    await panel.getByRole("button", { name: "Fixar Agzos Pop-up" }).click();
+    const pinned = window.getByRole("button", { name: "Agzos Pop-up", exact: true });
+    await expect(pinned).toBeVisible();
+    await layer.keyboard.press("Escape");
+    // Clique no ícone fixado: o pop-up da extensão abre ancorado abaixo dele.
+    await pinned.click();
+    const popup = async () =>
+      app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows().find((item) =>
+          item.webContents.getURL().startsWith("chrome-extension://"),
+        );
+        if (!win || !win.isVisible()) return null;
+        const parent = BrowserWindow.getAllWindows()
+          .find((item) => item.webContents.getURL().endsWith("index.html"))!
+          .getContentBounds();
+        return { bounds: win.getBounds(), parent, url: win.webContents.getURL() };
+      });
+    await expect.poll(async () => (await popup())?.url ?? "").toMatch(/\/popup\.html$/);
+    const opened = (await popup())!;
+    const anchor = (await pinned.boundingBox())!;
+    expect(opened.bounds.y).toBeGreaterThanOrEqual(opened.parent.y + anchor.y + anchor.height);
+    expect(
+      Math.abs(opened.bounds.x + opened.bounds.width - (opened.parent.x + anchor.x + anchor.width)),
+    ).toBeLessThanOrEqual(2);
+    // A página carregou antes da extensão: recarrega para o content script entrar.
+    await app.evaluate(({ webContents }, url) => {
+      webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === url)!
+        .reload();
+    }, page);
+    await expect
+      .poll(() =>
+        inTab(
+          app,
+          page,
+          "document.readyState === 'complete' ? (document.documentElement.dataset.agzosExt ?? 'sem') : null",
+        ),
+      )
+      .toBe("ok");
+    // Clique direito: menu da extensão (camada), sem acesso a este site.
+    await window.mouse.click(5, 5);
+    await pinned.click({ button: "right" });
+    const menu = layer.getByRole("menu", { name: "Menu de Agzos Pop-up" });
+    await expect(menu).toBeVisible();
+    for (const item of [
+      "Opções",
+      "Desafixar da barra",
+      "Exibir permissões",
+      "Gerenciar extensão",
+      "Inspecionar pop-up",
+      "Remover…",
+    ]) {
+      await expect(menu.getByRole("menuitem", { name: item })).toBeVisible();
+    }
+    await menu.getByRole("menuitemradio", { name: "Nenhum acesso a este site" }).click();
+    await expect(window.locator(".agzos-notice")).toContainText("não tem mais acesso");
+    await app.evaluate(({ webContents }, url) => {
+      webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === url)!
+        .reload();
+    }, page);
+    await expect
+      .poll(() =>
+        inTab(
+          app,
+          page,
+          "document.readyState === 'complete' ? (document.documentElement.dataset.agzosExt ?? 'sem') : null",
+        ),
+      )
+      .toBe("sem");
+    // Remover pede confirmação.
+    await pinned.click({ button: "right" });
+    await menu.getByRole("menuitem", { name: "Remover…" }).click();
+    await menu
+      .getByRole("alertdialog", { name: "Confirmar remover" })
+      .getByRole("button", { name: "Remover" })
+      .click();
+    await expect(pinned).toHaveCount(0);
+    await window.getByRole("button", { name: "Extensões" }).click();
+    await expect(panel).toContainText("Nenhuma extensão instalada");
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.6: barra lateral muda de largura arrastando e se adapta", async () => {
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  try {
+    const bar = window.getByRole("navigation", { name: "Painéis laterais" });
+    const handle = window.getByRole("separator", { name: "Largura da barra lateral" });
+    await expect(bar).toHaveAttribute("data-mode", "normal");
+    const drag = async (x: number) => {
+      const box = (await handle.boundingBox())!;
+      await window.mouse.move(box.x + box.width / 2, box.y + 200);
+      await window.mouse.down();
+      await window.mouse.move(x, box.y + 200, { steps: 6 });
+      await window.mouse.up();
+    };
+    await drag(150);
+    await expect(bar).toHaveAttribute("data-mode", "wide");
+    expect(Math.round((await bar.boundingBox())!.width)).toBeGreaterThan(120);
+    await expect(bar.getByRole("button", { name: "WhatsApp" })).toContainText("WhatsApp");
+    await drag(30);
+    await expect(bar).toHaveAttribute("data-mode", "compact");
+    await expect(bar.locator(".side-bar-name").first()).toBeHidden();
+    await handle.dblclick();
+    await expect(bar).toHaveAttribute("data-mode", "normal");
+    await handle.focus();
+    for (let index = 0; index < 8; index += 1) await window.keyboard.press("ArrowRight");
+    await expect(bar).toHaveAttribute("data-mode", "wide");
+    await window.waitForTimeout(800);
+    await app.close();
+    ({ app, window } = await launch(profile));
+    await expect(window.getByRole("navigation", { name: "Painéis laterais" })).toHaveAttribute(
+      "data-mode",
+      "wide",
+    );
   } finally {
     await app.close();
   }

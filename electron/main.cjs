@@ -89,7 +89,7 @@ const { SESSION_ID_RE, orphanPartitionDirs, sessionIdsOf } = require("./session-
 const { createPortsService } = require("./ports-service.cjs");
 const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunnel.cjs");
 const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
-const { READER_WORLD, cleanArticle, readerSource } = require("./reader.cjs");
+const { READER_WORLD, cleanArticle, readerProbeSource, readerSource } = require("./reader.cjs");
 const { createNetCapture, sendRequest } = require("./scratchpad.cjs");
 const { createExtensions } = require("./extensions.cjs");
 const { captureFileName, imageFileName, isPngDataUrl } = require("./capture.cjs");
@@ -1356,6 +1356,47 @@ async function captureThumbnail(contents, { leaving = false } = {}) {
   }
 }
 
+// 4.6: a página tem artigo legível? A casca mostra o caderno do modo leitura na barra de
+// URL só nesse caso. Mede depois de carregar (e de novo um pouco depois, para SPAs).
+const readableTimers = new Map();
+const readableWired = new WeakSet();
+
+function scheduleReadableProbe(contents) {
+  const key = contents.id;
+  clearTimeout(readableTimers.get(key));
+  const probe = (retry) => {
+    if (contents.isDestroyed() || !tabOfContents.has(contents.id)) return;
+    const url = contents.getURL();
+    if (!/^https?:/.test(url)) {
+      emitTab(contents, { type: "readable", url, readable: false });
+      return;
+    }
+    contents
+      .executeJavaScriptInIsolatedWorld(READER_WORLD, [{ code: readerProbeSource() }], false)
+      .then((readable) => {
+        if (contents.isDestroyed() || contents.getURL() !== url) return;
+        emitTab(contents, { type: "readable", url, readable: Boolean(readable) });
+        if (!readable && retry)
+          readableTimers.set(
+            key,
+            setTimeout(() => probe(false), 2500),
+          );
+      })
+      .catch(() => {});
+  };
+  readableTimers.set(
+    key,
+    setTimeout(() => probe(true), 400),
+  );
+  if (!readableWired.has(contents)) {
+    readableWired.add(contents);
+    contents.once("destroyed", () => {
+      clearTimeout(readableTimers.get(key));
+      readableTimers.delete(key);
+    });
+  }
+}
+
 function scheduleThumbnail(contents, delay) {
   const key = contents.id;
   clearTimeout(thumbnailTimers.get(key));
@@ -1738,7 +1779,10 @@ function wireView(view) {
   });
   contents.on("did-navigate", () => clearLoadFailed(contents));
   contents.on("did-navigate", () => applyStoredZoom(contents));
-  contents.on("did-stop-loading", () => scheduleThumbnail(contents, 600));
+  contents.on("did-stop-loading", () => {
+    scheduleThumbnail(contents, 600);
+    scheduleReadableProbe(contents);
+  });
   contents.on("did-navigate", (_event, url) => recordVisit(contents, url));
   contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
     if (isMainFrame) recordVisit(contents, url, { sameDocument: true });
@@ -2285,6 +2329,137 @@ function widevineStatus() {
     version = null;
   }
   return { ...widevineState, version };
+}
+
+/** Toda janela atualiza a barra e o menu de extensões depois da mudança. */
+async function extensionsChanged(pending) {
+  const result = await pending;
+  broadcast("agzos:extensions-changed", {});
+  return result;
+}
+
+/** Área do ícone vinda da casca, ou o canto direito da barra se não vier. */
+function validAnchor(anchor) {
+  const ok = anchor && ["x", "y", "width", "height"].every((key) => Number.isFinite(anchor[key]));
+  return ok
+    ? {
+        x: anchor.x,
+        y: anchor.y,
+        width: Math.max(1, anchor.width),
+        height: Math.max(1, anchor.height),
+      }
+    : null;
+}
+
+// 4.6: pop-up de extensão. Uma janela sem moldura na sessão das guias (as APIs chrome.*
+// da extensão funcionam), do tamanho que a página pede, alinhada à direita do ícone e
+// abaixo dele; fecha ao perder o foco (menos com o DevTools aberto).
+let extensionPopup = null;
+const POPUP_LIMITS = { minWidth: 25, minHeight: 25, maxWidth: 800, maxHeight: 600 };
+
+function closeExtensionPopup() {
+  const popup = extensionPopup;
+  extensionPopup = null;
+  if (popup && !popup.window.isDestroyed()) popup.window.close();
+}
+
+function openExtensionPopup(ctx, info, anchor, { inspect = false } = {}) {
+  closeExtensionPopup();
+  if (ctx.window.isDestroyed()) return;
+  const content = ctx.window.getContentBounds();
+  const area = anchor ?? { x: content.width - 48, y: 64, width: 32, height: 32 };
+  const window = new BrowserWindow({
+    parent: ctx.window,
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    // Começa pequena (como no Chrome): o "preferred size" da página faz crescer até o conteúdo.
+    width: 64,
+    height: 64,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      session: session.defaultSession,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      enablePreferredSizeMode: true,
+    },
+  });
+  const popup = { window, dir: info.dir, anchor: area };
+  extensionPopup = popup;
+  const place = (width, height) => {
+    if (window.isDestroyed() || ctx.window.isDestroyed()) return;
+    const bounds = ctx.window.getContentBounds();
+    const w = Math.round(Math.min(POPUP_LIMITS.maxWidth, Math.max(POPUP_LIMITS.minWidth, width)));
+    const h = Math.round(
+      Math.min(POPUP_LIMITS.maxHeight, Math.max(POPUP_LIMITS.minHeight, height)),
+    );
+    const x = Math.round(bounds.x + area.x + area.width - w);
+    const y = Math.round(bounds.y + area.y + area.height + 4);
+    window.setBounds({ x: Math.max(bounds.x, x), y, width: w, height: h });
+  };
+  place(64, 64);
+  window.webContents.on("preferred-size-changed", (_event, size) => place(size.width, size.height));
+  // Mede a página (largura natural, depois a altura nessa largura): nem toda página de
+  // extensão dispara o "preferred size".
+  const fit = async () => {
+    if (window.isDestroyed()) return;
+    try {
+      const width = await window.webContents.executeJavaScript(
+        `(() => { const root = document.documentElement; const old = root.style.width;
+          root.style.width = "max-content"; const w = Math.ceil(root.getBoundingClientRect().width);
+          root.style.width = old; return w; })()`,
+      );
+      const w = Math.min(
+        POPUP_LIMITS.maxWidth,
+        Math.max(POPUP_LIMITS.minWidth, Number(width) || 320),
+      );
+      place(w, window.getBounds().height);
+      const height = await window.webContents.executeJavaScript(
+        "Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))",
+      );
+      place(w, Number(height) || 240);
+      reveal();
+    } catch {
+      // Página fechou no meio.
+    }
+  };
+  window.webContents.on("did-finish-load", () => {
+    void fit();
+    setTimeout(() => void fit(), 350);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isWebUrl(url)) send(ctx, "agzos:open-request", { url });
+    return { action: "deny" };
+  });
+  // Aparece já no tamanho medido (ou depois de 800 ms, se a medida não vier).
+  const reveal = () => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show();
+  };
+  setTimeout(reveal, 800);
+  window.on("blur", () => {
+    if (!window.isDestroyed() && !window.webContents.isDevToolsOpened()) window.close();
+  });
+  window.on("closed", () => {
+    if (extensionPopup === popup) extensionPopup = null;
+  });
+  void window.loadURL(info.popup).catch(() => {});
+  if (inspect) window.webContents.openDevTools({ mode: "detach" });
+}
+
+/** Origem da guia (para "acesso a este site"). */
+function tabOrigin(ctx, tabId) {
+  const contents = tabContents(ctx, tabId);
+  try {
+    const url = new URL(contents?.getURL() ?? "");
+    return /^https?:$/.test(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function isExecutableFile(file) {
@@ -3622,26 +3797,63 @@ function registerIpc() {
     });
     const dir = result.canceled ? null : result.filePaths[0];
     if (!dir) return { ok: false, canceled: true };
-    return extensions.addUnpacked(dir);
+    return extensionsChanged(extensions.addUnpacked(dir));
   });
 
   ipcMain.handle("extensions:install-store", (_event, { input } = {}) =>
     extensions
-      ? extensions.installFromStore(String(input ?? ""))
+      ? extensionsChanged(extensions.installFromStore(String(input ?? "")))
       : { ok: false, error: "unsupported" },
   );
 
   ipcMain.handle("extensions:set-enabled", (_event, { dir, enabled } = {}) =>
-    extensions ? extensions.setEnabled(String(dir ?? ""), Boolean(enabled)) : { ok: false },
+    extensions
+      ? extensionsChanged(extensions.setEnabled(String(dir ?? ""), Boolean(enabled)))
+      : { ok: false },
   );
 
   ipcMain.handle("extensions:reload", (_event, { dir } = {}) =>
-    extensions ? extensions.reload(String(dir ?? "")) : { ok: false },
+    extensions ? extensionsChanged(extensions.reload(String(dir ?? ""))) : { ok: false },
   );
 
-  ipcMain.handle("extensions:remove", (_event, { dir } = {}) =>
-    extensions ? extensions.remove(String(dir ?? "")) : { ok: false },
-  );
+  ipcMain.handle("extensions:remove", (_event, { dir } = {}) => {
+    const result = extensions ? extensions.remove(String(dir ?? "")) : { ok: false };
+    broadcast("agzos:extensions-changed", {});
+    return result;
+  });
+
+  // 4.6: alfinete (ícone fixo na barra).
+  ipcMain.handle("extensions:pin", (_event, { dir, pinned } = {}) => {
+    const result = extensions?.setPinned(String(dir ?? ""), Boolean(pinned)) ?? { ok: false };
+    broadcast("agzos:extensions-changed", {});
+    return result;
+  });
+
+  // 4.6: pop-up da extensão ancorado no ícone (área em coordenadas da janela).
+  ipcMain.handle("extensions:popup", (event, { dir, anchor } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const info = extensions?.info(String(dir ?? ""));
+    if (!ctx || !info?.popup) return { ok: false };
+    openExtensionPopup(ctx, info, validAnchor(anchor));
+    return { ok: true };
+  });
+
+  // 4.6: acesso da extensão ao site da guia (o menu é da casca, com o visual do app).
+  ipcMain.handle("extensions:site-access", async (event, { dir, tabId, allowed } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const origin = ctx ? tabOrigin(ctx, tabId) : null;
+    if (!origin || !extensions) return { ok: false };
+    return extensionsChanged(extensions.setSiteAccess(String(dir ?? ""), origin, Boolean(allowed)));
+  });
+
+  // 4.6: "Inspecionar pop-up": abre o pop-up com o DevTools dele.
+  ipcMain.handle("extensions:inspect", (event, { dir, anchor } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const info = extensions?.info(String(dir ?? ""));
+    if (!ctx || !info?.popup) return { ok: false };
+    openExtensionPopup(ctx, info, validAnchor(anchor), { inspect: true });
+    return { ok: true };
+  });
 
   // 4.5: Widevine (só no build com o CDM da castLabs; o Electron oficial não traz).
   ipcMain.handle("widevine:status", () => widevineStatus());

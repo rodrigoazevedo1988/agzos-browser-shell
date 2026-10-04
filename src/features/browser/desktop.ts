@@ -62,6 +62,8 @@ export type DesktopTabEvent =
   | { type: "zoom"; id: number; factor: number }
   | { type: "download-navigation"; id: number; urls: string[] }
   | { type: "thumbnail"; id: number; dataUrl: string }
+  /** 4.6: a página (nesta URL) tem artigo para o modo leitura. */
+  | { type: "readable"; id: number; url: string; readable: boolean }
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
   /** Login enviado numa página (page-preload): oferecer salvar no Agzos Key. */
   | { type: "login-detected"; id: number; url: string; username: string; password: string }
@@ -445,6 +447,11 @@ export type ExtensionInfo = {
   error: string | null;
   popup: string | null;
   options: string | null;
+  /** 4.6: ícone (data URL), alfinete, resumo de acesso e hosts sem acesso. */
+  icon: string | null;
+  pinned: boolean;
+  access: { summary: string; everywhere: boolean; hosts: string[]; permissions: string[] };
+  blocked: string[];
 };
 export type ExtensionResult = { ok: boolean; error?: string; canceled?: boolean; id?: string };
 export type WidevineStatus = {
@@ -740,6 +747,15 @@ export type DesktopBridge = {
   extensionsReload(dir: string): Promise<{ ok: boolean }>;
   extensionsRemove(dir: string): Promise<{ ok: boolean }>;
   widevineStatus(): Promise<WidevineStatus>;
+  // --- 4.6 ---
+  extensionsPin(dir: string, pinned: boolean): Promise<{ ok: boolean }>;
+  /** Abre o pop-up da extensão ancorado na área do ícone (coordenadas da janela). */
+  extensionsPopup(dir: string, anchor: DesktopRect | null): Promise<{ ok: boolean }>;
+  /** Acesso da extensão ao site da guia: ler e alterar (true) ou nenhum (false). */
+  extensionsSiteAccess(dir: string, tabId: number, allowed: boolean): Promise<{ ok: boolean }>;
+  /** Abre o pop-up da extensão com o DevTools dele. */
+  extensionsInspect(dir: string, anchor: DesktopRect | null): Promise<{ ok: boolean }>;
+  onExtensionsChanged(callback: () => void): () => void;
   pwaInstall(
     tabId: number,
   ): Promise<{ ok: boolean; id?: string; error?: string; reason?: PwaReason }>;

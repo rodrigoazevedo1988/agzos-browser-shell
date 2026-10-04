@@ -2,6 +2,9 @@ import type { ComponentProps } from "react";
 
 import { BookmarkEditor } from "@/features/bookmarks/editor";
 import { DownloadsPanel } from "@/features/downloads/panel";
+import { ExtensionMenu } from "@/features/extensions/menu";
+import { ExtensionsPanel } from "@/features/extensions/panel";
+import { ToolsMenu } from "@/features/tools/tools-menu";
 import { AutofillPopup } from "@/features/key/autofill-popup";
 import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
@@ -33,7 +36,13 @@ export type PanelSpec =
   | { kind: "workspaces"; key?: string; props: ComponentProps<typeof WorkspacePanel> }
   | { kind: "group"; key?: string; props: ComponentProps<typeof GroupEditor> }
   /** Apps da barra lateral que não couberam na altura (3.1.1). */
-  | { kind: "sideapps"; key?: string; props: ComponentProps<typeof SideAppsMenu> };
+  | { kind: "sideapps"; key?: string; props: ComponentProps<typeof SideAppsMenu> }
+  /** 4.6: extensões (quebra-cabeça da barra). */
+  | { kind: "extensions"; key?: string; props: ComponentProps<typeof ExtensionsPanel> }
+  /** 4.6: menu de uma extensão (clique direito ou "…"). */
+  | { kind: "extmenu"; key?: string; props: ComponentProps<typeof ExtensionMenu> }
+  /** 4.6: menu Ferramentas da barra lateral. */
+  | { kind: "tools"; key?: string; props: ComponentProps<typeof ToolsMenu> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -66,5 +75,11 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <GroupEditor key={key} {...spec.props} />;
     case "sideapps":
       return <SideAppsMenu key={key} {...spec.props} />;
+    case "extensions":
+      return <ExtensionsPanel key={key} {...spec.props} />;
+    case "extmenu":
+      return <ExtensionMenu key={key} {...spec.props} />;
+    case "tools":
+      return <ToolsMenu key={key} {...spec.props} />;
   }
 }

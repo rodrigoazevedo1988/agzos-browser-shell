@@ -104,6 +104,9 @@ describe("chrome-overlay.cjs", () => {
         "workspaces",
         "group",
         "sideapps",
+        "extensions",
+        "extmenu",
+        "tools",
       ].sort(),
     );
   });

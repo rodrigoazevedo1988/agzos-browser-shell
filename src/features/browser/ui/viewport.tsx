@@ -1,4 +1,3 @@
-import type { ToolId } from "@/features/tools/tools";
 import { ShieldCheck } from "lucide-react";
 import { useRef, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 
@@ -37,8 +36,6 @@ export function Viewport({
   onRequestAddLink,
   onRemoveLink,
   onOpenDial,
-  onTool,
-  mac = false,
   onRecover,
   errors,
   internal,
@@ -61,9 +58,6 @@ export function Viewport({
   onOpen: (value: string) => void;
   onRequestAddLink: () => void;
   onRemoveLink: (url: string) => void;
-  /** 4.5: ferramentas na página inicial (só no app). */
-  onTool?: ((id: ToolId) => void) | undefined;
-  mac?: boolean;
   onOpenDial: () => void;
   onRecover: (id: number) => void;
   /** Tela dividida (2.0): arrastar a divisória, clicar num pane, desfazer. */
@@ -134,8 +128,6 @@ export function Viewport({
           onRequestAdd={onRequestAddLink}
           onRemove={onRemoveLink}
           onOpenDial={onOpenDial}
-          onTool={onTool}
-          mac={mac}
         />
       );
     }

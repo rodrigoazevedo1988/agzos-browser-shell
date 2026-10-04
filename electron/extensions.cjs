@@ -9,6 +9,91 @@ const { crxDownloadUrl, parseCrx, storeIdOf, unzip } = require("./crx.cjs");
 
 const LIMIT = 60;
 const ID_RE = /^[a-p]{32}$/;
+const HOST_RE = /^[a-z0-9.-]{1,253}$/i;
+
+/** Origem da aba (https://app.site.com:8080) → host usado no bloqueio (app.site.com). */
+function hostOfOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    return /^https?:$/.test(url.protocol) && HOST_RE.test(url.hostname)
+      ? url.hostname.toLowerCase()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Manifest da cópia de execução: os content scripts não entram nos hosts bloqueados
+ * (`exclude_matches`). É o que dá para garantir no Electron (scripts injetados pela
+ * extensão via chrome.scripting não passam por aqui).
+ */
+function patchManifest(manifest, blocked) {
+  if (!blocked.length || !Array.isArray(manifest.content_scripts)) return manifest;
+  const excludes = blocked.map((host) => `*://${host}/*`);
+  return {
+    ...manifest,
+    content_scripts: manifest.content_scripts.map((entry) => ({
+      ...entry,
+      exclude_matches: [
+        ...new Set([
+          ...(Array.isArray(entry.exclude_matches) ? entry.exclude_matches : []),
+          ...excludes,
+        ]),
+      ],
+    })),
+  };
+}
+
+/** Resumo das permissões de site, como no menu do Chrome. */
+function accessSummary(manifest) {
+  const hosts = [
+    ...(Array.isArray(manifest.host_permissions) ? manifest.host_permissions : []),
+    ...(Array.isArray(manifest.content_scripts)
+      ? manifest.content_scripts.flatMap((entry) =>
+          Array.isArray(entry.matches) ? entry.matches : [],
+        )
+      : []),
+  ].filter((item) => typeof item === "string");
+  const permissions = (Array.isArray(manifest.permissions) ? manifest.permissions : []).filter(
+    (item) => typeof item === "string",
+  );
+  const everywhere = hosts.some(
+    (item) => item === "<all_urls>" || /^(\*|https?):\/\/\*\//.test(item),
+  );
+  const sites = [...new Set(hosts.filter((item) => item !== "<all_urls>"))];
+  let summary;
+  if (everywhere) summary = "Pode ler e alterar dados em todos os sites";
+  else if (sites.length) {
+    summary = `Pode ler e alterar dados em ${sites.length === 1 ? "1 site" : `${sites.length} sites`}`;
+  } else if (permissions.includes("activeTab")) summary = "Acessa o site só quando você clica nela";
+  else summary = "Não acessa dados dos sites";
+  return { summary, everywhere, hosts: sites.slice(0, 50), permissions: permissions.slice(0, 50) };
+}
+
+/** Ícone do manifest mais perto de 32 px (action.default_icon ou icons). */
+function iconPathOf(manifest) {
+  for (const set of [manifest.action?.default_icon, manifest.icons]) {
+    if (typeof set === "string") return set;
+    if (!set || typeof set !== "object") continue;
+    const sizes = Object.keys(set)
+      .map(Number)
+      .filter((size) => Number.isFinite(size) && typeof set[size] === "string")
+      .sort((a, b) => Math.abs(a - 32) - Math.abs(b - 32));
+    if (sizes.length) return set[sizes[0]];
+  }
+  return null;
+}
+
+const IMAGE_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
 
 function parseRecords(value) {
   const seen = new Set();
@@ -25,6 +110,15 @@ function parseRecords(value) {
       enabled: item.enabled !== false,
       source: item.source === "store" ? "store" : "unpacked",
       storeId: typeof item.storeId === "string" && ID_RE.test(item.storeId) ? item.storeId : null,
+      // 4.6: fixada na barra e hosts onde ela não tem acesso.
+      pinned: item.pinned === true,
+      blocked: [
+        ...new Set(
+          (Array.isArray(item.blocked) ? item.blocked : []).filter(
+            (host) => typeof host === "string" && HOST_RE.test(host),
+          ),
+        ),
+      ].slice(0, 200),
     });
     if (list.length >= LIMIT) break;
   }
@@ -68,6 +162,18 @@ function readManifest(dir, fs) {
       messages = {};
     }
   }
+  const access = accessSummary(manifest);
+  let icon = null;
+  const iconPath = iconPathOf(manifest);
+  if (iconPath && !iconPath.includes("..")) {
+    const type = IMAGE_TYPES[path.extname(iconPath).toLowerCase()];
+    try {
+      const data = type ? fs.readFileSync(path.join(dir, iconPath.replace(/^\//, ""))) : null;
+      if (data && data.length < 512 * 1024) icon = `data:${type};base64,${data.toString("base64")}`;
+    } catch {
+      icon = null;
+    }
+  }
   const page = (value) =>
     typeof value === "string" && /^[\w./-]{1,200}$/.test(value) && !value.includes("..")
       ? value
@@ -78,6 +184,9 @@ function readManifest(dir, fs) {
     description: localized(manifest.description, messages).slice(0, 300),
     popup: page(manifest.action?.default_popup),
     options: page(manifest.options_page ?? manifest.options_ui?.page),
+    icon,
+    access,
+    manifest,
   };
 }
 
@@ -85,7 +194,16 @@ function readManifest(dir, fs) {
  * `ses`: sessão das guias; `store`: { get(), set(list) } (meta do SQLite);
  * `download(url)` → Buffer do .crx; `extensionsDir`: onde os da loja ficam.
  */
-function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersion }) {
+function createExtensions({
+  ses,
+  fs,
+  store,
+  download,
+  extensionsDir,
+  chromeVersion,
+  runtimeDir = path.join(path.dirname(extensionsDir), "ExtensionsRuntime"),
+  hash = (text) => require("node:crypto").createHash("sha1").update(text).digest("hex"),
+}) {
   let records = parseRecords(store.get());
   const errors = new Map();
   const save = () => store.set(records);
@@ -99,14 +217,37 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
       return null;
     }
     Object.assign(record, { name: info.name, version: info.version });
+    // 4.6: carrega de uma cópia do app (caminho fixo por extensão: o id não muda) com o
+    // manifest ajustado para os sites bloqueados. A pasta do usuário fica intocada.
+    let target;
     try {
-      const extension = await api().loadExtension(record.dir, { allowFileAccess: false });
+      target = runtimeOf(record);
+      fs.rmSync(target, { recursive: true, force: true });
+      fs.cpSync(record.dir, target, {
+        recursive: true,
+        filter: (source) =>
+          !/[\\/](\.git|node_modules)([\\/]|$)/.test(source.slice(record.dir.length)),
+      });
+      fs.writeFileSync(
+        path.join(target, "manifest.json"),
+        JSON.stringify(patchManifest(info.manifest, record.blocked), null, 2),
+      );
+    } catch (error) {
+      errors.set(record.dir, String(error?.message ?? "copy").slice(0, 200));
+      return null;
+    }
+    try {
+      const extension = await api().loadExtension(target, { allowFileAccess: false });
       record.id = extension.id;
       return extension;
     } catch (error) {
       errors.set(record.dir, String(error?.message ?? "load").slice(0, 200));
       return null;
     }
+  }
+
+  function runtimeOf(record) {
+    return path.join(runtimeDir, hash(record.dir).slice(0, 20));
   }
 
   function unload(record) {
@@ -129,6 +270,10 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
         error: errors.get(record.dir) ?? null,
         popup: loaded && info.popup ? `chrome-extension://${record.id}/${info.popup}` : null,
         options: loaded && info.options ? `chrome-extension://${record.id}/${info.options}` : null,
+        icon: info.icon ?? null,
+        pinned: record.pinned,
+        access: info.access ?? { summary: "", everywhere: false, hosts: [], permissions: [] },
+        blocked: [...record.blocked],
       };
     });
   }
@@ -148,6 +293,8 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
       enabled: true,
       source: "unpacked",
       storeId: null,
+      pinned: false,
+      blocked: [],
       ...extra,
     };
     records.push(record);
@@ -233,6 +380,7 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
       if (!record) return { ok: false };
       unload(record);
       records = records.filter((item) => item !== record);
+      fs.rmSync(runtimeOf(record), { recursive: true, force: true });
       // Só a pasta que o app criou (loja) é apagada; a descompactada é do usuário.
       if (record.source === "store" && record.dir.startsWith(extensionsDir + path.sep)) {
         fs.rmSync(record.dir, { recursive: true, force: true });
@@ -241,6 +389,34 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
       save();
       return { ok: true };
     },
+    /** 4.6: fixa ou desafixa o ícone na barra. */
+    setPinned(dir, pinned) {
+      const record = find(dir);
+      if (!record) return { ok: false };
+      record.pinned = Boolean(pinned);
+      save();
+      return { ok: true };
+    },
+    /**
+     * 4.6: acesso ao site da aba ativa. `allowed: false` tira os content scripts da
+     * extensão daquele host (a extensão recarrega com o manifest ajustado).
+     */
+    async setSiteAccess(dir, origin, allowed) {
+      const record = find(dir);
+      const host = hostOfOrigin(origin);
+      if (!record || !host) return { ok: false };
+      const blocked = new Set(record.blocked);
+      if (allowed) blocked.delete(host);
+      else blocked.add(host);
+      record.blocked = [...blocked];
+      if (record.enabled) {
+        unload(record);
+        await load(record);
+      }
+      save();
+      return { ok: true };
+    },
+    info: (dir) => list().find((item) => item.dir === dir) ?? null,
     /** chrome-extension://<id>/… de uma extensão carregada. */
     isExtensionUrl(url) {
       const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(String(url ?? ""));
@@ -249,4 +425,11 @@ function createExtensions({ ses, fs, store, download, extensionsDir, chromeVersi
   };
 }
 
-module.exports = { createExtensions, parseRecords, readManifest };
+module.exports = {
+  accessSummary,
+  createExtensions,
+  hostOfOrigin,
+  parseRecords,
+  patchManifest,
+  readManifest,
+};

@@ -203,6 +203,7 @@ describe("migração da 1.3", () => {
         sidePanelsSeen: DEFAULT_SIDE_PANELS,
         ...DEFAULT_LIMITS,
         sidePanelWidth: 400,
+        sideBarWidth: 60,
         sidePanelWidths: {},
         sounds: true,
         soundHover: true,

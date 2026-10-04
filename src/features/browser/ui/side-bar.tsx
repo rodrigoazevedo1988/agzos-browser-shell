@@ -19,6 +19,7 @@ import {
   Sparkles,
   Twitter,
   Video,
+  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -38,7 +39,15 @@ import type { DesktopBridge } from "../desktop";
 import { faviconSources } from "../favicon";
 import { HOVER_SOUND } from "@/features/sounds/sounds";
 
-import { dragPanelWidth, panelWidthLimits, sideBarFit, type SidePanelApp } from "../side-panels";
+import {
+  SIDE_BAR_WIDTH,
+  clampSideBarWidth,
+  dragPanelWidth,
+  panelWidthLimits,
+  sideBarFit,
+  sideBarLayout,
+  type SidePanelApp,
+} from "../side-panels";
 
 const ICONS: Record<string, LucideIcon> = {
   whatsapp: MessageCircle,
@@ -125,8 +134,12 @@ export function SideBar({
   onToggle,
   onManage,
   onMore,
+  onTools,
+  width = SIDE_BAR_WIDTH.initial,
 }: {
   apps: SidePanelApp[];
+  /** 4.6: largura escolhida pelo usuário (a alça fica em SideBarResize). */
+  width?: number;
   open: string | null;
   /** Caixinha dos apps que não couberam está aberta. */
   moreOpen?: boolean;
@@ -135,6 +148,8 @@ export function SideBar({
   onManage: (event: React.MouseEvent) => void;
   /** "Mais": abre a caixinha com os apps escondidos. */
   onMore: (anchor: SideMoreAnchor, hidden: SidePanelApp[]) => void;
+  /** 4.6: menu das ferramentas (Session Tab, Scratchpad, mira…); só no app. */
+  onTools?: ((anchor: DOMRect) => void) | undefined;
 }) {
   const navRef = useRef<HTMLElement | null>(null);
   const itemHeight = useRef(ITEM_FALLBACK_PX);
@@ -172,8 +187,23 @@ export function SideBar({
   const hidden = fit === null ? [] : apps.slice(fit);
   const hiddenOpen = hidden.some((app) => app.id === open);
 
+  const layout = sideBarLayout(width);
   return (
-    <nav ref={navRef} className="side-bar" aria-label="Painéis laterais" onContextMenu={onManage}>
+    <nav
+      ref={navRef}
+      className={cn("side-bar", `side-bar-${layout.mode}`)}
+      aria-label="Painéis laterais"
+      onContextMenu={onManage}
+      data-mode={layout.mode}
+      style={
+        {
+          "--side-bar-w": `${clampSideBarWidth(width)}px`,
+          "--side-icon": `${layout.icon}px`,
+          "--side-img": `${layout.image}px`,
+          "--side-font": `${layout.font}px`,
+        } as CSSProperties
+      }
+    >
       <button
         type="button"
         className={cn("side-bar-item control", open === CONTROL_PANEL && "on")}
@@ -204,6 +234,22 @@ export function SideBar({
         </span>
         <span className="side-bar-name">Portas</span>
       </button>
+      {onTools && (
+        <button
+          type="button"
+          className="side-bar-item control"
+          onClick={(event) => onTools(event.currentTarget.getBoundingClientRect())}
+          title="Ferramentas: Session Tab, Scratchpad, mira, captura, leitura, notas"
+          aria-label="Ferramentas"
+          data-side-fixed
+          {...HOVER_SOUND}
+        >
+          <span className="side-app-icon gx">
+            <Wrench aria-hidden="true" />
+          </span>
+          <span className="side-bar-name">Ferramentas</span>
+        </button>
+      )}
       <span className="side-bar-divider" aria-hidden="true" data-side-fixed />
       {shown.map((app) => (
         <button
@@ -541,5 +587,75 @@ export function SidePanel({
         />
       )}
     </aside>
+  );
+}
+
+/**
+ * Alça da borda direita da barra lateral (4.6): arrastar muda a largura; duplo clique volta
+ * ao padrão; setas do teclado ajustam de 8 em 8 px. Por cima das páginas quem segue o
+ * cursor é o main (o mesmo arraste do painel lateral).
+ */
+export function SideBarResize({
+  width,
+  desktop,
+  onResize,
+}: {
+  width: number;
+  desktop: DesktopBridge | null;
+  onResize: (width: number) => void;
+}) {
+  const resizeRef = useRef(onResize);
+  resizeRef.current = onResize;
+  const start = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const bar = event.currentTarget.previousElementSibling?.getBoundingClientRect();
+    const left = bar?.left ?? 0;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const apply = (x: number) => resizeRef.current(clampSideBarWidth(x - left));
+    let finished = false;
+    let offDrag = () => {};
+    const move = (moveEvent: globalThis.PointerEvent) => apply(moveEvent.clientX);
+    const up = () => {
+      if (finished) return;
+      finished = true;
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      offDrag();
+      void desktop?.sidePanelDrag(false);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+    if (desktop) {
+      offDrag = desktop.onSidePanelDrag(({ x, done }) => {
+        if (done) up();
+        else if (typeof x === "number") apply(x);
+      });
+      void desktop.sidePanelDrag(true);
+    }
+  };
+  return (
+    <div
+      className="side-bar-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Largura da barra lateral"
+      aria-valuemin={SIDE_BAR_WIDTH.min}
+      aria-valuemax={SIDE_BAR_WIDTH.max}
+      aria-valuenow={width}
+      tabIndex={0}
+      title="Arraste para mudar a largura (duplo clique volta ao padrão)"
+      onPointerDown={start}
+      onDoubleClick={() => onResize(SIDE_BAR_WIDTH.initial)}
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        const step = event.key === "ArrowRight" ? 8 : event.key === "ArrowLeft" ? -8 : 0;
+        if (!step) return;
+        event.preventDefault();
+        onResize(clampSideBarWidth(width + step));
+      }}
+    />
   );
 }
