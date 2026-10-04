@@ -7,6 +7,7 @@ import {
   parseClosedTabs,
   parseDial,
   parseLinks,
+  parseNotes,
   parsePrefs,
   parseSnapshot,
   readLegacySnapshot,
@@ -31,6 +32,7 @@ export function syncPayloadOf(sections: Record<string, unknown>): SyncPayload {
   if ("prefs" in sections) payload.prefs = parsePrefs(sections["prefs"]);
   if ("links" in sections) payload.links = parseLinks(sections["links"]);
   if ("dial" in sections) payload.dial = parseDial(sections["dial"]);
+  if ("notes" in sections) payload.notes = parseNotes(sections["notes"]);
   if ("closedTabs" in sections) payload.closedTabs = parseClosedTabs(sections["closedTabs"]);
   if ("bookmarks" in sections) {
     const bookmarks = parseBookmarks(sections["bookmarks"]);
@@ -156,6 +158,7 @@ function sectionsOf(snapshot: Snapshot): Record<string, unknown> {
     dial: snapshot.dial ?? null,
     closedTabs: snapshot.closedTabs,
     bookmarks: snapshot.bookmarks,
+    notes: snapshot.notes ?? {},
   };
 }
 

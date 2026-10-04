@@ -6,9 +6,12 @@ import {
   Gauge,
   Instagram,
   Mail,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   MessagesSquare,
   Music,
+  Network,
   Pin,
   Plus,
   RefreshCw,
@@ -102,6 +105,8 @@ export function SidePanelIcon({ app }: { app: SidePanelApp }) {
 
 /** Id do painel do GX Control (da casca, sem página): o primeiro da barra. */
 export const CONTROL_PANEL = "control";
+/** Painel de portas (4.5): processos escutando no PC, matar e expor por túnel. */
+export const PORTS_PANEL = "ports";
 
 /** Altura de um app na barra (ícone + nome) antes da primeira medida. */
 const ITEM_FALLBACK_PX = 52;
@@ -183,6 +188,21 @@ export function SideBar({
           <Gauge aria-hidden="true" />
         </span>
         <span className="side-bar-name">Control</span>
+      </button>
+      <button
+        type="button"
+        className={cn("side-bar-item control", open === PORTS_PANEL && "on")}
+        onClick={() => onToggle(PORTS_PANEL)}
+        title="Portas em uso: matar processo e expor por túnel HTTPS"
+        aria-label="Portas em uso"
+        aria-pressed={open === PORTS_PANEL}
+        data-side-fixed
+        {...HOVER_SOUND}
+      >
+        <span className="side-app-icon gx">
+          <Network aria-hidden="true" />
+        </span>
+        <span className="side-bar-name">Portas</span>
       </button>
       <span className="side-bar-divider" aria-hidden="true" data-side-fixed />
       {shown.map((app) => (
@@ -325,15 +345,20 @@ export function SidePanel({
   app,
   width,
   desktop,
+  expanded = false,
   onClose,
   onOpenInTab,
+  onExpand,
   onResize,
 }: {
   app: SidePanelApp;
   width: number;
   desktop: DesktopBridge | null;
+  /** 4.5: o painel ocupa a área principal (as guias saem de cena; o painel menor some). */
+  expanded?: boolean;
   onClose: () => void;
   onOpenInTab: (url: string) => void;
+  onExpand: (expanded: boolean) => void;
   onResize: (width: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -345,6 +370,11 @@ export function SidePanel({
       void desktop.sidePanelHide();
     };
   }, [desktop, app.id, app.url]);
+
+  // Mesma view nos dois tamanhos: só a área muda (o main esconde as guias quando expande).
+  useEffect(() => {
+    void desktop?.sidePanelExpand(expanded);
+  }, [desktop, app.id, expanded]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -366,7 +396,7 @@ export function SidePanel({
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [desktop, app.id]);
+  }, [desktop, app.id, expanded]);
 
   // Zoom só deste painel (Ctrl+roda, Ctrl +/−/0 com o foco nele): mostrado no cabeçalho.
   const [zoom, setZoom] = useState(1);
@@ -427,10 +457,11 @@ export function SidePanel({
 
   return (
     <aside
-      className="side-panel"
-      style={{ width }}
+      className={cn("side-panel", expanded && "expanded")}
+      style={expanded ? undefined : { width }}
       aria-label={`Painel ${app.name}`}
       data-side-panel={app.id}
+      data-expanded={expanded || undefined}
     >
       <header className="side-panel-head">
         <SidePanelIcon app={app} />
@@ -458,7 +489,17 @@ export function SidePanel({
         <Button
           variant="ghost"
           size="icon"
-          title="Abrir numa guia"
+          title={expanded ? "Recolher para o painel lateral" : "Expandir para a tela toda"}
+          aria-label={expanded ? `Recolher ${app.name}` : `Expandir ${app.name}`}
+          aria-pressed={expanded}
+          onClick={() => onExpand(!expanded)}
+        >
+          {expanded ? <Minimize2 /> : <Maximize2 />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Abrir numa guia (fecha o painel)"
           aria-label={`Abrir ${app.name} numa guia`}
           onClick={() => onOpenInTab(app.url)}
         >
@@ -483,18 +524,20 @@ export function SidePanel({
           </div>
         )}
       </div>
-      <div
-        className="side-panel-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Largura do painel lateral"
-        aria-valuemin={limits.min}
-        aria-valuemax={limits.max}
-        aria-valuenow={width}
-        tabIndex={0}
-        onPointerDown={startResize}
-        onKeyDown={keyResize}
-      />
+      {!expanded && (
+        <div
+          className="side-panel-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Largura do painel lateral"
+          aria-valuemin={limits.min}
+          aria-valuemax={limits.max}
+          aria-valuenow={width}
+          tabIndex={0}
+          onPointerDown={startResize}
+          onKeyDown={keyResize}
+        />
+      )}
     </aside>
   );
 }

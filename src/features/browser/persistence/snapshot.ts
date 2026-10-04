@@ -15,6 +15,7 @@ import {
   BOOKMARKS_URL,
   CLOSED_TABS_LIMIT,
   DIAL_URL,
+  SCRATCHPAD_URL,
   HIBERNATE_MINUTES,
   HISTORY_URL,
   SETTINGS_URL,
@@ -23,8 +24,13 @@ import {
   type Prefs,
 } from "../store/state";
 import {
+  NOTES_LIMIT,
+  NOTE_TEXT_LIMIT,
+  SESSION_ID_RE,
   TAB_GROUP_COLORS,
+  noteKeyOf,
   type BookmarkNode,
+  type PageNote,
   type ClosedTab,
   type Entry,
   type QuickLink,
@@ -55,6 +61,8 @@ export type Snapshot = {
   closedTabs: ClosedTab[];
   /** null = ainda não existia (antes da 1.6): os favoritos nascem dos atalhos. */
   bookmarks: BookmarkNode[] | null;
+  /** Notas por página (4.5); ausente = nenhuma. */
+  notes?: Record<string, PageNote>;
 };
 
 export const SNAPSHOT_SECTIONS = [
@@ -65,9 +73,10 @@ export const SNAPSHOT_SECTIONS = [
   "closedTabs",
   "bookmarks",
   "dial",
+  "notes",
 ] as const;
 
-const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL, DIAL_URL]);
+const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL, DIAL_URL, SCRATCHPAD_URL]);
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -107,6 +116,17 @@ function parseTab(value: unknown): Tab | null {
     tab.workspaceId = value["workspaceId"] as number;
   }
   if (value["muted"] === true) tab.muted = true;
+  // Session Tab (4.5): o id aponta para a partição; a cor só aceita hex.
+  const session = value["session"];
+  if (
+    isObject(session) &&
+    isString(session["id"]) &&
+    SESSION_ID_RE.test(session["id"]) &&
+    isString(session["color"]) &&
+    /^#[0-9a-f]{6}$/i.test(session["color"])
+  ) {
+    tab.session = { id: session["id"], color: session["color"] };
+  }
   if (isString(value["favicon"]) && /^(https?:|data:image\/)/.test(value["favicon"])) {
     tab.favicon = value["favicon"];
   }
@@ -217,6 +237,9 @@ export function parseClosedTabs(value: unknown): ClosedTab[] {
     .slice(-CLOSED_TABS_LIMIT);
 }
 
+/** Acento padrão até a 4.1.3. */
+const LEGACY_ACCENT = "#D43420";
+
 export function parsePrefs(value: unknown): Prefs {
   const raw = isObject(value) ? value : {};
   const bool = (key: keyof Prefs) =>
@@ -226,6 +249,11 @@ export function parsePrefs(value: unknown): Prefs {
     shield: bool("shield"),
     aiOpen: bool("aiOpen"),
     aiSidebar: bool("aiSidebar"),
+    notesOpen: bool("notesOpen"),
+    readerFontSize:
+      typeof raw["readerFontSize"] === "number" && Number.isFinite(raw["readerFontSize"])
+        ? Math.round(Math.min(26, Math.max(15, raw["readerFontSize"])))
+        : defaultPrefs.readerFontSize,
     railCollapsed: bool("railCollapsed"),
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),
@@ -250,7 +278,13 @@ export function parsePrefs(value: unknown): Prefs {
     pausedHosts: Array.isArray(raw["pausedHosts"])
       ? [...new Set(raw["pausedHosts"].filter(isString))]
       : [],
-    accentColor: isString(raw["accentColor"]) ? raw["accentColor"] : defaultPrefs.accentColor,
+    // 4.5: o vermelho padrão antigo (#D43420) vira o novo padrão (#D10A11).
+    accentColor:
+      isString(raw["accentColor"]) && /^#[0-9a-f]{6}$/i.test(raw["accentColor"])
+        ? raw["accentColor"].toUpperCase() === LEGACY_ACCENT
+          ? defaultPrefs.accentColor
+          : raw["accentColor"]
+        : defaultPrefs.accentColor,
     backgroundImage: isString(raw["backgroundImage"])
       ? raw["backgroundImage"]
       : defaultPrefs.backgroundImage,
@@ -298,14 +332,37 @@ export function parseSnapshot(value: unknown): Snapshot | null {
     dial: parseDial(value["dial"]),
     closedTabs: parseClosedTabs(value["closedTabs"]),
     bookmarks: parseBookmarks(value["bookmarks"]),
+    notes: parseNotes(value["notes"]),
   };
+}
+
+/** Notas gravadas → só as válidas (chave igual à da URL, texto dentro do limite). */
+export function parseNotes(value: unknown): Record<string, PageNote> {
+  if (!isObject(value)) return {};
+  const notes: [string, PageNote][] = [];
+  for (const [key, item] of Object.entries(value)) {
+    if (!isObject(item) || !isString(item["url"]) || !isString(item["text"])) continue;
+    if (noteKeyOf(item["url"]) !== key || !item["text"].trim()) continue;
+    notes.push([
+      key,
+      {
+        url: item["url"].slice(0, 4000),
+        title: isString(item["title"]) ? item["title"].slice(0, 300) : "",
+        text: item["text"].slice(0, NOTE_TEXT_LIMIT),
+        updatedAt: Number.isFinite(item["updatedAt"]) ? (item["updatedAt"] as number) : 0,
+      },
+    ]);
+  }
+  return Object.fromEntries(
+    notes.sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, NOTES_LIMIT),
+  );
 }
 
 export type PersistedSlice = Pick<
   BrowserState,
   "tabs" | "activeId" | "prefs" | "links" | "closedTabs" | "bookmarks"
 > &
-  Partial<Pick<BrowserState, "groups" | "workspaces" | "split" | "dial">>;
+  Partial<Pick<BrowserState, "groups" | "workspaces" | "split" | "dial" | "notes">>;
 
 export function snapshotOf(state: PersistedSlice): Snapshot {
   const tabs = state.tabs.filter((tab) => !tab.private).map(({ private: _private, ...tab }) => tab);
@@ -326,6 +383,7 @@ export function snapshotOf(state: PersistedSlice): Snapshot {
     dial: state.dial ?? null,
     closedTabs: state.closedTabs.slice(-CLOSED_TABS_LIMIT),
     bookmarks: state.bookmarks,
+    notes: state.notes ?? {},
   };
 }
 
@@ -342,6 +400,7 @@ export function toHydratePayload(snapshot: Snapshot | null): HydratePayload | nu
     groups: snapshot.session.groups ?? [],
     workspaces: snapshot.session.workspaces ?? [],
     split: snapshot.session.split ?? null,
+    notes: snapshot.notes ?? {},
   };
 }
 
@@ -390,6 +449,7 @@ export function readLegacySnapshot(storage: StorageLike): Snapshot | null {
     // A 1.3 empilhava no fim e reabria o último.
     closedTabs: parseClosedTabs(readJson(storage, "agzos-closed-tabs")),
     bookmarks: null,
+    notes: {},
   };
 }
 

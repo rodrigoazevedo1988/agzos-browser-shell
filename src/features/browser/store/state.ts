@@ -15,6 +15,7 @@ import type {
   Tab,
   TabGroup,
   TabOrientation,
+  PageNote,
   Workspace,
 } from "../types";
 
@@ -31,6 +32,8 @@ export const BOOKMARKS_URL = "agzos://favoritos";
 export const SETTINGS_URL = "agzos://configuracoes";
 /** Discador (3.0): grade de sites ao lado da página inicial. */
 export const DIAL_URL = "agzos://discador";
+/** API Scratchpad (4.5): reenviar requisições capturadas da guia. */
+export const SCRATCHPAD_URL = "agzos://scratchpad";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 /** Workspace de toda guia sem `workspaceId` (o primeiro, que não pode ser apagado). */
@@ -65,6 +68,10 @@ export type Prefs = {
   aiOpen: boolean;
   /** Barra de conversas do Agzos AI (4.1.3) aberta ao lado do chat. */
   aiSidebar: boolean;
+  /** Painel de notas (4.5) aberto ao lado da página. */
+  notesOpen: boolean;
+  /** Tamanho da letra do modo leitura (4.5), em px. */
+  readerFontSize: number;
   orientation: TabOrientation;
   railCollapsed: boolean;
   pausedHosts: string[];
@@ -131,7 +138,9 @@ export type Prefs = {
 export const HIBERNATE_MINUTES = [30, 15, 60, 120] as const;
 
 export const defaultPrefs: Prefs = {
-  dark: false,
+  dark: true,
+  notesOpen: false,
+  readerFontSize: 19,
   engine: "duckduckgo",
   shield: true,
   aiOpen: true,
@@ -154,7 +163,7 @@ export const defaultPrefs: Prefs = {
   soundKeys: true,
   soundTick: DEFAULT_SOUND_TICK,
   soundVolume: 40,
-  accentColor: "#D43420",
+  accentColor: "#D10A11",
   backgroundImage: "",
   backgroundBlur: 0,
   backgroundOpacity: 100,
@@ -188,6 +197,8 @@ export type BrowserState = {
   links: QuickLink[];
   /** Cards do Discador (3.0), na ordem do usuário. */
   dial: QuickLink[];
+  /** Notas por página (4.5), pela chave de noteKeyOf. */
+  notes: Record<string, PageNote>;
   bookmarks: BookmarkNode[];
   prefs: Prefs;
   // Só em memória.
@@ -239,6 +250,7 @@ export const initialState: BrowserState = {
   closedTabs: [],
   links: defaultLinks,
   dial: defaultDial,
+  notes: {},
   bookmarks: [],
   prefs: defaultPrefs,
   nextId: 2,

@@ -101,6 +101,7 @@ describe("snapshot", () => {
       dial: null,
       closedTabs: [{ title: "a", url: "https://a.com" }],
       bookmarks: null,
+      notes: {},
     });
   });
 
@@ -123,6 +124,7 @@ describe("snapshot", () => {
       groups: [],
       workspaces: [],
       split: null,
+      notes: {},
     });
   });
 
@@ -187,6 +189,8 @@ describe("migração da 1.3", () => {
         shield: false,
         aiOpen: false,
         aiSidebar: true,
+        notesOpen: false,
+        readerFontSize: 19,
         orientation: "vertical",
         railCollapsed: true,
         pausedHosts: ["x.com"],
@@ -205,7 +209,7 @@ describe("migração da 1.3", () => {
         soundKeys: true,
         soundTick: "mecanico",
         soundVolume: 40,
-        accentColor: "#D43420",
+        accentColor: "#D10A11",
         backgroundImage: "",
         backgroundBlur: 0,
         backgroundOpacity: 100,
@@ -230,6 +234,7 @@ describe("migração da 1.3", () => {
       dial: null,
       closedTabs: [{ title: "Velha", url: "https://velha.com" }],
       bookmarks: null,
+      notes: {},
     });
   });
 

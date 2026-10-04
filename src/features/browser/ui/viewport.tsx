@@ -140,6 +140,7 @@ export function Viewport({
         requestedUrl={state.requestedUrl?.id === paneTab.id ? state.requestedUrl.url : undefined}
         dark={state.prefs.dark}
         privateTab={Boolean(paneTab.private)}
+        sessionId={paneTab.session?.id}
         muted={Boolean(paneTab.muted)}
         active={active}
         pane={pane}

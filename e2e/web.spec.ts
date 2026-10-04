@@ -134,7 +134,8 @@ test("sessão, tema e motor persistem; aba anônima não", async ({ page }) => {
   await page.getByRole("button", { name: "Nova aba anônima" }).first().click();
   await go(page, "notion.so");
   await expect(tabs(page)).toHaveCount(2);
-  await page.getByRole("button", { name: "Usar tema escuro" }).click();
+  // 4.5: escuro é o padrão; o claro também persiste.
+  await page.getByRole("button", { name: "Usar tema claro" }).click();
   await page.getByRole("button", { name: "Menu do Agzos" }).click();
   await page.getByRole("menuitem", { name: "Configurações" }).click();
   await page.getByRole("button", { name: "Mecanismo de pesquisa" }).click();
@@ -145,7 +146,7 @@ test("sessão, tema e motor persistem; aba anônima não", async ({ page }) => {
   await reload(page);
   await expect(tabs(page)).toHaveCount(1);
   await expect(tabs(page).first()).toContainText("github.com");
-  await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
+  await expect(page.locator(".browser-stage")).not.toHaveClass(/dark/);
   await page.keyboard.press("Control+t");
   await go(page, "agzos");
   await expect(omnibox(page)).toHaveValue("https://yandex.com/search/?text=agzos");
@@ -541,7 +542,7 @@ test("1.5.2: menu do ⋯ com o essencial e página de configurações com seçõ
   await expect(menu.getByRole("menuitem", { name: /Histórico/ })).toBeVisible();
   // Tema pelo menu.
   await menu.getByRole("switch", { name: "Tema escuro" }).click();
-  await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
+  await expect(page.locator(".browser-stage")).not.toHaveClass(/dark/);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
@@ -553,8 +554,9 @@ test("1.5.2: menu do ⋯ com o essencial e página de configurações com seçõ
     "aria-current",
     "page",
   );
-  await page.getByRole("switch", { name: "Tema escuro" }).click();
-  await expect(page.locator(".browser-stage")).not.toHaveClass(/dark/);
+  // 4.5: na página, o tema é Escuro/Claro.
+  await page.getByRole("radio", { name: "Escuro" }).click();
+  await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
   await nav.getByRole("button", { name: "Atalhos de teclado" }).click();
   await expect(page.getByText("Ctrl+Shift+P", { exact: true })).toBeVisible();
   // Busca em todas as seções, palavra por palavra.

@@ -52,6 +52,7 @@ import {
   type GestureEvent,
   type NativeMenuItem,
   type PwaTabState,
+  type ReaderArticle,
   type SitePermission,
   type StartupInfo,
   type UpdateState,
@@ -61,7 +62,13 @@ import { PanelView, type PanelSpec } from "./overlay/panels";
 import { useLiveOverlay } from "./overlay/use-live-overlay";
 import { WorkspaceButton } from "./ui/workspace-panel";
 import { SIDE_PANEL_APPS, panelWidthOf, sidePanelApp } from "./side-panels";
-import { CONTROL_PANEL, SideBar, SidePanel, type SideMoreAnchor } from "./ui/side-bar";
+import { CONTROL_PANEL, PORTS_PANEL, SideBar, SidePanel, type SideMoreAnchor } from "./ui/side-bar";
+import { CaptureDialog, type CaptureSources } from "@/features/capture/dialog";
+import { composeLayers } from "@/features/capture/compose";
+import { PortsPanel } from "@/features/dev/ports-panel";
+import { NotesPanel } from "@/features/notes/panel";
+import { READER_FONT, ReaderView } from "@/features/reader/view";
+import { ScratchpadPage } from "@/features/scratchpad/page";
 import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
@@ -84,13 +91,21 @@ import {
   BOOKMARKS_URL,
   DIAL_URL,
   HISTORY_URL,
+  SCRATCHPAD_URL,
   SETTINGS_URL,
   defaultPrefs,
   initialState,
   type Prefs,
 } from "./store/state";
 import { ContextMenu, useContextMenu } from "./tab-menu";
-import { BOOKMARK_BAR, type BookmarkNode, type Entry, type Tab, type VaultEntry } from "./types";
+import {
+  BOOKMARK_BAR,
+  noteKeyOf,
+  type BookmarkNode,
+  type Entry,
+  type Tab,
+  type VaultEntry,
+} from "./types";
 import { BookmarksBar } from "./ui/bookmarks-bar";
 import type { FolderAnchor } from "./ui/folder-dropdown";
 import { folderMenu, webMenuGroups } from "./ui/shell-menu";
@@ -247,8 +262,19 @@ export function AgzosBrowser() {
     }
   }, [prefs.dark, prefs.uiBlur, prefs.accentColor]);
 
+  // 4.5: captura de tela (fotos já tiradas), modo leitura por guia e o alvo do Scratchpad.
+  const [capture, setCapture] = useState<CaptureSources | null>(null);
+  // Modo leitura: o artigo e a URL da guia quando entrou (navegar sai do modo).
+  const [readers, setReaders] = useState<Record<number, { article: ReaderArticle; url: string }>>(
+    {},
+  );
+  const [scratchTarget, setScratchTarget] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const activeTab = activeTabOf(state);
   const current = entryOf(activeTab);
+  const noteKey = current.kind === "home" ? null : noteKeyOf(current.url);
+  // Modo leitura da guia ativa (cobre só a área da página).
+  const activeReader = readers[activeTab.id] ?? null;
   const nav = navState(state, desktop !== null);
   // A barra mostra só as guias do workspace ativo.
   const orderedTabs = useMemo(
@@ -281,6 +307,56 @@ export function AgzosBrowser() {
     [prefs.sidePanels],
   );
   const openSideApp = sideApps.find((app) => app.id === sidePanel) ?? null;
+  // 4.5: atalho expandido para a área principal. Só vale para o app aberto: trocar ou fechar
+  // o painel volta ao tamanho menor, e nunca há duas superfícies do mesmo atalho.
+  const [expandedPanel, setExpandedPanel] = useState<string | null>(null);
+  const sideExpanded = openSideApp !== null && expandedPanel === openSideApp.id;
+  useEffect(() => {
+    setExpandedPanel((current) => (current === sidePanel ? current : null));
+  }, [sidePanel]);
+
+  // Notas e Agzos AI dividem o lado direito: abrir um fecha o outro (a página não some
+  // espremida entre os dois).
+  const rightDock = useRef({ notes: prefs.notesOpen, ai: prefs.aiOpen });
+  useEffect(() => {
+    const before = rightDock.current;
+    rightDock.current = { notes: prefs.notesOpen, ai: prefs.aiOpen };
+    if (prefs.notesOpen && prefs.aiOpen) {
+      if (!before.notes) setPrefs({ aiOpen: false });
+      else if (!before.ai) setPrefs({ notesOpen: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.notesOpen, prefs.aiOpen]);
+
+  // Modo leitura: a guia lida fica coberta no main (a página continua viva por baixo).
+  const coveredRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (!desktop) return;
+    const next = new Set(Object.keys(readers).map(Number));
+    for (const id of next) if (!coveredRef.current.has(id)) void desktop.tabCover(id, true);
+    for (const id of coveredRef.current) if (!next.has(id)) void desktop.tabCover(id, false);
+    coveredRef.current = next;
+  }, [desktop, readers]);
+  // Navegou ou fechou a guia: sai do modo leitura dela.
+  useEffect(() => {
+    setReaders((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [id, reader] of Object.entries(current)) {
+        const tab = state.tabs.find((item) => item.id === Number(id));
+        if (!tab || entryOf(tab).url !== reader.url) {
+          delete next[Number(id)];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [state.tabs]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   // Caixinha "Mais" da barra lateral (3.1.1): os apps que não couberam.
   const [sideMore, setSideMore] = useState<{ anchor: SideMoreAnchor; ids: string[] } | null>(null);
   // "Mudar para esta guia" na omnibox: as outras abas normais.
@@ -1053,6 +1129,48 @@ export function AgzosBrowser() {
     return desktop.onUpdate(setUpdate);
   }, [desktop]);
 
+  // 4.5: captura. As fotos (guia e janela inteira) saem antes do diálogo aparecer.
+  const takeCapture = async () => {
+    if (!desktop || capture) return;
+    const [tab, win] = await Promise.all([
+      desktop.captureTake("tab").catch(() => ({ ok: false as const, layers: undefined })),
+      desktop.captureTake("window").catch(() => ({ ok: false as const, layers: undefined })),
+    ]);
+    const [tabPng, windowPng] = await Promise.all([
+      tab.ok && tab.layers ? composeLayers(tab.layers).catch(() => null) : null,
+      win.ok && win.layers ? composeLayers(win.layers).catch(() => null) : null,
+    ]);
+    if (!tabPng && !windowPng) {
+      setNotice("Não foi possível capturar a tela.");
+      return;
+    }
+    setCapture({ tab: tabPng, window: windowPng });
+  };
+
+  // 4.5: modo leitura. Entrar extrai o artigo da guia; sair (ou navegar) devolve a página.
+  const toggleReader = async (tabId: number) => {
+    if (!desktop) return;
+    if (readers[tabId]) {
+      setReaders(({ [tabId]: _closed, ...rest }) => rest);
+      return;
+    }
+    const tab = state.tabs.find((item) => item.id === tabId);
+    if (!tab) return;
+    const result = await desktop.readerExtract(tabId);
+    if (!result.ok) {
+      setNotice(
+        result.reason === "empty"
+          ? "Não achei um artigo para ler nesta página."
+          : "O modo leitura só abre em páginas da web.",
+      );
+      return;
+    }
+    setReaders((current) => ({
+      ...current,
+      [tabId]: { article: result.article, url: entryOf(tab).url },
+    }));
+  };
+
   const ctx: CommandContext = {
     state,
     dispatch,
@@ -1091,6 +1209,23 @@ export function AgzosBrowser() {
         }
         setPrefs({ sidebar: true });
         setSidePanel(CONTROL_PANEL);
+      },
+      togglePorts: () => {
+        if (sidePanel === PORTS_PANEL) {
+          setSidePanel(null);
+          return;
+        }
+        setPrefs({ sidebar: true });
+        setSidePanel(PORTS_PANEL);
+      },
+      capture: () => void takeCapture(),
+      toggleReader: (tabId) => void toggleReader(tabId),
+      toggleNotes: () => setPrefs({ notesOpen: !prefs.notesOpen }),
+      openScratchpad: (tabId) => {
+        setScratchTarget(tabId);
+        const open = state.tabs.find((tab) => entryOf(tab).url === SCRATCHPAD_URL);
+        if (open) dispatch({ type: "tab/activate", id: open.id });
+        else openInternal(SCRATCHPAD_URL, "API Scratchpad");
       },
     },
   };
@@ -1232,10 +1367,16 @@ export function AgzosBrowser() {
     };
   }, [switcherOpen, desktop]);
 
-  // Seletor na camada: os cartões vão uma vez ao abrir; depois só o índice.
+  // Seletor na camada: os cartões vão ao abrir e de novo quando chega uma miniatura (a foto
+  // da guia ativa é tirada na abertura e chega logo depois); no resto, só o índice.
   const layerShown = useRef(false);
   const switcherIds = state.switcher?.ids.join(",") ?? "";
   const switcherIndex = state.switcher?.index ?? 0;
+  const switcherThumbs = switcherIds
+    .split(",")
+    .map((id) => state.thumbnails[Number(id)] ?? "")
+    .join("|");
+  const sentThumbs = useRef("");
   useEffect(() => {
     if (!desktop) return;
     if (!switcherLayer || !switcherVisible || !switcherIds) {
@@ -1244,8 +1385,9 @@ export function AgzosBrowser() {
       return;
     }
     const current = stateRef.current;
-    if (!layerShown.current) {
+    if (!layerShown.current || sentThumbs.current !== switcherThumbs) {
       layerShown.current = true;
+      sentThumbs.current = switcherThumbs;
       const cards = switcherIds.split(",").flatMap((id) => {
         const tab = current.tabs.find((item) => item.id === Number(id));
         if (!tab) return [];
@@ -1265,7 +1407,7 @@ export function AgzosBrowser() {
       return;
     }
     void desktop.renderSwitcher({ index: switcherIndex });
-  }, [desktop, switcherLayer, switcherVisible, switcherIds, switcherIndex]);
+  }, [desktop, switcherLayer, switcherVisible, switcherIds, switcherIndex, switcherThumbs]);
 
   const openAddress = useCallback(
     (raw: string) => {
@@ -1541,6 +1683,10 @@ export function AgzosBrowser() {
     // App do Mac sem barra de título nativa: a casca desenha a área de arrastar.
     desktop && isMac && "mac-frameless",
     prefs.orientation === "vertical" && "vertical-tabs",
+    // 4.5: a camada dos painéis (overlay) também recebe a cor de acento.
+    prefs.accentColor !== defaultPrefs.accentColor &&
+      /^#[0-9a-f]{6}$/i.test(prefs.accentColor) &&
+      `accent-${prefs.accentColor.slice(1).toLowerCase()}`,
   ].filter((name): name is string => typeof name === "string");
   const bookmarkNode =
     panel === "bookmark" && editing
@@ -1797,7 +1943,8 @@ export function AgzosBrowser() {
     (switcherVisible && !switcherLayer) ||
     omniboxOpen ||
     whatsNew !== null ||
-    linkDialog !== null;
+    linkDialog !== null ||
+    capture !== null;
 
   const [viewHidden, setViewHidden] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
@@ -2043,8 +2190,13 @@ export function AgzosBrowser() {
               app={openSideApp}
               width={panelWidthOf(prefs, openSideApp.id)}
               desktop={desktop}
+              expanded={sideExpanded && !state.fullscreen}
               onClose={() => setSidePanel(null)}
-              onOpenInTab={(url) => openUrl(url, true)}
+              onOpenInTab={(url) => {
+                setSidePanel(null);
+                openUrl(url, true);
+              }}
+              onExpand={(expanded) => setExpandedPanel(expanded ? openSideApp.id : null)}
               onResize={(width) =>
                 setPrefs({
                   sidePanelWidths: { ...prefs.sidePanelWidths, [openSideApp.id]: width },
@@ -2073,6 +2225,13 @@ export function AgzosBrowser() {
               onClose={() => setSidePanel(null)}
             />
           )}
+          {sidePanel === PORTS_PANEL && prefs.sidebar && !state.fullscreen && (
+            <PortsPanel
+              desktop={desktop}
+              onClose={() => setSidePanel(null)}
+              onOpenUrl={(url) => openUrl(url, true)}
+            />
+          )}
           {prefs.orientation === "vertical" && (
             <TabRail
               {...listProps}
@@ -2080,94 +2239,134 @@ export function AgzosBrowser() {
               onToggleCollapsed={() => setPrefs({ railCollapsed: !prefs.railCollapsed })}
             />
           )}
-          <div className="workspace">
+          <div className={cn("workspace", sideExpanded && "behind-panel")}>
             <div className="workspace-main">
-              <Viewport
-                state={state}
-                tab={activeTab}
-                loading={loading}
-                blockedToday={blockedToday}
-                snapshot={viewHidden ? snapshot : null}
-                desktop={desktop}
-                layoutSignature={[
-                  prefs.bookmarksBar ? "b" : "",
-                  permission ? "p" : "",
-                  saveCandidate ? "sv" : "",
-                  state.find && state.find.id === activeTab.id ? "f" : "",
-                  startupInfo ? "s" : "",
-                  state.unresponsive.includes(activeTab.id) ? "u" : "",
-                  prefs.orientation,
-                ].join("|")}
-                onOpen={openAddress}
-                onRequestAddLink={() => setLinkDialog("home")}
-                onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
-                onOpenDial={() => openInternal(DIAL_URL, "Discador")}
-                internal={(pageUrl) =>
-                  pageUrl === HISTORY_URL ? (
-                    <HistoryPage store={historyStore} onOpen={openUrl} />
-                  ) : pageUrl === BOOKMARKS_URL ? (
-                    <BookmarksManager
-                      nodes={state.bookmarks}
-                      actions={bookmarkActions}
-                      onOpen={openUrl}
+              <div className="viewport-stack">
+                <Viewport
+                  state={state}
+                  tab={activeTab}
+                  loading={loading}
+                  blockedToday={blockedToday}
+                  snapshot={viewHidden ? snapshot : null}
+                  desktop={desktop}
+                  layoutSignature={[
+                    prefs.bookmarksBar ? "b" : "",
+                    permission ? "p" : "",
+                    saveCandidate ? "sv" : "",
+                    state.find && state.find.id === activeTab.id ? "f" : "",
+                    startupInfo ? "s" : "",
+                    state.unresponsive.includes(activeTab.id) ? "u" : "",
+                    prefs.orientation,
+                  ].join("|")}
+                  onOpen={openAddress}
+                  onRequestAddLink={() => setLinkDialog("home")}
+                  onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
+                  onOpenDial={() => openInternal(DIAL_URL, "Discador")}
+                  internal={(pageUrl) =>
+                    pageUrl === HISTORY_URL ? (
+                      <HistoryPage store={historyStore} onOpen={openUrl} />
+                    ) : pageUrl === BOOKMARKS_URL ? (
+                      <BookmarksManager
+                        nodes={state.bookmarks}
+                        actions={bookmarkActions}
+                        onOpen={openUrl}
+                      />
+                    ) : pageUrl === DIAL_URL ? (
+                      <DialPage
+                        links={state.dial}
+                        engineName={engineOf(prefs.engine).name}
+                        onOpen={openAddress}
+                        onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
+                        onRequestAdd={() => setLinkDialog("dial")}
+                        onRemove={(url) => dispatch({ type: "dial/remove", url })}
+                        onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
+                        onHome={() => dispatch({ type: "nav/home" })}
+                      />
+                    ) : pageUrl === SETTINGS_URL ? (
+                      <SettingsPage
+                        prefs={prefs}
+                        setPrefs={setPrefs}
+                        onUnpauseHost={(host) =>
+                          dispatch({ type: "prefs/pause-host", host, pause: false })
+                        }
+                        desktop={desktop !== null}
+                        isMac={isMac}
+                        permissions={desktop ? sitePermissions : null}
+                        onPermissionChange={(origin, type, value) => {
+                          if (!desktop) return;
+                          void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
+                        }}
+                        update={update}
+                        onCheckUpdate={() => void desktop?.updateCheck()}
+                        onInstallUpdate={() => void desktop?.updateInstall()}
+                        appVersion={appVersion}
+                        onShowWhatsNew={
+                          appVersion
+                            ? () => setWhatsNew({ from: null, to: appVersion, celebrate: false })
+                            : null
+                        }
+                        downloadsDir={downloadsDir}
+                        onOpenDownloadsDir={desktop ? () => void desktop.openDownloadsDir() : null}
+                        onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
+                        onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
+                        onReset={() => dispatch({ type: "tabs/reset" })}
+                        siteTabs={siteTabs}
+                        onOpenUrl={(url) => openUrl(url, true)}
+                      />
+                    ) : pageUrl === SCRATCHPAD_URL ? (
+                      <ScratchpadPage
+                        desktop={desktop}
+                        tabs={state.tabs
+                          .filter((tab) => entryOf(tab).kind === "page")
+                          .map((tab) => ({
+                            id: tab.id,
+                            title: entryOf(tab).title,
+                            url: entryOf(tab).url,
+                          }))}
+                        target={scratchTarget}
+                      />
+                    ) : null
+                  }
+                  errors={errorActions}
+                  onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
+                  onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
+                  onCloseSplit={() => dispatch({ type: "split/close" })}
+                  onRecover={(id) => {
+                    dispatch({ type: "view/recovered", id });
+                    void desktop?.reload(id);
+                    void desktop?.activateTab(id);
+                    flash();
+                  }}
+                />
+                {activeReader && (
+                  <div className="reader-layer">
+                    <ReaderView
+                      article={activeReader.article}
+                      fontSize={prefs.readerFontSize}
+                      onFontSize={(readerFontSize) => setPrefs({ readerFontSize })}
+                      onExit={() => void toggleReader(activeTab.id)}
+                      onOpenUrl={(url) => openUrl(url, true)}
                     />
-                  ) : pageUrl === DIAL_URL ? (
-                    <DialPage
-                      links={state.dial}
-                      engineName={engineOf(prefs.engine).name}
-                      onOpen={openAddress}
-                      onSearchWeb={(text) => openUrl(engineOf(prefs.engine).search(text), false)}
-                      onRequestAdd={() => setLinkDialog("dial")}
-                      onRemove={(url) => dispatch({ type: "dial/remove", url })}
-                      onMove={(url, index) => dispatch({ type: "dial/move", url, index })}
-                      onHome={() => dispatch({ type: "nav/home" })}
-                    />
-                  ) : pageUrl === SETTINGS_URL ? (
-                    <SettingsPage
-                      prefs={prefs}
-                      setPrefs={setPrefs}
-                      onUnpauseHost={(host) =>
-                        dispatch({ type: "prefs/pause-host", host, pause: false })
-                      }
-                      desktop={desktop !== null}
-                      isMac={isMac}
-                      permissions={desktop ? sitePermissions : null}
-                      onPermissionChange={(origin, type, value) => {
-                        if (!desktop) return;
-                        void desktop.permissionsSet(origin, type, value).then(refreshPermissions);
-                      }}
-                      update={update}
-                      onCheckUpdate={() => void desktop?.updateCheck()}
-                      onInstallUpdate={() => void desktop?.updateInstall()}
-                      appVersion={appVersion}
-                      onShowWhatsNew={
-                        appVersion
-                          ? () => setWhatsNew({ from: null, to: appVersion, celebrate: false })
-                          : null
-                      }
-                      downloadsDir={downloadsDir}
-                      onOpenDownloadsDir={desktop ? () => void desktop.openDownloadsDir() : null}
-                      onOpenHistory={() => openInternal(HISTORY_URL, "Histórico")}
-                      onOpenBookmarks={() => openInternal(BOOKMARKS_URL, "Favoritos")}
-                      onReset={() => dispatch({ type: "tabs/reset" })}
-                      siteTabs={siteTabs}
-                    />
-                  ) : null
-                }
-                errors={errorActions}
-                onSplitRatio={(ratio) => dispatch({ type: "split/ratio", ratio })}
-                onActivatePane={(id) => dispatch({ type: "tab/activate", id })}
-                onCloseSplit={() => dispatch({ type: "split/close" })}
-                onRecover={(id) => {
-                  dispatch({ type: "view/recovered", id });
-                  void desktop?.reload(id);
-                  void desktop?.activateTab(id);
-                  flash();
-                }}
-              />
+                  </div>
+                )}
+              </div>
               {terminalBottom && terminalDock}
             </div>
             {!terminalBottom && terminalDock}
+            {prefs.notesOpen && !state.fullscreen && (
+              <NotesPanel
+                pageKey={activeTab.private ? null : noteKey}
+                pageTitle={current.title}
+                pageUrl={current.url}
+                notes={state.notes}
+                onChange={({ key, url, title, text }) =>
+                  dispatch({ type: "notes/set", key, url, title, text, now: Date.now() })
+                }
+                onDelete={(key) => dispatch({ type: "notes/delete", key })}
+                onOpen={(url) => openUrl(url, true)}
+                onClose={() => setPrefs({ notesOpen: false })}
+              />
+            )}
             {prefs.aiOpen && !state.fullscreen && (
               <AiPanel
                 desktop={desktop}
@@ -2212,6 +2411,14 @@ export function AgzosBrowser() {
             setLinkDialog(null);
           }}
         />
+      )}
+      {capture && (
+        <CaptureDialog desktop={desktop} sources={capture} onClose={() => setCapture(null)} />
+      )}
+      {notice && (
+        <div className="agzos-notice" role="status">
+          {notice}
+        </div>
       )}
       {whatsNew && (
         <WhatsNew

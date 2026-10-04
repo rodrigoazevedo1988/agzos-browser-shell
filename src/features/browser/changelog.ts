@@ -7,6 +7,20 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.5.0",
+    date: "2026-10-03",
+    items: [
+      "Session Tabs (Ctrl+Alt+N): cada uma tem cookies e localStorage só dela e uma cor própria. Dá para deixar o mesmo site aberto três vezes, lado a lado, com logins diferentes (admin, corretor, cliente), sem a sessão vazar entre elas nem para a guia normal. Links e duplicatas ficam na mesma sessão.",
+      "Painel de portas na barra lateral: o que está escutando no PC (3000, 5432…), com processo, PID e, quando dá, o projeto. Matar o processo pede confirmação. “Expor porta” abre um túnel HTTPS do Cloudflare (precisa do cloudflared instalado) e já copia a URL pública; o túnel fecha pelo botão ou ao fechar o painel.",
+      "API Scratchpad (agzos://scratchpad ou o menu da página): captura as requisições de uma guia, manda uma para o editor, muda método, URL, headers ou body e reenvia, vendo status, tempo e resposta.",
+      "Mira de elemento (Ctrl+Shift+C): clique num elemento e veja as cores em HEX, a fonte e uma sugestão de classes Tailwind para copiar, sem abrir o DevTools. É sugestão a partir do estilo calculado, não o CSS original do site.",
+      "Extensões Manifest V3: carregue uma pasta descompactada ou instale pelo link da Chrome Web Store (quando o Chromium do app dá conta da extensão). Ligue, desligue, recarregue e remova em Configurações → Extensões.",
+      "O app passa a trazer o módulo Widevine oficial do Google para conteúdo protegido (Spotify, Netflix e afins), só para reproduzir: nada é gravado nem extraído. O estado do módulo aparece em Configurações → Extensões.",
+      "Captura de tela (Ctrl+Shift+S): a guia, a janela do app ou uma região, para copiar ou salvar em PNG. Modo leitura (Ctrl+Alt+R): o artigo com letra grande e sem o menu do site. Notas por página (Ctrl+Shift+M), em markdown simples, guardadas neste computador. E “Salvar imagem já carregada” no menu da imagem grava o que a página já baixou.",
+      "Expandir um atalho da barra lateral agora leva o painel para a tela toda e fecha o painel menor; recolher volta só o menor. O tema escuro passa a ser o padrão, com tema claro e cor de acento (padrão #D10A11) em Configurações → Aparência.",
+    ],
+  },
+  {
     version: "4.1.3",
     date: "2026-10-03",
     items: [

@@ -137,6 +137,26 @@ const PAGES: Record<string, string> = {
     </script>`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
+  // 4.5: artigo com menu, barra lateral e rodapé (o modo leitura tira tudo isso).
+  "/artigo": `<!doctype html><html lang="pt-BR"><title>Artigo de teste</title>
+    <meta name="author" content="Ana Autora">
+    <nav class="menu"><a href="/a">Menu do site</a> · <a href="/b">Outro item</a></nav>
+    <aside class="sidebar">Publicidade lateral</aside>
+    <article><h1>Como o Agzos lê artigos</h1>
+      <p>O modo leitura pega o título e o corpo, com tipografia larga, sem o menu do site.
+      Este parágrafo tem texto suficiente, com vírgulas, frases e palavras, para contar como corpo.</p>
+      <h2>Segunda parte</h2>
+      <p>Mais um parágrafo longo do artigo, com <strong>negrito</strong>, um <a href="https://exemplo.com/x">link</a>
+      e conteúdo bastante para o extrator, que soma pontos por vírgula, frase e tamanho.</p>
+      <ul><li>primeiro item</li><li>segundo item</li></ul>
+    </article>
+    <footer>Rodapé do site</footer></html>`,
+  "/sessao": `<!doctype html><title>Sessão isolada</title><h1>sessão</h1>`,
+  // 4.5: botão vermelho Agzos para a mira de elemento.
+  "/mira": `<!doctype html><title>Mira</title><body style="margin:0;padding:40px">
+    <button id="alvo" style="color:#fff;background:#D10A11;font:600 14px Inter, sans-serif;
+      padding:8px 16px;border:0;border-radius:8px;width:200px;height:60px">Comprar</button></body>`,
+  "/scratch": `<!doctype html><title>Scratch</title><h1>API</h1>`,
 };
 
 // /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
@@ -412,11 +432,27 @@ test.beforeAll(async () => {
       response.end(TINY_PNG);
       return;
     }
+    // 4.5: eco do API Scratchpad (método e corpo de volta em JSON).
+    if (url === "/api/eco") {
+      let body = "";
+      request.on("data", (chunk) => (body += chunk));
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        let parsed: unknown = body;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          parsed = body;
+        }
+        response.end(JSON.stringify({ metodo: request.method, corpo: parsed }));
+      });
+      return;
+    }
     if (url === "/instavel" && unstableDown) {
       request.socket.destroy();
       return;
     }
-    const html = PAGES[url];
+    const html = PAGES[url] ?? (url.startsWith("/sessao?") ? PAGES["/sessao"] : undefined);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     if (html) {
       response.end(html);
@@ -623,7 +659,8 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
   await expect(tabs(first.window).first()).toContainText("Página SALVA");
   await first.window.getByRole("button", { name: "Nova aba anônima" }).click();
   await go(first.window, `${origin}/secreta`);
-  await first.window.getByRole("button", { name: "Usar tema escuro" }).click();
+  // 4.5: o tema escuro é o padrão; trocar para o claro também persiste.
+  await first.window.getByRole("button", { name: "Usar tema claro" }).click();
   // Deixa o debounce de gravação terminar antes de fechar.
   await first.window.waitForTimeout(800);
   await first.app.close();
@@ -634,7 +671,7 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
   try {
     await expect(tabs(second.window)).toHaveCount(1);
     await expect(tabs(second.window).first()).toContainText("Página SALVA");
-    await expect(second.window.locator(".browser-stage")).toHaveClass(/dark/);
+    await expect(second.window.locator(".browser-stage")).not.toHaveClass(/dark/);
     const stored = await second.app.evaluate(
       async (_electron, file) => {
         const { DatabaseSync } = process.getBuiltinModule(
@@ -654,7 +691,7 @@ test("estado persiste no SQLite entre reinícios; aba anônima não", async () =
       Object.keys(stored)
         .filter((key) => !key.startsWith("meta:"))
         .sort(),
-    ).toEqual(["bookmarks", "closedTabs", "dial", "links", "prefs", "version"]);
+    ).toEqual(["bookmarks", "closedTabs", "dial", "links", "notes", "prefs", "version"]);
     // 1.7: a sessão (guias) é de cada janela e fica no registro das janelas.
     expect(stored["meta:windows"]).toContain("/salva");
     expect(JSON.stringify(stored)).not.toContain("secreta");
@@ -916,6 +953,10 @@ test("seletor do Ctrl+Tab com miniaturas das páginas, confirmado ao soltar o Ct
       contents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["control"] });
     }, `${origin}/dois`);
     await expect.poll(async () => (await layerState(app, "agzos-switcher")).visible).toBe(true);
+    // A foto da guia ativa sai quando o seletor abre e chega logo depois.
+    await expect
+      .poll(async () => (await layerState(app, "agzos-switcher")).cards.every((card) => card.image))
+      .toBe(true);
     const layer = await layerState(app, "agzos-switcher");
     expect(layer.onTop).toBe(true);
     expect(layer.cards.map((card) => card.title)).toEqual(["Página DOIS", "Página UM"]);
@@ -1344,8 +1385,8 @@ test("1.7: Ctrl+N abre janela nova, tema sincroniza e as janelas voltam depois d
   await expect(tabs(first.window)).toHaveCount(1);
   await expect(tabs(first.window).first()).toContainText("Página JANELA-UM");
   // Preferência mudada numa janela vale na outra.
-  await first.window.getByRole("button", { name: "Usar tema escuro" }).click();
-  await expect(second!.locator(".browser-stage")).toHaveClass(/dark/);
+  await first.window.getByRole("button", { name: "Usar tema claro" }).click();
+  await expect(second!.locator(".browser-stage")).not.toHaveClass(/dark/);
   await first.window.waitForTimeout(900);
   await first.app.close();
 
@@ -1357,7 +1398,9 @@ test("1.7: Ctrl+N abre janela nova, tema sincroniza e as janelas voltam depois d
       (await Promise.all(pages.map((page) => tabs(page).first().textContent()))).join(" ");
     await expect.poll(titles).toContain("Página JANELA-UM");
     await expect.poll(titles).toContain("Página JANELA-DOIS");
-    for (const page of pages) await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
+    for (const page of pages) {
+      await expect(page.locator(".browser-stage")).not.toHaveClass(/dark/);
+    }
     // Fechar uma janela entre várias descarta as guias dela (como no Chrome).
     await again.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()
@@ -3593,6 +3636,447 @@ test("4.1.1 fix: arquivo aberto pelo sistema (duplo clique, Abrir com) abre numa
     });
     await expect.poll(() => liveViews(app, "notas.ts?k=")).toHaveLength(1);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4.5
+// ---------------------------------------------------------------------------
+
+test("4.5: atalho expandido ocupa a área principal e fecha o painel menor", async () => {
+  const panelUrl = `${origin}/painel-lateral`;
+  const { app, window } = await launch(tempProfile(), { AGZOS_SIDE_PANEL_URL: panelUrl });
+  const page = `${origin}/principal`;
+  const bounds = async () => {
+    const views = await nativeChildren(app);
+    return {
+      panel: views.find((view) => view.url === panelUrl)?.bounds ?? null,
+      tab: views.find((view) => view.url === page)?.bounds ?? null,
+    };
+  };
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Página PRINCIPAL");
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "WhatsApp" })
+      .click();
+    const panel = window.getByRole("complementary", { name: "Painel WhatsApp" });
+    await expect(panel).toBeVisible();
+    await expect.poll(async () => (await bounds()).panel?.width ?? 0).toBeGreaterThan(200);
+
+    // Expandir: o mesmo painel vai para a área principal; a guia e o painel menor somem.
+    await window.getByRole("button", { name: "Expandir WhatsApp" }).click();
+    await expect(panel).toHaveAttribute("data-expanded", "true");
+    await expect(window.getByRole("complementary", { name: "Painel WhatsApp" })).toHaveCount(1);
+    await expect
+      .poll(async () => {
+        const { panel: shown, tab } = await bounds();
+        return Boolean(shown && tab && tab.width === 0 && shown.width > 600);
+      })
+      .toBe(true);
+    // A mesma página do painel (sem recarregar outra).
+    expect(await liveViews(app, "/painel-lateral")).toHaveLength(1);
+
+    // Recolher: volta só o painel menor, ao lado da guia.
+    await window.getByRole("button", { name: "Recolher WhatsApp" }).click();
+    await expect
+      .poll(async () => {
+        const { panel: shown, tab } = await bounds();
+        return Boolean(shown && tab && tab.width > 0 && shown.x + shown.width <= tab.x);
+      })
+      .toBe(true);
+
+    // "Abrir numa guia" também nunca deixa as duas superfícies abertas.
+    await window.getByRole("button", { name: "Abrir WhatsApp numa guia" }).click();
+    await expect(window.getByRole("complementary", { name: "Painel WhatsApp" })).toHaveCount(0);
+    await expect(tabs(window)).toHaveCount(2);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5: painel de portas lista e mata o processo; túnel HTTPS copia a URL e encerra", async () => {
+  // Servidor "de projeto" numa pasta com package.json e um cloudflared de mentira no PATH.
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-proj-"));
+  fs.writeFileSync(path.join(project, "package.json"), JSON.stringify({ name: "leadmobi-e2e" }));
+  const { spawn } = await import("node:child_process");
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      "const s=require('http').createServer((q,r)=>r.end('ok')).listen(0,'127.0.0.1',()=>console.log('PORTA='+s.address().port))",
+    ],
+    { cwd: project, stdio: ["ignore", "pipe", "inherit"] },
+  );
+  // Só a linha com o número (o Node pode escrever avisos antes).
+  const port = await new Promise<number>((resolve) => {
+    let out = "";
+    child.stdout!.on("data", (chunk) => {
+      out += String(chunk);
+      const match = /^PORTA=(\d+)$/m.exec(out);
+      if (match) resolve(Number(match[1]));
+    });
+  });
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-bin-"));
+  const pidFile = path.join(bin, "tunnel.pid");
+  fs.writeFileSync(
+    path.join(bin, "cloudflared"),
+    `#!/bin/sh\necho "INF Requesting new quick Tunnel on trycloudflare.com..." >&2\n` +
+      `echo "INF |  https://agzos-e2e.trycloudflare.com  |" >&2\necho $$ > "${pidFile}"\nexec sleep 600\n`,
+    { mode: 0o755 },
+  );
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const { app, window } = await launch(tempProfile(), {
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+  });
+  try {
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "Portas em uso" })
+      .click();
+    const panel = window.getByRole("complementary", { name: "Portas em uso" });
+    await panel.getByLabel("Filtrar portas").fill(String(port));
+    const item = panel.locator(`[data-port="${port}"]`);
+    await expect(item).toContainText(`:${port}`, { timeout: 15_000 });
+    await expect(item).toContainText("leadmobi-e2e");
+    await expect(item).toContainText(`PID ${child.pid}`);
+
+    // Expor: URL pública na tela e na área de transferência; encerrar mata o cloudflared.
+    await item.getByRole("button", { name: `Expor porta ${port}` }).click();
+    await expect(item.getByRole("link")).toContainText("agzos-e2e.trycloudflare.com");
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+      "https://agzos-e2e.trycloudflare.com",
+    );
+    const tunnelPid = Number(fs.readFileSync(pidFile, "utf8"));
+    expect(alive(tunnelPid)).toBe(true);
+    await item.getByRole("button", { name: `Encerrar túnel da porta ${port}` }).click();
+    await expect.poll(() => alive(tunnelPid)).toBe(false);
+
+    // Fechar o painel também encerra o túnel.
+    await item.getByRole("button", { name: `Expor porta ${port}` }).click();
+    await expect(item.getByRole("link")).toBeVisible();
+    const second = Number(fs.readFileSync(pidFile, "utf8"));
+    await panel.getByRole("button", { name: "Fechar portas" }).click();
+    await expect.poll(() => alive(second)).toBe(false);
+
+    // Matar pede confirmação e encerra o processo da porta.
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "Portas em uso" })
+      .click();
+    await panel.getByLabel("Filtrar portas").fill(String(port));
+    await item.getByRole("button", { name: new RegExp(`^Matar .* na porta ${port}$`) }).click();
+    const confirm = item.getByRole("alertdialog", { name: "Confirmar encerrar processo" });
+    await expect(confirm).toContainText(`PID ${child.pid}`);
+    await confirm.getByRole("button", { name: "Encerrar" }).click();
+    await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true);
+    await expect(panel.getByRole("status")).toContainText(`a porta ${port} ficou livre`);
+  } finally {
+    child.kill();
+    await app.close();
+  }
+});
+
+test("4.5: três Session Tabs do mesmo site mantêm logins separados", async () => {
+  const { app, window } = await launch(tempProfile());
+  const login = (url: string, who: string) =>
+    inTab(
+      app,
+      url,
+      `document.cookie = "login=${who}; path=/"; localStorage.setItem("login", "${who}"); true`,
+    );
+  const read = (url: string) =>
+    inTab<string>(app, url, `document.cookie + "|" + (localStorage.getItem("login") ?? "")`);
+  try {
+    const normal = `${origin}/sessao?normal`;
+    await go(window, normal);
+    await expect(tabs(window).first()).toContainText("Sessão isolada", { timeout: 15_000 });
+    await login(normal, "normal");
+    const people = ["admin", "corretor", "cliente"];
+    for (const who of people) {
+      await window.keyboard.press(`${MOD}+Alt+N`);
+      await expect(tabs(window)).toHaveCount(people.indexOf(who) + 2);
+      await go(window, `${origin}/sessao?${who}`);
+      await expect(tabs(window).last()).toContainText("Sessão isolada");
+      // Antes do login, a Session Tab não vê nada da guia normal nem das outras.
+      expect(await read(`${origin}/sessao?${who}`)).toBe("|");
+      await login(`${origin}/sessao?${who}`, who);
+    }
+    for (const who of people) {
+      expect(await read(`${origin}/sessao?${who}`)).toBe(`login=${who}|${who}`);
+    }
+    expect(await read(normal)).toBe("login=normal|normal");
+    await expect(window.locator(".browser-tab.session-tab")).toHaveCount(3);
+    const partitions = await app.evaluate(({ webContents }) =>
+      webContents
+        .getAllWebContents()
+        .filter((contents) => contents.getURL().includes("/sessao?"))
+        .map((contents) => contents.session.getStoragePath() ?? ""),
+    );
+    expect(new Set(partitions).size).toBe(4);
+    expect(partitions.filter((item) => item.includes("agzos-session-"))).toHaveLength(3);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5: API Scratchpad captura a requisição da guia e reenvia com o body editado", async () => {
+  const { app, window } = await launch(tempProfile());
+  const page = `${origin}/scratch`;
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Scratch");
+    await window.keyboard.press(`${MOD}+t`);
+    await go(window, "agzos://scratchpad");
+    const captured = window.getByRole("region", { name: "Requisições capturadas" });
+    await expect(captured.getByLabel("Guia capturada")).toContainText("Scratch");
+    await captured.getByRole("button", { name: "Capturar" }).click();
+    await expect(captured.getByRole("status")).toContainText("Capturando");
+    await inTab(
+      app,
+      page,
+      `fetch("/api/eco", { method: "POST", headers: { "content-type": "application/json", "x-agzos": "1" }, body: JSON.stringify({ nome: "ana" }) }).then(() => true)`,
+    );
+    const send = captured.getByRole("button", {
+      name: `Mandar para o Scratchpad: POST ${origin}/api/eco`,
+    });
+    await expect(send).toBeVisible();
+    await send.click();
+    const editor = window.getByRole("region", { name: "Editor da requisição" });
+    await expect(editor.getByLabel("URL da requisição")).toHaveValue(`${origin}/api/eco`);
+    await expect(editor.getByLabel("Headers")).toHaveValue(/x-agzos: 1/);
+    await expect(editor.getByLabel("Body")).toHaveValue('{"nome":"ana"}');
+    await editor.getByLabel("Body").fill('{"nome":"bia"}');
+    await editor.getByRole("button", { name: "Enviar" }).click();
+    const response = window.getByRole("region", { name: "Resposta" });
+    await expect(response).toContainText("200");
+    await expect(response.getByLabel("Corpo da resposta")).toContainText('"nome": "bia"');
+    await expect(response.getByLabel("Corpo da resposta")).toContainText('"metodo": "POST"');
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5: Ctrl+Shift+C mostra HEX e classes Tailwind do elemento clicado", async () => {
+  const { app, window } = await launch(tempProfile());
+  const page = `${origin}/mira`;
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Mira");
+    await keyInTab(app, page, "C", ["control", "shift"]);
+    const target = await inTab<{ x: number; y: number }>(
+      app,
+      page,
+      `(() => { const r = document.getElementById("alvo").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`,
+    );
+    const card = async () =>
+      app.evaluate(
+        ({ webContents }, [url, point]) => {
+          const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+          return contents
+            .executeJavaScriptInIsolatedWorld(4132, [
+              {
+                code: `(() => { const s = window.__agzosInspector; return s ? (s.root.querySelector(".card")?.textContent ?? "mira") : null; })()`,
+              },
+            ])
+            .then((text) => {
+              if (text === "mira") {
+                const p = point as { x: number; y: number };
+                contents.sendInputEvent({ type: "mouseMove", x: p.x, y: p.y });
+                contents.sendInputEvent({
+                  type: "mouseDown",
+                  x: p.x,
+                  y: p.y,
+                  button: "left",
+                  clickCount: 1,
+                });
+                contents.sendInputEvent({
+                  type: "mouseUp",
+                  x: p.x,
+                  y: p.y,
+                  button: "left",
+                  clickCount: 1,
+                });
+              }
+              return text as string | null;
+            });
+        },
+        [page, target] as const,
+      );
+    await expect.poll(card, { timeout: 10_000 }).toContain("#D10A11");
+    const text = (await card())!;
+    expect(text).toContain("#FFFFFF");
+    expect(text).toContain("bg-[#d10a11]");
+    expect(text).toContain("text-white");
+    expect(text).toContain("rounded-lg");
+    // O clique da mira não chega na página.
+    expect(await inTab(app, page, "document.activeElement?.id ?? null")).not.toBe("alvo");
+    // Esc fecha o balão e depois a mira.
+    await keyInTab(app, page, "Escape");
+    await keyInTab(app, page, "Escape");
+    await expect
+      .poll(() =>
+        app.evaluate(({ webContents }, url) => {
+          const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+          return contents.executeJavaScriptInIsolatedWorld(4132, [
+            { code: "Boolean(window.__agzosInspector)" },
+          ]);
+        }, page),
+      )
+      .toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-ext-"));
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      manifest_version: 3,
+      name: "Agzos E2E Ext",
+      version: "1.0",
+      content_scripts: [{ matches: ["<all_urls>"], js: ["c.js"], run_at: "document_end" }],
+    }),
+  );
+  fs.writeFileSync(path.join(dir, "c.js"), 'document.documentElement.dataset.agzosExt = "ok";');
+  const { app, window } = await launch(tempProfile());
+  try {
+    await app.evaluate(({ dialog }, folder) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [folder] })) as never;
+    }, dir);
+    await go(window, "agzos://configuracoes");
+    await window.getByRole("button", { name: "Extensões" }).first().click();
+    await expect(window.getByText(/Este build não traz o Widevine/)).toBeVisible();
+    await window.getByRole("button", { name: "Carregar descompactada…" }).click();
+    await expect(
+      window.getByRole("status").filter({ hasText: "Extensão carregada." }),
+    ).toBeVisible();
+    const list = window.getByRole("list", { name: "Extensões" });
+    await expect(list).toContainText("Agzos E2E Ext");
+
+    const page = `${origin}/a`;
+    await window.keyboard.press(`${MOD}+t`);
+    await go(window, page);
+    await expect(tabs(window).last()).toContainText("Página A");
+    await expect
+      .poll(() => inTab(app, page, "document.documentElement.dataset.agzosExt ?? null"))
+      .toBe("ok");
+
+    // Desligada: a página recarregada não recebe mais o script.
+    await tabs(window).first().click();
+    await window.getByRole("button", { name: "Extensões" }).first().click();
+    await list.getByRole("switch", { name: "Agzos E2E Ext ligada" }).click();
+    await expect(list.getByRole("switch", { name: "Agzos E2E Ext ligada" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await app.evaluate(({ webContents }, url) => {
+      webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === url)!
+        .reload();
+    }, page);
+    await expect
+      .poll(() =>
+        inTab(
+          app,
+          page,
+          "document.readyState === 'complete' ? (document.documentElement.dataset.agzosExt ?? 'sem') : null",
+        ),
+      )
+      .toBe("sem");
+    await list.getByRole("button", { name: "Remover Agzos E2E Ext" }).click();
+    await expect(window.getByText("Nenhuma extensão ainda.")).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.5: captura, modo leitura, nota e tema persistem", async () => {
+  const profile = tempProfile();
+  let { app, window } = await launch(profile);
+  const article = `${origin}/artigo`;
+  try {
+    // Tema: escuro por padrão.
+    await expect(window.locator("html")).toHaveClass(/dark/);
+
+    // Captura de tela: guia ou janela do app; copiar vai para a área de transferência.
+    await go(window, article);
+    await expect(tabs(window).first()).toContainText("Artigo de teste");
+    await window.keyboard.press(`${MOD}+Shift+S`);
+    const dialog = window.getByRole("dialog", { name: "Captura de tela" });
+    await expect(dialog.getByRole("img", { name: "Prévia da captura" })).toBeVisible();
+    await dialog.getByRole("radio", { name: "Janela do app" }).click();
+    await dialog.getByRole("button", { name: "Copiar" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("Imagem copiada.");
+    const copied = await app.evaluate(async ({ clipboard }) => {
+      const [item] = await clipboard.read();
+      if (!item?.types.includes("image/png")) return 0;
+      return ((await item.getType("image/png")) as Blob).size;
+    });
+    expect(copied).toBeGreaterThan(1000);
+    await window.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    // Modo leitura: título e corpo, sem o menu do site; a guia fica coberta e volta.
+    await keyInTab(app, article, "R", ["control", "alt"]);
+    const reader = window.getByRole("region", { name: "Modo leitura" });
+    await expect(reader.getByRole("heading", { level: 1 })).toHaveText("Como o Agzos lê artigos");
+    await expect(reader).toContainText("Segunda parte");
+    await expect(reader).toContainText("Ana Autora");
+    await expect(reader).not.toContainText("Menu do site");
+    await expect(reader).not.toContainText("Publicidade lateral");
+    const tabWidth = async () =>
+      (await nativeChildren(app)).find((view) => view.url === article)?.bounds.width ?? -1;
+    await expect.poll(tabWidth).toBe(0);
+    await reader.getByRole("button", { name: "Sair do modo leitura" }).click();
+    await expect(reader).toHaveCount(0);
+    await expect.poll(tabWidth).toBeGreaterThan(0);
+
+    // Notas: markdown simples por URL.
+    await expect(window.getByRole("complementary", { name: "Agzos AI" })).toBeVisible();
+    await window.keyboard.press(`${MOD}+Shift+M`);
+    const notes = window.getByRole("complementary", { name: "Notas" });
+    // Notas e Agzos AI dividem o lado direito: abrir um fecha o outro.
+    await expect(window.getByRole("complementary", { name: "Agzos AI" })).toHaveCount(0);
+    await notes
+      .getByRole("textbox", { name: "Nota desta página" })
+      .fill("# Lembrete\n- revisar o artigo");
+    await notes.getByRole("radio", { name: "Ver" }).click();
+    await expect(notes.getByRole("heading", { name: "Lembrete" })).toBeVisible();
+    await go(window, `${origin}/b`);
+    await expect(tabs(window).first()).toContainText("Página B");
+    await expect(notes.getByRole("textbox", { name: "Nota desta página" })).toHaveValue("");
+    await expect(notes.getByRole("region", { name: "Outras notas" })).toContainText(
+      "Artigo de teste",
+    );
+
+    // Tema claro pelas Configurações.
+    await window.keyboard.press(`${MOD}+t`);
+    await go(window, "agzos://configuracoes");
+    await window.getByRole("radio", { name: "Claro" }).click();
+    await expect(window.locator("html")).not.toHaveClass(/dark/);
+    await app.close();
+
+    ({ app, window } = await launch(profile));
+    await expect(window.locator("html")).not.toHaveClass(/dark/);
+    const notesAgain = window.getByRole("complementary", { name: "Notas" });
+    await expect(notesAgain).toBeVisible();
+    await expect(notesAgain.getByRole("region", { name: "Outras notas" })).toContainText(
+      "Artigo de teste",
+    );
   } finally {
     await app.close();
   }

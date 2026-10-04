@@ -7,6 +7,7 @@ import {
   Palette,
   PartyPopper,
   Power,
+  Puzzle,
   AppWindow,
   Bot,
   Hand,
@@ -39,6 +40,7 @@ import { SOUND_TICKS, soundGain, type SoundTick } from "@/features/sounds/sounds
 import { Toggle } from "@/features/ui/toggle";
 import { ACTION_LABELS, GESTURES } from "@/features/gestures/gestures";
 import { InstalledAppsSetting } from "./apps-rows";
+import { ExtensionsSetting, WidevineSetting } from "./v45-rows";
 import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
 import {
   SshConnectionsSetting,
@@ -85,6 +87,7 @@ export type SettingsSectionId =
   | "terminal"
   | "terminal-avancado"
   | "apps"
+  | "extensoes"
   | "desempenho"
   | "inicializacao"
   | "downloads"
@@ -112,6 +115,8 @@ export type SettingsPageProps = {
   onReset: () => void;
   /** Guias da web abertas (a última ativa primeiro): "Tentar instalar este site como app". */
   siteTabs?: { id: number; url: string; title: string }[];
+  /** Abre um endereço numa guia nova (popup e opções de extensão, 4.5). */
+  onOpenUrl?: (url: string) => void;
 };
 
 type Row = { id: string; label: string; keywords?: string; node: ReactNode };
@@ -169,14 +174,33 @@ export function SettingsPage(props: SettingsPageProps) {
         rows: [
           {
             id: "tema",
-            label: "Tema escuro",
-            keywords: "cores claro noite",
+            label: "Tema",
+            keywords: "tema escuro claro cores noite dark light",
             node: (
-              <Toggle
-                label="Tema escuro"
-                checked={prefs.dark}
-                onChange={(dark) => setPrefs({ dark })}
-              />
+              <div className="settings-block">
+                <div className="flex flex-col gap-1">
+                  <strong>Tema</strong>
+                  <small>Vale para a interface do navegador; as páginas dos sites não mudam.</small>
+                </div>
+                <div className="theme-choice" role="radiogroup" aria-label="Tema">
+                  {(
+                    [
+                      { dark: true, label: "Escuro" },
+                      { dark: false, label: "Claro" },
+                    ] as const
+                  ).map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role="radio"
+                      aria-checked={prefs.dark === option.dark}
+                      onClick={() => setPrefs({ dark: option.dark })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ),
           },
           {
@@ -804,6 +828,25 @@ export function SettingsPage(props: SettingsPageProps) {
             keywords:
               "pwa app instalar desinstalar janela atalho manifesto tentar instalar este site",
             node: <InstalledAppsSetting siteTabs={props.siteTabs ?? []} />,
+          },
+        ],
+      });
+      list.push({
+        id: "extensoes",
+        label: "Extensões",
+        icon: Puzzle,
+        rows: [
+          {
+            id: "extensoes-lista",
+            label: "Extensões (Manifest V3)",
+            keywords: "extensão extensao chrome web store descompactada mv3 plugin addon",
+            node: <ExtensionsSetting onOpenUrl={(url) => props.onOpenUrl?.(url)} />,
+          },
+          {
+            id: "widevine",
+            label: "Conteúdo protegido (Widevine)",
+            keywords: "drm widevine netflix spotify protegido video musica",
+            node: <WidevineSetting />,
           },
         ],
       });

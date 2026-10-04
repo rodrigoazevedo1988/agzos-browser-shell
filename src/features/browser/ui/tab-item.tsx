@@ -54,6 +54,7 @@ export function TabItem({
         entry.title,
         tab.pinned && "fixada",
         tab.private && "anônima",
+        tab.session && "Session Tab (sessão isolada)",
         playing && !tab.muted && "tocando áudio",
         tab.muted && "sem som",
         hibernated && "hibernada",
@@ -80,12 +81,21 @@ export function TabItem({
         active && "active",
         tab.pinned && "pinned",
         tab.private && "private",
+        tab.session && "session-tab",
         hibernated && "hibernated",
         dropMark && `drop-${dropMark}`,
         groupColor && "grouped",
         inSplit && "in-split",
       )}
-      style={groupColor ? ({ "--group-color": groupColor } as CSSProperties) : undefined}
+      style={
+        groupColor || tab.session
+          ? ({
+              ...(groupColor ? { "--group-color": groupColor } : {}),
+              ...(tab.session ? { "--session-color": tab.session.color } : {}),
+            } as CSSProperties)
+          : undefined
+      }
+      data-session={tab.session?.id}
     >
       {tab.private ? (
         <VenetianMask aria-hidden="true" />

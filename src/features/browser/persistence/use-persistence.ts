@@ -48,7 +48,7 @@ export function usePersistence(
   }, [dispatch, store]);
 
   const { hydrated, tabs, activeId, prefs, links, closedTabs, bookmarks } = state;
-  const { groups, workspaces, split, dial } = state;
+  const { groups, workspaces, split, dial, notes } = state;
   // Só as partes persistidas disparam gravação; antes do load nada é gravado.
   const snapshot = useMemo(
     () =>
@@ -64,6 +64,7 @@ export function usePersistence(
             groups,
             workspaces,
             split,
+            notes,
           })
         : null,
     [
@@ -78,6 +79,7 @@ export function usePersistence(
       groups,
       workspaces,
       split,
+      notes,
     ],
   );
 

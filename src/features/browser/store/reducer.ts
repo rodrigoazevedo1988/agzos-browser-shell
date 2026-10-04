@@ -16,7 +16,11 @@ import {
   type Tab,
   type TabGroup,
   type TabGroupColor,
+  type TabSession,
+  type PageNote,
   type Workspace,
+  NOTES_LIMIT,
+  NOTE_TEXT_LIMIT,
 } from "../types";
 import { entryOf, orderTabs, workspaceOf, workspaceTabs } from "./selectors";
 import {
@@ -43,6 +47,7 @@ export type HydratePayload = {
   groups?: TabGroup[] | undefined;
   workspaces?: Workspace[] | undefined;
   split?: SplitView | null | undefined;
+  notes?: Record<string, PageNote> | undefined;
 };
 
 /** Seções compartilhadas que outra janela gravou. */
@@ -52,6 +57,7 @@ export type SyncPayload = {
   dial?: QuickLink[] | null;
   closedTabs?: ClosedTab[];
   bookmarks?: BookmarkNode[] | null;
+  notes?: Record<string, PageNote>;
 };
 
 export type BrowserAction =
@@ -59,8 +65,9 @@ export type BrowserAction =
   | { type: "sync"; payload: SyncPayload }
   /** A guia foi para outra janela: sai daqui sem entrar em "reabrir guia fechada". */
   | { type: "tab/detach"; id: number }
-  | { type: "tab/new"; private?: boolean; rightOf?: number }
-  | { type: "tab/open-page"; entry: Entry }
+  | { type: "tab/new"; private?: boolean; rightOf?: number; session?: TabSession }
+  /** `from`: guia de onde o link saiu (4.5: a nova fica na mesma sessão). */
+  | { type: "tab/open-page"; entry: Entry; from?: number | undefined }
   | { type: "tab/activate"; id: number }
   /** Próxima (1) ou anterior (-1) na ordem exibida, dando a volta. */
   | { type: "tab/activate-relative"; delta: 1 | -1 }
@@ -173,12 +180,23 @@ export type BrowserAction =
   | { type: "split/close" }
   | { type: "split/ratio"; ratio: number }
   /** Troca os lados da tela dividida. */
-  | { type: "split/swap" };
+  | { type: "split/swap" }
+  // --- Notas (4.5) ---
+  /** Grava (ou apaga, com texto vazio) a nota da página `key`. */
+  | { type: "notes/set"; key: string; url: string; title: string; text: string; now: number }
+  | { type: "notes/delete"; key: string };
 
-function homeTab(id: number, isPrivate?: boolean): Tab {
-  return isPrivate
-    ? { id, history: [homeEntry], index: 0, private: true }
+function homeTab(id: number, isPrivate?: boolean, session?: TabSession): Tab {
+  if (isPrivate) return { id, history: [homeEntry], index: 0, private: true };
+  return session
+    ? { id, history: [homeEntry], index: 0, session }
     : { id, history: [homeEntry], index: 0 };
+}
+
+/** Guia aberta a partir de outra (link, duplicata): anônima e Session Tab continuam. */
+function sameJar(source: Tab | undefined): Pick<Tab, "private" | "session"> {
+  if (source?.private) return { private: true };
+  return source?.session ? { session: source.session } : {};
 }
 
 /** Guia nova no workspace indicado (o padrão fica sem o campo). */
@@ -461,6 +479,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         prefs: saved.prefs,
         links: saved.links ?? defaultLinks,
         dial: saved.dial ?? defaultDial,
+        notes: saved.notes ?? {},
         // Antes da 1.6 a estrela salvava nos atalhos: eles viram favoritos da barra.
         bookmarks: saved.bookmarks ?? seedFromLinks(saved.links ?? [], defaultLinks, 0),
         closedTabs: saved.closedTabs.slice(-CLOSED_TABS_LIMIT),
@@ -477,9 +496,10 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "sync": {
-      const { prefs, links, dial, closedTabs, bookmarks } = action.payload;
+      const { prefs, links, dial, closedTabs, bookmarks, notes } = action.payload;
       return {
         ...state,
+        ...(notes ? { notes } : {}),
         ...(prefs ? { prefs } : {}),
         ...(links !== undefined ? { links: links ?? defaultLinks } : {}),
         ...(dial !== undefined ? { dial: dial ?? defaultDial } : {}),
@@ -488,13 +508,47 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       };
     }
 
+    case "notes/set": {
+      const text = action.text.slice(0, NOTE_TEXT_LIMIT);
+      if (!text.trim()) {
+        if (!(action.key in state.notes)) return state;
+        const { [action.key]: _removed, ...rest } = state.notes;
+        return { ...state, notes: rest };
+      }
+      const notes = {
+        ...state.notes,
+        [action.key]: {
+          url: action.url,
+          title: action.title.slice(0, 300),
+          text,
+          updatedAt: action.now,
+        },
+      };
+      const keys = Object.keys(notes);
+      if (keys.length > NOTES_LIMIT) {
+        // Passou do limite: some a nota parada há mais tempo.
+        const oldest = keys.sort((a, b) => notes[a]!.updatedAt - notes[b]!.updatedAt)[0]!;
+        delete notes[oldest];
+      }
+      return { ...state, notes };
+    }
+
+    case "notes/delete": {
+      if (!(action.key in state.notes)) return state;
+      const { [action.key]: _removed, ...rest } = state.notes;
+      return { ...state, notes: rest };
+    }
+
     case "tab/detach": {
       const tab = state.tabs.find((item) => item.id === action.id);
       return tab ? removeTabs(state, [tab], undefined, false) : state;
     }
 
     case "tab/new": {
-      let tab = inWorkspace(homeTab(state.nextId, action.private), state.activeWorkspaceId);
+      let tab = inWorkspace(
+        homeTab(state.nextId, action.private, action.session),
+        state.activeWorkspaceId,
+      );
       // "Nova guia à direita" de uma guia agrupada entra no grupo (como no Chrome).
       const reference = state.tabs.find((item) => item.id === action.rightOf);
       if (reference?.groupId !== undefined) tab = { ...tab, groupId: reference.groupId };
@@ -506,8 +560,9 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
     }
 
     case "tab/open-page": {
+      const source = state.tabs.find((item) => item.id === action.from);
       const tab = inWorkspace(
-        { id: state.nextId, history: [action.entry], index: 0 },
+        { id: state.nextId, history: [action.entry], index: 0, ...sameJar(source) },
         state.activeWorkspaceId,
       );
       return activate({ ...state, tabs: [...state.tabs, tab], nextId: state.nextId + 1 }, tab);
@@ -562,7 +617,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         id: state.nextId,
         history: source.history.slice(0, source.index + 1),
         index: source.index,
-        ...(source.private ? { private: true } : {}),
+        ...sameJar(source),
         ...(source.groupId !== undefined ? { groupId: source.groupId } : {}),
         ...(source.workspaceId !== undefined ? { workspaceId: source.workspaceId } : {}),
       };

@@ -150,10 +150,11 @@ export function useDesktopSync({
             return;
         }
       }),
-      desktop.onOpenRequest(({ url }) =>
+      desktop.onOpenRequest(({ url, from }) =>
         dispatch({
           type: "tab/open-page",
           entry: { title: hostOf(url) ?? url, url, kind: "page" },
+          from,
         }),
       ),
       desktop.onFullscreen(({ active }) => dispatch({ type: "fullscreen/set", active })),

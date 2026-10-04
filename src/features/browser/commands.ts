@@ -10,6 +10,16 @@ import {
   SETTINGS_URL,
   type BrowserState,
 } from "./store/state";
+import { newTabSession } from "./types";
+
+/** Id de uma sessão nova (partição "persist:agzos-session-<id>"). */
+function newSessionId() {
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return random.toLowerCase();
+}
 
 /**
  * Registro único de comandos do navegador. Atalhos de teclado, o menu de contexto da
@@ -27,6 +37,14 @@ export type CommandId =
   | "help.whats-new"
   | "tabs.hibernate-others"
   | "tab.new-private"
+  | "tab.new-session"
+  | "page.inspect"
+  | "page.capture"
+  | "page.reader"
+  | "notes.toggle"
+  | "ports.open"
+  | "scratchpad.open"
+  | "scratchpad.capture"
   | "tab.new-right"
   | "tab.reopen-closed"
   | "tab.duplicate"
@@ -118,6 +136,16 @@ export type CommandContext = {
     toggleSidebar: () => void;
     /** Abre ou fecha o GX Control (painel de CPU, RAM, rede e limpeza). */
     toggleControl: () => void;
+    /** 4.5: painel de portas (processos escutando no PC, matar e expor por túnel). */
+    togglePorts: () => void;
+    /** 4.5: captura de tela (guia, região ou janela do app). */
+    capture: () => void;
+    /** 4.5: modo leitura da guia (entra ou sai). */
+    toggleReader: (tabId: number) => void;
+    /** 4.5: notas da página atual, no painel ao lado. */
+    toggleNotes: () => void;
+    /** 4.5: API Scratchpad; com `tabId`, já capturando as requisições daquela guia. */
+    openScratchpad: (tabId: number | null) => void;
   };
 };
 
@@ -200,6 +228,21 @@ export const commands: Command[] = [
     shortcuts: [{ key: "n", shift: true }],
     run: ({ dispatch, ui }) => {
       dispatch({ type: "tab/new", private: true });
+      setTimeout(ui.focusOmnibox, 50);
+    },
+  },
+  {
+    id: "tab.new-session",
+    label: "Nova Session Tab (sessão isolada)",
+    // 4.5: cookies e storage só desta guia (logins diferentes do mesmo site lado a lado).
+    shortcuts: [{ key: "n", alt: true }],
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ state, dispatch, ui }) => {
+      dispatch({
+        type: "tab/new",
+        session: newTabSession(state.tabs, newSessionId()),
+      });
       setTimeout(ui.focusOmnibox, 50);
     },
   },
@@ -562,6 +605,55 @@ export const commands: Command[] = [
     label: ({ state }) =>
       state.prefs.sidebar ? "Ocultar painéis laterais" : "Mostrar painéis laterais",
     run: ({ ui }) => ui.toggleSidebar(),
+  },
+  {
+    id: "ports.open",
+    label: "Portas em uso (matar processo, expor por túnel)",
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.togglePorts(),
+  },
+  {
+    id: "scratchpad.open",
+    label: "Abrir o API Scratchpad",
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.openScratchpad(null),
+  },
+  {
+    id: "scratchpad.capture",
+    label: "Capturar requisições desta guia no Scratchpad",
+    enabled: onDesktopPage,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.openScratchpad(tabId),
+  },
+  {
+    id: "page.inspect",
+    label: "Mira de elemento (cores, fonte e classes Tailwind)",
+    shortcuts: [{ key: "c", shift: true }],
+    enabled: onDesktopPage,
+    run: ({ desktop }, tabId) => void desktop?.inspectorToggle(tabId),
+  },
+  {
+    id: "page.capture",
+    label: "Capturar tela (guia, região ou janela)",
+    shortcuts: [{ key: "s", shift: true }],
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.capture(),
+  },
+  {
+    id: "page.reader",
+    label: "Modo leitura",
+    shortcuts: [{ key: "r", alt: true }],
+    enabled: onDesktopPage,
+    run: ({ ui }, tabId) => ui.toggleReader(tabId),
+  },
+  {
+    id: "notes.toggle",
+    label: "Notas desta página",
+    shortcuts: [{ key: "m", shift: true }],
+    run: ({ ui }) => ui.toggleNotes(),
   },
   {
     id: "control.open",

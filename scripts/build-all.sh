@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-VERSION="4.1.3"
+VERSION="4.5.0"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -42,13 +42,29 @@ SCRATCH="/tmp/electron-build"
 mkdir -p "$SCRATCH"
 cd "$SCRATCH"
 
-# Download if not present
-for f in electron-v44.4.5-win32-x64.zip electron-v44.4.5-linux-x64.zip electron-v44.4.5-darwin-arm64.zip electron-v44.4.5-darwin-x64.zip; do
+# 4.5: Electron da castLabs (ECS, "+wvcus"): o mesmo Electron 44 com o módulo `components`,
+# que baixa e registra o CDM Widevine oficial do Google (Netflix, Spotify). O Electron
+# oficial não traz Widevine.
+ELECTRON_TAG="v44.5.1+wvcus"
+ELECTRON_URL="https://github.com/castlabs/electron-releases/releases/download/${ELECTRON_TAG//+/%2B}"
+for plat in win32-x64 linux-x64 darwin-arm64 darwin-x64; do
+  f="electron-$ELECTRON_TAG-$plat.zip"
   if [ ! -f "$f" ]; then
     echo "Downloading $f..."
-    curl -fL --retry 2 -sS -O "https://github.com/electron/electron/releases/download/v44.4.5/$f"
+    curl -fL --retry 2 -sS -o "$f" "$ELECTRON_URL/${f//+/%2B}"
   fi
 done
+
+# Assinatura VMP (castLabs EVS): sem ela o Widevine roda, mas a Netflix recusa no Windows e
+# no macOS. Precisa de conta EVS (python3 -m castlabs_evs.account signup/reauth); sem
+# conta o build segue e avisa.
+vmp_sign() { # pasta do app
+  if python3 -c "import castlabs_evs" 2>/dev/null; then
+    python3 -m castlabs_evs.vmp sign-pkg "$1" || echo "Aviso: assinatura VMP falhou em $1" >&2
+  else
+    echo "Aviso: castlabs-evs ausente; $1 sai sem assinatura VMP (Netflix recusa no Windows/macOS)." >&2
+  fi
+}
 
 APPJSON="{ \"name\": \"agzos-browser\", \"productName\": \"Agzos Browser\", \"version\": \"$VERSION\", \"main\": \"electron/main.cjs\", \"private\": true }"
 ARTIFACTS="/var/www/agzosagency/browser-artifacts-v${VERSION//./}"
@@ -60,7 +76,7 @@ rm -rf v$VERSION && mkdir v$VERSION && cd v$VERSION
 
 # Win
 echo "Building Win..."
-rm -rf win && mkdir win && unzip -q ../electron-v44.4.5-win32-x64.zip -d win
+rm -rf win && mkdir win && unzip -q "../electron-$ELECTRON_TAG-win32-x64.zip" -d win
 mkdir -p win/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" win/resources/app/electron/; done
 mkdir -p win/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png win/resources/app/electron/icons/
@@ -72,12 +88,14 @@ mv win/electron.exe win/AgzosBrowser.exe
 # Nome "Agzos Browser" e ícone no .exe (o Gerenciador de Tarefas mostra a descrição do .exe).
 node /var/www/agzos-browser/scripts/brand-win.mjs win/AgzosBrowser.exe /var/www/agzos-browser/electron/icons/icon.ico "$VERSION"
 (cd win/locales && ls | grep -v -E '^(en-US|pt-BR)\.pak$' | xargs rm -f)
+# Windows: a VMP vai depois de mexer no .exe (marca e ícone).
+vmp_sign win
 (cd win && zip -qr9 "$ARTIFACTS/Agnos-Browser-win32-x64.zip" .)
 echo "Win OK"
 
 # Linux
 echo "Building Linux..."
-rm -rf linux && mkdir linux && unzip -q ../electron-v44.4.5-linux-x64.zip -d linux
+rm -rf linux && mkdir linux && unzip -q "../electron-$ELECTRON_TAG-linux-x64.zip" -d linux
 mkdir -p linux/resources/app/electron
 for f in "${ELECTRON_FILES[@]}"; do cp "/var/www/agzos-browser/electron/$f" linux/resources/app/electron/; done
 mkdir -p linux/resources/app/electron/icons && cp /var/www/agzos-browser/electron/icons/icon.png linux/resources/app/electron/icons/
@@ -94,7 +112,7 @@ echo "Linux OK"
 # Mac
 for arch in arm64 x64; do
   echo "Building Mac $arch..."
-  rm -rf mac-$arch && mkdir mac-$arch && unzip -q ../electron-v44.4.5-darwin-$arch.zip -d mac-$arch
+  rm -rf mac-$arch && mkdir mac-$arch && unzip -q "../electron-$ELECTRON_TAG-darwin-$arch.zip" -d mac-$arch
   mv "mac-$arch/Electron.app" "mac-$arch/Agzos Browser.app"
   APP="mac-$arch/Agzos Browser.app"
   
@@ -136,6 +154,9 @@ PY
   rm -f "$APP/Contents/Resources/default_app.asar"
   (cd "$APP/Contents/Resources" && ls -d *.lproj | grep -v -E '^(en|pt-BR)\.lproj$' | xargs rm -rf)
 
+  # macOS: a VMP vai antes da assinatura do bundle (o selo cobre o .sig).
+  vmp_sign "mac-$arch"
+
   # O Electron vem só "linker-signed", sem selo do bundle; depois de mexer no
   # Info.plist e em Resources, o Gatekeeper do Apple Silicon acusa "danificado".
   # Assinatura ad-hoc (rcodesign) sela o bundle inteiro, helpers incluídos.
@@ -158,4 +179,4 @@ PY
 done
 
 cd /var/www/agzos-browser
-bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.1.3: Agzos AI no estilo do Claude (conversas em guias, projetos, markdown e artifacts) e instalação de PWA em muito mais sites (Grok, Gemini, Canva)."
+bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "4.5.0: Session Tabs, painel de portas com túnel HTTPS, API Scratchpad, mira de elemento (Ctrl+Shift+C), extensões, Widevine, captura de tela, modo leitura, notas, tema escuro padrão e atalho lateral que expande para a tela toda."

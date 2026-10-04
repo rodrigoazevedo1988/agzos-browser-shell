@@ -53,7 +53,7 @@ function hexToHsl(hex: string): [number, number, number] {
 }
 
 const PRESETS = [
-  "#D43420", // Default Red
+  "#D10A11", // Vermelho Agzos (padrão)
   "#E11D48", // Rose
   "#9333EA", // Purple
   "#4F46E5", // Indigo
@@ -166,7 +166,7 @@ export function ColorPicker({
             />
             <span className="font-mono text-sm uppercase">{currentHex}</span>
           </div>
-          <Button variant="outline" size="sm" onClick={() => onChange("#D43420")}>
+          <Button variant="outline" size="sm" onClick={() => onChange("#D10A11")}>
             <Undo2 className="w-4 h-4 mr-1" /> Padrão
           </Button>
         </div>

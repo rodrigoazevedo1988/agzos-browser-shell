@@ -347,11 +347,115 @@ export type GpuStatus = {
   rasterization: string | null;
 };
 
+// --- 4.5 ---
+/** Processo escutando uma porta TCP (painel de portas). */
+export type PortInfo = {
+  port: number;
+  /** PID principal (o menor da linha); `pids` traz os filhos na mesma porta. */
+  pid: number | null;
+  pids: number[];
+  name: string;
+  addresses: string[];
+  /** Só em 127.0.0.1/::1 (não aparece na rede). */
+  local: boolean;
+  project: { name: string; dir: string } | null;
+  /** Processo do próprio Agzos (não dá para matar). */
+  self: boolean;
+};
+export type PortKillResult = {
+  ok: boolean;
+  forced?: boolean;
+  error?: "denied" | "permission" | "gone";
+};
+export type TunnelStatus = {
+  binary: string | null;
+  tunnels: { port: number; url: string | null }[];
+};
+export type TunnelResult = {
+  ok: boolean;
+  url?: string;
+  error?: "missing" | "port" | "spawn" | "exited" | "timeout" | "window";
+};
+export type TunnelEvent = { port: number; state: "open" | "closed"; url: string | null };
+export type ReaderInline = {
+  kind: "text" | "strong" | "em" | "code" | "link";
+  text: string;
+  href?: string;
+};
+export type ReaderBlock =
+  | { kind: "heading"; level: number; children: ReaderInline[] }
+  | { kind: "paragraph" | "quote"; children: ReaderInline[] }
+  | { kind: "list"; ordered: boolean; items: ReaderInline[][] }
+  | { kind: "code"; text: string }
+  | { kind: "image"; src: string; alt: string; caption: string };
+export type ReaderArticle = {
+  title: string;
+  byline: string;
+  site: string;
+  lang: string;
+  url: string;
+  words: number;
+  minutes: number;
+  blocks: ReaderBlock[];
+};
+export type CaptureLayer = { dataUrl: string; x: number; y: number; width: number; height: number };
+export type CapturedRequest = {
+  id: string;
+  method: string;
+  url: string;
+  headers: [string, string][];
+  body: string;
+  type: string;
+  at: number;
+  status: number | null;
+};
+export type NetCaptureEvent =
+  | { tabId: number; type: "request"; request: CapturedRequest }
+  | { tabId: number; type: "status"; id: string; status: number | null };
+export type ScratchpadRequest = {
+  method: string;
+  url: string;
+  headers: [string, string][];
+  body: string;
+};
+export type ScratchpadResponse =
+  | {
+      ok: true;
+      status: number;
+      statusText: string;
+      headers: [string, string][];
+      body: string;
+      binary: boolean;
+      size: number;
+      truncated: boolean;
+      ms: number;
+    }
+  | { ok: false; error: "method" | "url" | "network"; message?: string };
+export type ExtensionInfo = {
+  dir: string;
+  id: string | null;
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  loaded: boolean;
+  source: "unpacked" | "store";
+  error: string | null;
+  popup: string | null;
+  options: string | null;
+};
+export type ExtensionResult = { ok: boolean; error?: string; canceled?: boolean; id?: string };
+export type WidevineStatus = {
+  state: "unavailable" | "loading" | "ready" | "error";
+  detail: string;
+  version: string | null;
+};
+
 export type DesktopBridge = {
   attachTab(
     id: number,
     url: string,
-    options?: { dark?: boolean; private?: boolean },
+    options?: { dark?: boolean; private?: boolean; session?: string },
   ): Promise<void>;
   activateTab(id: number): Promise<void>;
   /** Área da página; com `id` (2.0), a do pane daquela guia na tela dividida. */
@@ -599,6 +703,41 @@ export type DesktopBridge = {
   pwaState(tabId: number): Promise<PwaTabState>;
   /** Verifica a guia na hora (Configurações → Tentar instalar este site como app). */
   pwaCheck(tabId: number): Promise<PwaCheck>;
+  // --- 4.5 ---
+  /** Atalho lateral promovido à área principal (true) ou de volta ao painel menor. */
+  sidePanelExpand(expanded: boolean): Promise<void>;
+  /** Modo leitura: a view da guia sai de cena (a página continua carregada). */
+  tabCover(id: number, covered: boolean): Promise<void>;
+  portsList(): Promise<{ ok: boolean; ports: PortInfo[] }>;
+  portsKill(pid: number): Promise<PortKillResult>;
+  tunnelStatus(): Promise<TunnelStatus>;
+  tunnelStart(port: number): Promise<TunnelResult>;
+  /** Sem porta: fecha todos os túneis desta janela. */
+  tunnelStop(port?: number): Promise<boolean>;
+  tunnelPickBinary(): Promise<{ ok: boolean; binary?: string; error?: "invalid" }>;
+  onTunnel(callback: (event: TunnelEvent) => void): () => void;
+  inspectorToggle(id: number): Promise<{ ok: boolean; active?: boolean }>;
+  readerExtract(
+    id: number,
+  ): Promise<{ ok: true; article: ReaderArticle } | { ok: false; reason: "page" | "empty" }>;
+  captureTake(
+    mode: "tab" | "window",
+  ): Promise<{ ok: boolean; layers?: CaptureLayer[]; reason?: "tab" }>;
+  captureCopy(dataUrl: string): Promise<boolean>;
+  captureSave(dataUrl: string): Promise<{ ok: boolean; path?: string; canceled?: boolean }>;
+  scratchpadCapture(
+    id: number,
+    on: boolean,
+  ): Promise<{ ok: boolean; requests: CapturedRequest[]; error?: string }>;
+  scratchpadSend(request: ScratchpadRequest, tabId: number | null): Promise<ScratchpadResponse>;
+  onNetCapture(callback: (event: NetCaptureEvent) => void): () => void;
+  extensionsList(): Promise<{ supported: boolean; list: ExtensionInfo[] }>;
+  extensionsAddUnpacked(): Promise<ExtensionResult>;
+  extensionsInstallStore(input: string): Promise<ExtensionResult>;
+  extensionsSetEnabled(dir: string, enabled: boolean): Promise<{ ok: boolean }>;
+  extensionsReload(dir: string): Promise<{ ok: boolean }>;
+  extensionsRemove(dir: string): Promise<{ ok: boolean }>;
+  widevineStatus(): Promise<WidevineStatus>;
   pwaInstall(
     tabId: number,
   ): Promise<{ ok: boolean; id?: string; error?: string; reason?: PwaReason }>;
@@ -630,7 +769,8 @@ export type DesktopBridge = {
   updateInstall(): Promise<{ ok: boolean }>;
   onUpdate(callback: (state: UpdateState) => void): () => void;
   onTabEvent(callback: (event: DesktopTabEvent) => void): () => void;
-  onOpenRequest(callback: (payload: { url: string }) => void): () => void;
+  /** `from`: guia de onde o link saiu (null quando veio de outro lugar). */
+  onOpenRequest(callback: (payload: { url: string; from?: number }) => void): () => void;
   onFullscreen(callback: (payload: { active: boolean }) => void): () => void;
   onHotkey(
     callback: (payload: {

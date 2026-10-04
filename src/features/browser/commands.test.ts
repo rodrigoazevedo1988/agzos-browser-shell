@@ -43,6 +43,11 @@ function context(state: BrowserState = initialState, desktop = false) {
     openWorkspaces: vi.fn(),
     toggleSidebar: vi.fn(),
     toggleControl: vi.fn(),
+    togglePorts: vi.fn(),
+    capture: vi.fn(),
+    toggleReader: vi.fn(),
+    toggleNotes: vi.fn(),
+    openScratchpad: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

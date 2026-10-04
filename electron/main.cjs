@@ -5,6 +5,7 @@ const {
   Menu,
   session,
   clipboard,
+  ClipboardItem,
   ipcMain,
   screen,
   shell,
@@ -84,6 +85,14 @@ const {
 const { createSecrets } = require("./terminal-secrets.cjs");
 const { generateKey, keygenBinary, listKeys } = require("./ssh-keys.cjs");
 const { applyGpuFlags, watchGpuCrashes, setGpuEnabled, gpuStatus } = require("./gpu-flags.cjs");
+const { SESSION_ID_RE, orphanPartitionDirs, sessionIdsOf } = require("./session-tabs.cjs");
+const { createPortsService } = require("./ports-service.cjs");
+const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunnel.cjs");
+const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
+const { READER_WORLD, cleanArticle, readerSource } = require("./reader.cjs");
+const { createNetCapture, sendRequest } = require("./scratchpad.cjs");
+const { createExtensions } = require("./extensions.cjs");
+const { captureFileName, imageFileName, isPngDataUrl } = require("./capture.cjs");
 const {
   CLI_TOOLS,
   agentProgram,
@@ -121,6 +130,9 @@ const {
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
+// Session Tabs (4.5): uma partição persistente por sessão ("persist:agzos-session-<id>").
+const SESSION_PARTITION_PREFIX = "persist:agzos-session-";
+const sessionTabSessions = new Set();
 const HIDDEN_RECT = { x: 0, y: 0, width: 0, height: 0 };
 
 // Exceção não tratada no main vira log: o diálogo padrão do Electron é modal e, na
@@ -544,7 +556,9 @@ function isWebUrl(url) {
     url.startsWith("http://") ||
     url.startsWith("https://") ||
     url.startsWith("file://") ||
-    url.startsWith(`${FILE_SCHEME}:`)
+    url.startsWith(`${FILE_SCHEME}:`) ||
+    // 4.5: popup e opções de uma extensão carregada abrem numa guia.
+    Boolean(extensions?.isExtensionUrl(url))
   );
 }
 
@@ -570,6 +584,8 @@ function isShown(ctx, id) {
   return (
     paneIds(ctx).includes(id) &&
     !ctx.panelOpen &&
+    !(ctx.sidePanelExpanded && ctx.sidePanel) &&
+    !ctx.covered.has(id) &&
     !ctx.crashed.has(id) &&
     !ctx.rejected.has(id) &&
     !ctx.failed.has(id)
@@ -636,7 +652,13 @@ function notifyTabState(contents) {
 
 /** Link aberto em nova guia na janela de onde ele saiu. */
 function openInNewTab(contents, url) {
-  send(ownerCtx(contents), "agzos:open-request", { url });
+  // 4.5: a guia nova herda a sessão (anônima ou Session Tab) da guia de onde saiu.
+  const from = tabOfContents.get(contents.id)?.id;
+  send(
+    ownerCtx(contents),
+    "agzos:open-request",
+    Number.isSafeInteger(from) ? { url, from } : { url },
+  );
 }
 
 /** Download que abre o diálogo nativo "Salvar como" (Ctrl+S e menus "Salvar … como"). */
@@ -644,6 +666,67 @@ function saveAs(contents, url) {
   if (!isWebUrl(url) || url.startsWith("view-source:")) return;
   downloads?.askNext(contents);
   contents.downloadURL(url);
+}
+
+/**
+ * "Salvar imagem já carregada" (4.5): o arquivo sai do recurso que a página já tem (CDP
+ * Page.getResourceContent), para a pasta escolhida. Se o recurso não estiver mais na
+ * memória da página, cai no "Salvar como" comum.
+ */
+async function saveLoadedImage(contents, url) {
+  if (contents.isDestroyed() || !/^(https?:|data:image\/)/.test(url)) return;
+  let content = null;
+  try {
+    if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+    const tree = await contents.debugger.sendCommand("Page.getResourceTree");
+    const frames = [];
+    const walk = (node) => {
+      if (!node) return;
+      frames.push(node);
+      for (const child of node.childFrames ?? []) walk(child);
+    };
+    walk(tree?.frameTree);
+    const owner =
+      frames.find((node) => node.resources?.some((item) => item.url === url)) ?? frames[0];
+    if (owner) {
+      const result = await contents.debugger.sendCommand("Page.getResourceContent", {
+        frameId: owner.frame.id,
+        url,
+      });
+      const resource = owner.resources?.find((item) => item.url === url);
+      content = {
+        data: Buffer.from(result.content, result.base64Encoded ? "base64" : "utf8"),
+        mime: resource?.mimeType ?? "",
+      };
+    }
+  } catch {
+    content = null;
+  }
+  if (!content?.data.length) {
+    saveAs(contents, url);
+    return;
+  }
+  const ctx = ownerCtx(contents);
+  const remembered = database?.getMeta("imageSaveDir");
+  const folder =
+    typeof remembered === "string" && fs.existsSync(remembered)
+      ? remembered
+      : app.getPath("pictures");
+  const options = {
+    title: "Salvar imagem já carregada",
+    defaultPath: path.join(folder, imageFileName(url, content.mime)),
+  };
+  const result =
+    ctx && !ctx.window.isDestroyed()
+      ? await dialog.showSaveDialog(ctx.window, options)
+      : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return;
+  try {
+    fs.writeFileSync(result.filePath, content.data);
+    database?.setMeta("imageSaveDir", path.dirname(result.filePath));
+  } catch (error) {
+    console.error("Agzos: não foi possível salvar a imagem.", error);
+  }
 }
 
 function buildPageContextMenu(contents, params) {
@@ -723,7 +806,28 @@ function buildPageContextMenu(contents, params) {
       { type: "separator" },
       { label: "Abrir imagem em nova guia", click: () => openInNewTab(contents, params.srcURL) },
       { label: "Salvar imagem como…", click: () => saveAs(contents, params.srcURL) },
+      // 4.5: grava o que o navegador já carregou (sem baixar de novo).
+      {
+        label: "Salvar imagem já carregada…",
+        click: () => void saveLoadedImage(contents, params.srcURL),
+      },
       { label: "Copiar imagem", click: () => contents.copyImageAt(params.x, params.y) },
+    );
+  }
+
+  // 4.5: ferramentas da página (mira, leitura, Scratchpad), pelos comandos da casca.
+  const pageTab = tabOfContents.get(contents.id);
+  if (pageTab && isWebUrl(contents.getURL())) {
+    const shellAction = (action, label, accelerator) => ({
+      label,
+      ...(accelerator ? { accelerator } : {}),
+      click: () => send(pageTab.ctx, "agzos:tabmenu-action", { action, tabId: pageTab.id }),
+    });
+    template.push(
+      { type: "separator" },
+      shellAction("page.inspect", "Mira de elemento (cores e Tailwind)", "CmdOrCtrl+Shift+C"),
+      shellAction("page.reader", "Modo leitura", "CmdOrCtrl+Alt+R"),
+      shellAction("scratchpad.capture", "Capturar requisições no Scratchpad"),
     );
   }
 
@@ -1024,6 +1128,12 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+shift+d",
   "mod+shift+n",
   "mod+shift+r",
+  // 4.5: Session Tab, mira de elemento, captura, modo leitura e notas.
+  "mod+alt+n",
+  "mod+shift+c",
+  "mod+shift+s",
+  "mod+alt+r",
+  "mod+shift+m",
   "mod+tab",
   "mod+shift+tab",
   "mod+pagedown",
@@ -1425,6 +1535,38 @@ function resetScriptlets() {
   }
 }
 
+/** Partição da guia: anônima, Session Tab (4.5, persistente e só dela) ou a padrão. */
+function tabPartition(options) {
+  if (options?.private) return PRIVATE_PARTITION;
+  const id = options?.session;
+  return typeof id === "string" && SESSION_ID_RE.test(id)
+    ? `${SESSION_PARTITION_PREFIX}${id}`
+    : undefined;
+}
+
+/** Pastas de Session Tabs fechadas (nenhuma janela salva usa): somem na abertura. */
+function removeOrphanSessionPartitions(records) {
+  const dir = path.join(app.getPath("userData"), "Partitions");
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of orphanPartitionDirs(names, sessionIdsOf(records))) {
+    try {
+      fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    } catch {
+      // Em uso ou sem permissão: fica para a próxima abertura.
+    }
+  }
+}
+
+/** Sessões das páginas: a padrão, a anônima e as das Session Tabs já abertas. */
+function pageSessions() {
+  return [session.defaultSession, privateSession(), ...sessionTabSessions];
+}
+
 function privateSession() {
   return session.fromPartition(PRIVATE_PARTITION);
 }
@@ -1754,11 +1896,15 @@ function createWindow({ record = null, near = null, session: initial = null, ado
     sidePanels: new Map(),
     sidePanel: null,
     sidePanelRect: null,
+    // 4.5: painel promovido para a área principal (as guias saem de cena enquanto isso).
+    sidePanelExpanded: false,
     panelsReleased: false,
     panelDrag: null,
     panelOpen: false,
     fullscreenActive: false,
     crashed: new Set(),
+    // 4.5: guias cobertas pela casca (modo leitura): a view sai de cena, a página fica viva.
+    covered: new Set(),
     rejected: new Set(),
     failed: new Map(),
     hibernated: new Map(),
@@ -1845,6 +1991,7 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   });
   window.on("closed", () => {
     terminals?.killAll(ctx);
+    tunnels.stopOwner(ctx.key);
     closeTerminalPip(ctx);
     if (ctx.preview && !ctx.preview.webContents.isDestroyed()) ctx.preview.webContents.close();
     if (ctx.switcherView && !ctx.switcherView.webContents.isDestroyed()) {
@@ -2056,18 +2203,126 @@ function gxTabs() {
   return list;
 }
 
+// 4.5: painel de portas (o próprio app nunca aparece como "matável") e túneis HTTPS.
+const portsService = createPortsService({
+  execFile: require("node:child_process").execFile,
+  fs,
+  platform: process.platform,
+  home: os.homedir(),
+  protectedPids: () => [
+    process.pid,
+    process.ppid,
+    ...app.getAppMetrics().map((metric) => metric.pid),
+  ],
+});
+
+const tunnels = createTunnels({
+  spawn: require("node:child_process").spawn,
+  onEvent: ({ owner, port, state, url }) => {
+    const ctx = [...contexts.values()].find((item) => item.key === owner);
+    if (ctx) send(ctx, "agzos:tunnel", { port, state, url: url ?? null });
+  },
+});
+
+// 4.5: requisições capturadas para o API Scratchpad, avisadas à janela da guia.
+const netCapture = createNetCapture({
+  emit: (owner, payload) => send(owner, "agzos:net-capture", payload),
+});
+
+// 4.5: extensões (criadas no ready, quando a sessão padrão existe).
+let extensions = null;
+
+function startExtensions() {
+  try {
+    extensions = createExtensions({
+      ses: session.defaultSession,
+      fs,
+      store: {
+        get: () => database?.getMeta("extensions") ?? [],
+        set: (list) => database?.setMeta("extensions", list),
+      },
+      download: async (url) => {
+        const response = await net.fetch(url, { redirect: "follow" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return Buffer.from(await response.arrayBuffer());
+      },
+      extensionsDir: path.join(app.getPath("userData"), "Extensions"),
+      chromeVersion: process.versions.chrome,
+    });
+    void extensions.loadAll().catch(() => {});
+  } catch (error) {
+    extensions = null;
+    console.error("Agzos: extensões indisponíveis.", error);
+  }
+}
+
+// 4.5: Widevine. Só o Electron da castLabs (ECS, "+wvcus") tem `components`: ele baixa e
+// registra o CDM oficial do Google. Só reprodução: o app nunca lê chave nem grava mídia.
+const electronComponents = require("electron").components ?? null;
+let widevineState = electronComponents
+  ? { state: "loading", detail: "" }
+  : { state: "unavailable", detail: "" };
+
+function startWidevine() {
+  if (!electronComponents) return;
+  electronComponents.whenReady().then(
+    () => {
+      widevineState = { state: "ready", detail: "" };
+    },
+    (error) => {
+      widevineState = { state: "error", detail: String(error?.message ?? error).slice(0, 200) };
+    },
+  );
+}
+
+function widevineStatus() {
+  let version = null;
+  try {
+    const status = electronComponents?.status?.() ?? {};
+    const cdm = Object.values(status).find((item) => /widevine/i.test(String(item?.title ?? "")));
+    version = cdm?.version ?? null;
+  } catch {
+    version = null;
+  }
+  return { ...widevineState, version };
+}
+
+function isExecutableFile(file) {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    if (process.platform !== "win32") fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** cloudflared: o escolhido pelo usuário (meta cloudflaredPath), o PATH ou as pastas padrão. */
+function cloudflaredBinary() {
+  const configured = database?.getMeta("cloudflaredPath");
+  return findCloudflared(
+    {
+      configured: typeof configured === "string" ? configured : null,
+      env: process.env,
+      platform: process.platform,
+      home: os.homedir(),
+    },
+    isExecutableFile,
+  );
+}
+
 const gxControl = createGxControl({
   cores: Math.max(1, os.cpus().length),
   metrics: () => app.getAppMetrics(),
   tabs: gxTabs,
   hibernate: (ctx, id) => hibernateTab(ctx, id),
-  sessions: () => [session.defaultSession, privateSession()],
+  sessions: () => pageSessions(),
 });
 
 /** Cache de disco das sessões das páginas (bytes). */
 async function gxCacheSize() {
   let total = 0;
-  for (const ses of [session.defaultSession, privateSession()]) {
+  for (const ses of pageSessions()) {
     total += await ses.getCacheSize().catch(() => 0);
   }
   return total;
@@ -2079,7 +2334,7 @@ async function gxCacheSize() {
  */
 async function gxClearCache() {
   const before = await gxCacheSize();
-  for (const ses of [session.defaultSession, privateSession()]) {
+  for (const ses of pageSessions()) {
     await ses.clearCache().catch(() => {});
     await ses.clearCodeCaches({}).catch(() => {});
     await ses.clearHostResolverCache().catch(() => {});
@@ -3046,9 +3301,12 @@ function registerIpc() {
         sandbox: true,
         contextIsolation: true,
         preload: PAGE_PRELOAD,
-        partition: options?.private ? PRIVATE_PARTITION : undefined,
+        partition: tabPartition(options),
       },
     });
+    if (typeof options?.session === "string" && !options?.private) {
+      sessionTabSessions.add(view.webContents.session);
+    }
     view.setBackgroundColor(options?.dark ? "#0E0E0E" : "#FFFDFD");
     view.setBounds(HIDDEN_RECT);
     ctx.views.set(id, { view, hiddenSince: null });
@@ -3137,8 +3395,271 @@ function registerIpc() {
     const hadFocus =
       entry && !entry.view.webContents.isDestroyed() && entry.view.webContents.isFocused();
     ctx.sidePanel = null;
-    layoutSidePanels(ctx);
+    ctx.sidePanelExpanded = false;
+    applyLayout(ctx);
     if (hadFocus && !ctx.window.isDestroyed()) ctx.window.webContents.focus();
+  });
+
+  // 4.5: painel de portas. Matar só vale para um PID da última leitura (e nunca o app).
+  ipcMain.handle("ports:list", async () => {
+    try {
+      return { ok: true, ports: await portsService.scan() };
+    } catch {
+      return { ok: false, ports: [] };
+    }
+  });
+
+  ipcMain.handle("ports:kill", (_event, { pid } = {}) =>
+    portsService.kill(Number(pid)).catch(() => ({ ok: false, error: "gone" })),
+  );
+
+  // Túnel HTTPS: a URL pública já vai para a área de transferência.
+  ipcMain.handle("tunnel:status", (event) => {
+    const ctx = ctxOfEvent(event);
+    return {
+      binary: cloudflaredBinary(),
+      tunnels: ctx ? tunnels.list(ctx.key) : [],
+    };
+  });
+
+  ipcMain.handle("tunnel:start", async (event, { port } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return { ok: false, error: "window" };
+    const binary = cloudflaredBinary();
+    if (!binary) return { ok: false, error: "missing" };
+    const result = await tunnels.start(ctx.key, Number(port), binary);
+    if (result.ok && result.url) clipboard.writeText(result.url);
+    return result;
+  });
+
+  ipcMain.handle("tunnel:stop", (event, { port } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return false;
+    if (port === undefined || port === null) {
+      tunnels.stopOwner(ctx.key);
+      return true;
+    }
+    return tunnels.stop(ctx.key, Number(port));
+  });
+
+  // Sem cloudflared no PATH: o usuário aponta o binário (nada é baixado pelo app).
+  ipcMain.handle("tunnel:pick-binary", async (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || ctx.window.isDestroyed()) return { ok: false };
+    const result = await dialog.showOpenDialog(ctx.window, {
+      title: "Escolher o cloudflared",
+      properties: ["openFile"],
+      ...(process.platform === "win32"
+        ? { filters: [{ name: "cloudflared", extensions: ["exe"] }] }
+        : {}),
+    });
+    const file = result.canceled ? null : result.filePaths[0];
+    if (!file) return { ok: false };
+    if (!looksLikeCloudflared(file) || !isExecutableFile(file)) {
+      return { ok: false, error: "invalid" };
+    }
+    database?.setMeta("cloudflaredPath", file);
+    return { ok: true, binary: file };
+  });
+
+  // 4.5: mira de elemento (Ctrl+Shift+C) num mundo isolado; liga ou desliga.
+  ipcMain.handle("inspector:toggle", async (event, { id } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed() || !isWebUrl(contents.getURL())) {
+      return { ok: false };
+    }
+    try {
+      const active = await contents.executeJavaScriptInIsolatedWorld(
+        INSPECTOR_WORLD,
+        [{ code: inspectorSource() }],
+        true,
+      );
+      // O foco vai para a página: o Esc e o clique chegam nela.
+      contents.focus();
+      return { ok: true, active: Boolean(active) };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  // 4.5: modo leitura. O artigo sai da página (mundo isolado) já em blocos validados.
+  ipcMain.handle("reader:extract", async (event, { id } = {}) => {
+    const contents = tabContents(ctxOfEvent(event), id);
+    if (!contents || contents.isDestroyed() || !/^https?:/.test(contents.getURL())) {
+      return { ok: false, reason: "page" };
+    }
+    try {
+      const raw = await contents.executeJavaScriptInIsolatedWorld(
+        READER_WORLD,
+        [{ code: readerSource() }],
+        true,
+      );
+      const article = cleanArticle(raw);
+      return article ? { ok: true, article } : { ok: false, reason: "empty" };
+    } catch {
+      return { ok: false, reason: "page" };
+    }
+  });
+
+  // 4.5: captura de tela. "tab": a página ativa; "window": casca + páginas à vista, cada
+  // camada com a área dela (a casca junta tudo num canvas). Nada fora da janela do app.
+  ipcMain.handle("capture:take", async (event, { mode } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || ctx.window.isDestroyed()) return { ok: false };
+    const shot = async (contents) => {
+      const image = await contents.capturePage();
+      return image.isEmpty() ? null : image.toDataURL();
+    };
+    try {
+      if (mode === "window") {
+        const layers = [];
+        const shell = await shot(ctx.window.webContents);
+        const size = ctx.window.getContentBounds();
+        if (shell)
+          layers.push({ dataUrl: shell, x: 0, y: 0, width: size.width, height: size.height });
+        const visible = [
+          ...[...ctx.views.entries()]
+            .filter(([id]) => isShown(ctx, id))
+            .map(([id, entry]) => ({ contents: entry.view.webContents, rect: rectOf(ctx, id) })),
+          ...[...ctx.sidePanels.entries()]
+            .filter(([app]) => app === ctx.sidePanel && ctx.sidePanelRect && !ctx.panelOpen)
+            .map(([, entry]) => ({ contents: entry.view.webContents, rect: ctx.sidePanelRect })),
+        ];
+        for (const item of visible) {
+          if (!item.rect || item.contents.isDestroyed()) continue;
+          const dataUrl = await shot(item.contents);
+          if (dataUrl) layers.push({ dataUrl, ...item.rect });
+        }
+        return layers.length ? { ok: true, layers } : { ok: false };
+      }
+      const entry = activeViewEntry(ctx);
+      const contents = entry?.view.webContents;
+      if (!contents || contents.isDestroyed() || !isShown(ctx, ctx.activeTabId)) {
+        return { ok: false, reason: "tab" };
+      }
+      const dataUrl = await shot(contents);
+      const rect = rectOf(ctx, ctx.activeTabId);
+      return dataUrl && rect
+        ? { ok: true, layers: [{ dataUrl, x: 0, y: 0, width: rect.width, height: rect.height }] }
+        : { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  // Electron 44: a área de transferência é assíncrona (ClipboardItem, como no W3C).
+  ipcMain.handle("capture:copy", async (_event, { dataUrl } = {}) => {
+    if (!isPngDataUrl(dataUrl)) return false;
+    const data = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64");
+    try {
+      await clipboard.write([
+        new ClipboardItem({ "image/png": new Blob([data], { type: "image/png" }) }),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle("capture:save", async (event, { dataUrl } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || !isPngDataUrl(dataUrl)) return { ok: false };
+    const remembered = database?.getMeta("captureDir");
+    const folder =
+      typeof remembered === "string" && fs.existsSync(remembered)
+        ? remembered
+        : app.getPath("pictures");
+    const result = await dialog.showSaveDialog(ctx.window, {
+      title: "Salvar captura",
+      defaultPath: path.join(folder, captureFileName(new Date())),
+      filters: [{ name: "PNG", extensions: ["png"] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    const file = /\.png$/i.test(result.filePath) ? result.filePath : `${result.filePath}.png`;
+    try {
+      fs.writeFileSync(file, Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64"));
+      database?.setMeta("captureDir", path.dirname(file));
+      return { ok: true, path: file };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  // 4.5: API Scratchpad. Captura liga o Network da guia; o envio usa a sessão dela.
+  ipcMain.handle("scratchpad:capture", (event, { id, on } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, id);
+    if (!ctx || !contents || contents.isDestroyed()) return { ok: false, requests: [] };
+    if (!on) {
+      netCapture.stop(contents);
+      return { ok: true, requests: [] };
+    }
+    const result = netCapture.start(contents, { tabId: id, owner: ctx });
+    return { ...result, requests: netCapture.requests(contents) };
+  });
+
+  ipcMain.handle("scratchpad:send", (event, { request, tabId } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, tabId);
+    const ses = contents && !contents.isDestroyed() ? contents.session : session.defaultSession;
+    return sendRequest((url, init) => ses.fetch(url, init), request);
+  });
+
+  // 4.5: extensões (Configurações → Extensões).
+  ipcMain.handle("extensions:list", () => ({
+    supported: Boolean(extensions),
+    list: extensions?.list() ?? [],
+  }));
+
+  ipcMain.handle("extensions:add-unpacked", async (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || !extensions) return { ok: false, error: "unsupported" };
+    const result = await dialog.showOpenDialog(ctx.window, {
+      title: "Carregar extensão descompactada (pasta com manifest.json)",
+      properties: ["openDirectory"],
+    });
+    const dir = result.canceled ? null : result.filePaths[0];
+    if (!dir) return { ok: false, canceled: true };
+    return extensions.addUnpacked(dir);
+  });
+
+  ipcMain.handle("extensions:install-store", (_event, { input } = {}) =>
+    extensions
+      ? extensions.installFromStore(String(input ?? ""))
+      : { ok: false, error: "unsupported" },
+  );
+
+  ipcMain.handle("extensions:set-enabled", (_event, { dir, enabled } = {}) =>
+    extensions ? extensions.setEnabled(String(dir ?? ""), Boolean(enabled)) : { ok: false },
+  );
+
+  ipcMain.handle("extensions:reload", (_event, { dir } = {}) =>
+    extensions ? extensions.reload(String(dir ?? "")) : { ok: false },
+  );
+
+  ipcMain.handle("extensions:remove", (_event, { dir } = {}) =>
+    extensions ? extensions.remove(String(dir ?? "")) : { ok: false },
+  );
+
+  // 4.5: Widevine (só no build com o CDM da castLabs; o Electron oficial não traz).
+  ipcMain.handle("widevine:status", () => widevineStatus());
+
+  // 4.5: modo leitura cobre a guia (a casca mostra o artigo); sair devolve a página.
+  ipcMain.handle("tab:cover", (event, { id, covered } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || !Number.isSafeInteger(id)) return;
+    if (covered) ctx.covered.add(id);
+    else ctx.covered.delete(id);
+    applyLayout(ctx);
+  });
+
+  // 4.5: expandir leva o painel para a área das guias; recolher volta ao painel menor. A
+  // casca manda a área nova pelo sidepanel:bounds (a mesma view, sem recarregar).
+  ipcMain.handle("sidepanel:expand", (event, { expanded } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    ctx.sidePanelExpanded = Boolean(expanded) && Boolean(ctx.sidePanel);
+    applyLayout(ctx);
   });
 
   ipcMain.handle("sidepanel:bounds", (event, rect) => {
@@ -3804,6 +4325,7 @@ function registerIpc() {
     const ctx = ctxOfEvent(event);
     if (!ctx) return;
     ctx.hibernated.delete(id);
+    ctx.covered.delete(id);
     if (ctx.views.has(id)) dropView(ctx, id);
     if (ctx.activeTabId === id) ctx.activeTabId = null;
   });
@@ -5151,6 +5673,7 @@ function macMenuTemplate() {
           },
         },
         command("Nova guia anônima", "tab.new-private", "Shift+Cmd+N"),
+        command("Nova Session Tab", "tab.new-session", "Alt+Cmd+N"),
         command("Reabrir guia fechada", "tab.reopen-closed", "Shift+Cmd+T"),
         { type: "separator" },
         command("Abrir endereço…", "omnibox.focus", "Cmd+L"),
@@ -5193,6 +5716,12 @@ function macMenuTemplate() {
         command("Picture-in-picture", "page.pip", "Shift+Cmd+P"),
         command("Agzos AI", "ai.toggle", "Shift+Cmd+A"),
         command("Terminal", "terminal.toggle", "Alt+Cmd+T"),
+        command("Modo leitura", "page.reader", "Alt+Cmd+R"),
+        command("Notas desta página", "notes.toggle", "Shift+Cmd+M"),
+        command("Mira de elemento", "page.inspect", "Shift+Cmd+C"),
+        command("Capturar tela…", "page.capture", "Shift+Cmd+S"),
+        command("Portas em uso", "ports.open"),
+        command("API Scratchpad", "scratchpad.open"),
         command("Mostrar/ocultar barra de favoritos", "bookmarks.toggle-bar", "Shift+Cmd+B"),
         command("Guias na vertical", "tabs.vertical"),
         command("Guias na horizontal", "tabs.horizontal"),
@@ -5289,7 +5818,7 @@ app.whenReady().then(() => {
   if (database) {
     windowStore = createWindowStore({ database });
     const previous = windowStore.beginRun();
-    windowStore.load();
+    removeOrphanSessionPartitions(windowStore.load());
     startup = { ...previous, restoredWindows: 0 };
     // Passado um minuto aberto, um crash não é mais "logo ao abrir".
     setTimeout(
@@ -5299,6 +5828,8 @@ app.whenReady().then(() => {
   }
   startServices();
   registerIpc();
+  startExtensions();
+  startWidevine();
   pwaStore = createPwaStore({ database });
   // Atalho de um PWA instalado: só a janela do app (as janelas do navegador continuam
   // salvas para a próxima vez que o navegador abrir).
@@ -5375,6 +5906,8 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => {
+  // 4.5: nenhum túnel sobrevive ao app.
+  tunnels.stopAll();
   // Saída normal: janelas gravadas e o marcador de execução sai.
   try {
     windowStore?.endRun();

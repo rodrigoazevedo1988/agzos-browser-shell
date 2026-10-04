@@ -61,6 +61,9 @@ export function OverlayHost({ bridge }: { bridge: OverlayBridge }) {
     const list = classes.split(" ");
     root.classList.toggle("dark", list.includes("dark"));
     root.classList.toggle("ui-glass", list.includes("ui-glass"));
+    const accent = list.find((name) => /^accent-[0-9a-f]{6}$/.test(name));
+    if (accent) root.style.setProperty("--primary", `#${accent.slice(7)}`);
+    else root.style.removeProperty("--primary");
   }, [classes]);
 
   if (!model) return null;

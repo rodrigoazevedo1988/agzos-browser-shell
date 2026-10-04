@@ -36,6 +36,7 @@ function NativeView({
   requestedUrl,
   dark,
   privateTab,
+  sessionId,
   muted,
   active,
   pane,
@@ -46,6 +47,8 @@ function NativeView({
   requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
+  /** Session Tab (4.5): a partição própria da guia. */
+  sessionId?: string | undefined;
   muted: boolean;
   active: boolean;
   /** Um dos lados da tela dividida: a área vai com o id da guia. */
@@ -62,7 +65,11 @@ function NativeView({
   const bridge = desktopBridge();
 
   useEffect(() => {
-    void bridge?.attachTab(tabId, url, { dark, private: privateTab });
+    void bridge?.attachTab(tabId, url, {
+      dark,
+      private: privateTab,
+      ...(sessionId ? { session: sessionId } : {}),
+    });
     // Na tela dividida, o outro lado aparece sem virar a guia ativa.
     if (active) void bridge?.activateTab(tabId);
     void bridge?.muteTab(tabId, muted);
@@ -113,6 +120,7 @@ export function WebFrame({
   requestedUrl,
   dark,
   privateTab,
+  sessionId,
   muted,
   active = true,
   pane = false,
@@ -124,6 +132,7 @@ export function WebFrame({
   requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
+  sessionId?: string | undefined;
   muted: boolean;
   /** Guia ativa (na tela dividida, só um dos lados). */
   active?: boolean;
@@ -144,6 +153,7 @@ export function WebFrame({
         requestedUrl={requestedUrl}
         dark={dark}
         privateTab={privateTab}
+        sessionId={sessionId}
         muted={muted}
         active={active}
         pane={pane}

@@ -32,6 +32,7 @@ export const INTERNAL_PAGES: Record<string, string> = {
   "agzos://favoritos": "Favoritos",
   "agzos://configuracoes": "Configurações",
   "agzos://discador": "Discador",
+  "agzos://scratchpad": "API Scratchpad",
 };
 
 /** Outros nomes que levam às mesmas páginas (como o chrome://settings). */

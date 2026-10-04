@@ -12,7 +12,59 @@ export type Tab = {
   groupId?: number | undefined;
   /** Workspace da guia (2.0); sem valor = o workspace padrão. */
   workspaceId?: number | undefined;
+  /**
+   * Session Tab (4.5): cookies e localStorage numa partição só dela, com uma cor. Links
+   * abertos dela e a duplicata ficam na mesma sessão.
+   */
+  session?: TabSession | undefined;
 };
+
+export type TabSession = { id: string; color: string };
+
+/** Nota de uma página (4.5): markdown simples, guardada localmente pela chave da URL. */
+export type PageNote = { url: string; title: string; text: string; updatedAt: number };
+export const NOTES_LIMIT = 500;
+export const NOTE_TEXT_LIMIT = 100_000;
+
+/** Chave da nota: origem + caminho + busca (sem o #). Páginas internas usam a URL toda. */
+export function noteKeyOf(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+    }
+    if (parsed.protocol === "agzos:" || parsed.protocol === "file:") return url.split("#")[0]!;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Cores das Session Tabs, na ordem em que são usadas. */
+export const SESSION_TAB_COLORS = [
+  "#2563EB",
+  "#16A34A",
+  "#D97706",
+  "#9333EA",
+  "#0891B2",
+  "#DB2777",
+  "#65A30D",
+  "#475569",
+] as const;
+
+export const SESSION_ID_RE = /^[a-z0-9-]{4,40}$/;
+
+/** Sessão nova: a primeira cor que nenhuma Session Tab aberta usa (depois, em rodízio). */
+export function newTabSession(tabs: Pick<Tab, "session">[], id: string): TabSession {
+  const used = new Map<string, number>();
+  for (const tab of tabs) {
+    if (tab.session) used.set(tab.session.color, (used.get(tab.session.color) ?? 0) + 1);
+  }
+  const color =
+    SESSION_TAB_COLORS.find((item) => !used.has(item)) ??
+    [...SESSION_TAB_COLORS].sort((a, b) => (used.get(a) ?? 0) - (used.get(b) ?? 0))[0]!;
+  return { id, color };
+}
 
 export const TAB_GROUP_COLORS = [
   "grey",
