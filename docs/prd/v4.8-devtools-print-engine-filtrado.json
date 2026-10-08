@@ -1,0 +1,1061 @@
+{
+  "prd": {
+    "meta": {
+      "product": "Agzos Browser",
+      "release": "v4.8 - DevTools integrado + Print Engine 2.0 (PRD filtrado)",
+      "document_version": "1.2-filtered",
+      "document_type": "PRD tecnico filtrado contra o que ja existe em 4.7.2",
+      "owner": "Agzos Strategy",
+      "target_agent": "Antigravity",
+      "runtime": "electron",
+      "baseline": "4.7.2 (ff2db01, 2026-10-04)",
+      "source_prd": "PRD-agzos-browser-v2.json v1.1",
+      "filtered_at": "2026-10-08",
+      "output_language_code_comments": "pt-BR",
+      "output_language_identifiers": "en",
+      "platforms": [
+        "Windows",
+        "macOS",
+        "Linux"
+      ],
+      "filter_rule": "Removido ou reduzido a delta tudo que o CHANGELOG de 4.7.2 ja entrega. Nao reimplementar. Feature nova so entra se o comportamento pedido ainda nao existe."
+    },
+    "filter_report": {
+      "method": "Cruzamento feature a feature do PRD v1.1 com CHANGELOG.md (visao geral + historico 1.x-4.7.2 + backlog). Item sai se o comportamento ja esta em producao. Item permanece se so a base existe e o comportamento pedido nao.",
+      "dropped_or_reduced": [
+        {
+          "id": "F-CORE-01",
+          "decision": "reduzido",
+          "already_shipped": "Paleta de comandos Ctrl+K desde 2.0.0 (store/commands.ts).",
+          "keep": "Registrar na paleta existente os comandos novos deste PRD e o mapeamento de frases curtas ('imprimir pagina inteira'). Nao criar segunda paleta."
+        },
+        {
+          "id": "F-WS-01",
+          "decision": "reduzido",
+          "already_shipped": "Workspaces desde 2.0.0. Session Tabs (Ctrl+Alt+N) desde 4.5.0 com particao propria e cor (electron/session-tabs.cjs). Isolamento de cookies ja existe.",
+          "keep": "Delta: proxy por workspace (backlog P3 NET-001, ainda nao feito), locale/timezone/UA/pasta de download por workspace, export de config sem cookies, comando agzos ws. Nao recriar particao nem o conceito de workspace."
+        },
+        {
+          "id": "F-TRM-01",
+          "decision": "mantido so a integracao",
+          "already_shipped": "Terminal PTY real desde 4.0/4.1 (electron/terminal*.cjs): dock bottom/direita/flutuante, temas, SSH, aliases, voz, modo agente. A.2 do PRD original esta confirmada.",
+          "keep": "Namespace agzos e terminal-bus. Reusar o PTY e o buffer existentes. Nao abrir segundo PTY por padrao."
+        },
+        {
+          "id": "F-AI-01",
+          "decision": "mantido como copilot, nao como chat",
+          "already_shipped": "Agzos AI com Groq desde 4.0 (electron/ai.cjs): chave cifrada no main via safeStorage, conversas, projetos, artifacts, contexto de aba opcional.",
+          "keep": "Aba Copilot de debug (sinais de console/rede/long task). Provedor remoto reusa a chave Groq ja cadastrada. Nao construir segundo chat."
+        },
+        {
+          "id": "F-OCR-01",
+          "decision": "reduzido",
+          "already_shipped": "OCR local pt/en/es no PDF Tools desde 4.7.0. Captura de viewport Ctrl+Shift+S desde 4.5.0 (inspector/screenshot).",
+          "keep": "Clip de regiao, anotacao e enviar texto ao terminal. Motor de OCR = o do PDF Tools. Captura alem do viewport continua no Print Engine (backlog UX-001 ainda pendente)."
+        },
+        {
+          "id": "F-A11Y-01",
+          "decision": "mantido so tag/auditoria de pagina",
+          "already_shipped": "PDF Tools (agzos://pdf) desde 4.7.0: editar, organizar, juntar, dividir, comprimir, AES-256, formularios, OCR, Word via LibreOffice.",
+          "keep": "generateTaggedPDF/outline na captura e relatorio de a11y no preview. Pos-processo (juntar, cifrar, OCR) delega ao PDF Tools. Nao duplicar o modulo."
+        },
+        {
+          "id": "F-DEV-01",
+          "decision": "mantido, atalho ja ocupado",
+          "already_shipped": "Mira de elemento Ctrl+Shift+C e captura Ctrl+Shift+S desde 4.5.0 (electron/inspector.cjs). Nao ha shell DevTools, F12 nem paineis.",
+          "keep": "Shell dockavel. Inspecionar elemento reusa a mira existente em vez de um segundo overlay."
+        },
+        {
+          "id": "F-DEV-06",
+          "decision": "mantido como profiler de pagina",
+          "already_shipped": "GX Control desde 3.0.0: limitadores de RAM/CPU/rede, Hot Tabs Killer, teste de velocidade. Nao e tracing de render.",
+          "keep": "Timeline, heap, trace. Nao reimplementar GX Control."
+        },
+        {
+          "id": "F-DEV-07",
+          "decision": "mantido, permissoes ja existem",
+          "already_shipped": "Permissoes por site persistidas (electron/permissions.cjs) desde 1.4.0.",
+          "keep": "Cookies, storage, Cache Storage, service workers, painel Security. Revogacao de permissao chama permissions.cjs, nao uma segunda loja."
+        },
+        {
+          "id": "F-KSK-01",
+          "decision": "mantido como wall",
+          "already_shipped": "Split de 2 guias e 20+ paineis laterais desde 2.0/3.0. Nao e kiosk em grade com print agendado.",
+          "keep": "Grade N paineis, recarga, keep-awake, print agendado, saida de emergencia. Nao refazer a barra lateral."
+        },
+        {
+          "id": "F-AUT-01",
+          "decision": "mantido",
+          "already_shipped": "Modo agente em canvas de nos (Ctrl+Shift+G) desde 4.1.1. Nao grava clique/print de pagina.",
+          "keep": "Macro de navegacao/print. Nao recriar o canvas de agente."
+        }
+      ],
+      "dropped_entirely": [
+        {
+          "item": "Construir paleta Ctrl+K do zero",
+          "why": "Existe desde 2.0.0."
+        },
+        {
+          "item": "Construir terminal PTY",
+          "why": "Existe desde 4.0.0 (node-pty + xterm)."
+        },
+        {
+          "item": "Construir workspaces e particoes de sessao",
+          "why": "Workspaces 2.0.0 + Session Tabs 4.5.0."
+        },
+        {
+          "item": "Construir chat de IA e cofre de chave",
+          "why": "Agzos AI + safeStorage desde 4.0.0."
+        },
+        {
+          "item": "Construir motor de OCR e suite de PDF",
+          "why": "PDF Tools 4.7.0 ja faz OCR local, merge, split, compress, forms, AES-256."
+        },
+        {
+          "item": "Captura simples do viewport e mira de elemento",
+          "why": "Ctrl+Shift+S e Ctrl+Shift+C desde 4.5.0."
+        },
+        {
+          "item": "Permissoes por site",
+          "why": "permissions.cjs desde 1.4.0."
+        },
+        {
+          "item": "Adapters CEF/Qt",
+          "why": "Ja removidos no PRD 1.1; runtime e Electron."
+        }
+      ],
+      "confirmed_absent_in_changelog": [
+        "DevTools (Elements, Console, Network, Sources, Performance, Application, Emulation) — backlog so cita DevTools configuravel no build (DEV-001), nao os paineis.",
+        "Imprimir / salvar como PDF (printToPDF) — backlog P1 NAV-012, pendente.",
+        "Captura da pagina inteira (captureBeyondViewport) e anotacao — backlog P2 UX-001, pendente.",
+        "Print Shield, scroll-stitch, recipes, batch print, social long-print, evidence vault, session rewind, perf advisor, kiosk wall, macros gravadas — ausentes do changelog e do backlog como feitos."
+      ]
+    },
+    "agent_directives": {
+      "read_first": [
+        "Baseline e 4.7.2. Nao recriar terminal, paleta, workspaces, Session Tabs, Agzos AI, PDF Tools, OCR, mira ou captura de viewport.",
+        "Este PRD e a especificacao-fonte do que falta. Nao invente arquitetura fora de architecture.components.",
+        "Runtime e Electron. Nao criar camada CEF/Qt.",
+        "Toda feature tem id (F-xxx-nn). Use o id em branch e commit.",
+        "Antes de codar API de Chromium/Electron, confirme a assinatura em process.versions.electron / process.versions.chrome.",
+        "Implemente na ordem de implementation_plan. Nao avance de fase com gate vermelho."
+      ],
+      "do": [
+        "Reusar electron/terminal*.cjs, commands.ts, session-tabs.cjs, ai.cjs, permissions.cjs, inspector.cjs e o OCR do PDF Tools.",
+        "Isolar captura/impressao em servicos puros, sem UI.",
+        "Feature flags para desligar Print Shield, DevTools e Copilot por build.",
+        "Operacao longa (captura, impressao, scroll-stitch, batch, rewind) e job cancelavel com progresso.",
+        "IA e dados sensiveis: local-first e opt-in. Remoto reusa a chave Groq ja cifrada no main."
+      ],
+      "do_not": [
+        "Nao abrir --remote-debugging-port em rede. Se usar, apenas 127.0.0.1 + token efemero.",
+        "Nao remover, contornar ou automatizar autenticacao, paywall, DRM ou conteudo que o usuario nao tenha direito de ver.",
+        "Nao enviar conteudo de pagina, headers, cookies ou storage para servico remoto sem opt-in e sem mascaramento.",
+        "Nao duplicar Agzos AI, PDF Tools, paleta ou terminal.",
+        "Nao usar APIs de captura que exijam janela visivel quando houver alternativa por CDP."
+      ]
+    },
+    "context": {
+      "current_state": [
+        "Agzos Browser 4.7.2, Electron, com terminal PTY (node-pty), paleta Ctrl+K, workspaces, Session Tabs com particao isolada, Agzos AI (Groq), PDF Tools com OCR local, mira de elemento e captura de viewport.",
+        "Nao ha painel DevTools (Elements/Console/Network/Sources). Nao ha printToPDF nem captura alem do viewport — ambos estao no backlog como pendentes (NAV-012, UX-001).",
+        "Alvo: reaproveitar Electron/Chromium e os modulos ja publicados."
+      ],
+      "assumptions": [
+        "A.1 - Electron confirmado. Versao real a ler em Fase 0 via process.versions. APIs citadas existem em Electron >= 20; o que depender de versao vira capability.",
+        "A.2 - Terminal integrado existe e expoe escrita no buffer. Se a API de 'inserir sem executar' nao existir, cria-la no modulo atual, sem segundo PTY.",
+        "A.3 - UI e HTML/CSS/JS no renderer.",
+        "A.4 - Persistencia local ja existe (SQLite em userData). Estender, nao criar outro banco.",
+        "A.5 - Provedor remoto de IA ja e Groq, chave no main. Copilot local e o default; remoto so com opt-in e a chave existente."
+      ],
+      "problem_statement": [
+        "P.1 - Sem DevTools o usuario volta ao Chrome para inspecionar DOM, rede, console e JS. A mira atual nao substitui os paineis.",
+        "P.2 - Nao da para imprimir a pagina inteira nem materializar lazy load. printToPDF e captureBeyondViewport estao pendentes.",
+        "P.3 - Sites bloqueiam impressao nativa (CSS @media print, override de window.print, overlays). Falta uma via de imprimir o que ja esta visivel, sem furar paywall/DRM."
+      ],
+      "goals": [
+        "G.1 - DevTools integrado ao terminal existente: Elements, Console, Network, Sources, Performance, Application, Emulation.",
+        "G.2 - Print Engine 2.0: preview, opcoes de pagina, pagina inteira estatica e por rolagem, PDF/imagem.",
+        "G.3 - Print Shield so no conteudo ja visivel.",
+        "G.4 - Barramento agzos entre DevTools, Print e o terminal que ja existe.",
+        "G.5 - Diferenciais ainda ausentes: recipes, batch, copilot de debug, rewind, evidence, macros, wall."
+      ],
+      "non_goals": [
+        "NG.1 - Reconstruir terminal, paleta, workspaces, Session Tabs, Agzos AI, PDF Tools, OCR, mira ou screenshot de viewport.",
+        "NG.2 - Substituir Chrome (extensoes ja existem; sync de conta Google fora).",
+        "NG.3 - Contornar paywall, autenticacao ou DRM.",
+        "NG.4 - Engine de renderizacao propria, Gecko ou WebKit.",
+        "NG.5 - Cloud sync nesta release.",
+        "NG.6 - Treinar ou hospedar modelo. Copilot usa provider plugavel; remoto reusa Groq."
+      ]
+    },
+    "architecture": {
+      "runtime": {
+        "engine": "electron",
+        "devtools": "webContents.debugger (CDP) + bridge WebSocket local para paineis customizados; paineis padrao podem usar o frontend bundled",
+        "print": "webContents.printToPDF + Page.printToPDF (transferMode ReturnAsStream) + Page.captureScreenshot (captureBeyondViewport)",
+        "reuse": [
+          "electron/terminal*.cjs",
+          "electron/session-tabs.cjs",
+          "electron/ai.cjs",
+          "electron/permissions.cjs",
+          "electron/inspector.cjs",
+          "src/features/pdf (OCR e pos-processo)",
+          "store/commands.ts (paleta)"
+        ]
+      },
+      "interfaces": [
+        {
+          "name": "IDevToolsAdapter",
+          "methods": [
+            "attach(targetWebContentsId)",
+            "detach(targetWebContentsId)",
+            "send(method, params?, sessionId?)",
+            "onEvent(cb)",
+            "listTargets()"
+          ]
+        },
+        {
+          "name": "IPrintAdapter",
+          "methods": [
+            "printToPdf(targetWebContentsId, options)",
+            "captureViewportPng(targetWebContentsId, rect)",
+            "getLayoutMetrics(targetWebContentsId)",
+            "setDeviceMetrics(targetWebContentsId, metrics)",
+            "clearDeviceMetrics(targetWebContentsId)",
+            "setEmulatedMedia(targetWebContentsId, media, features?)"
+          ]
+        },
+        {
+          "name": "IAiProvider",
+          "methods": [
+            "kind()",
+            "complete(input)",
+            "isAvailable()"
+          ],
+          "note": "Default local. Remoto reusa Groq/safeStorage de electron/ai.cjs. Nao criar segundo cofre de chave."
+        }
+      ],
+      "components": [
+        {
+          "id": "C-01",
+          "name": "cdp-bridge",
+          "process": "main",
+          "responsibility": "WebSocket 127.0.0.1, porta efemera, token. Ponte do frontend DevTools para webContents.debugger. Hibrido: paineis nativos bundled + custom (Terminal, Print, Copilot, Rewind)."
+        },
+        {
+          "id": "C-02",
+          "name": "devtools-shell",
+          "process": "renderer",
+          "responsibility": "Dock direita/inferior/undocked. Aba Terminal reusa a sessao PTY existente. Inspecionar elemento delega a inspector.cjs."
+        },
+        {
+          "id": "C-03",
+          "name": "terminal-bus",
+          "process": "main",
+          "responsibility": "Namespace agzos no terminal existente. Copy as cURL escreve no buffer sem executar."
+        },
+        {
+          "id": "C-04",
+          "name": "print-engine",
+          "process": "main",
+          "responsibility": "Orquestra PrintJob, estrategia, shield, saida e progresso. Cancelavel."
+        },
+        {
+          "id": "C-05",
+          "name": "print-shield",
+          "process": "main",
+          "responsibility": "Neutraliza bloqueio tecnico de impressao no conteudo ja visivel. Restaura estado no fim."
+        },
+        {
+          "id": "C-06",
+          "name": "job-manager",
+          "process": "main",
+          "responsibility": "Fila persistida, concorrencia default 2, retomar/cancelar/ZIP."
+        },
+        {
+          "id": "C-07",
+          "name": "storage-local",
+          "process": "main",
+          "responsibility": "Estender o SQLite atual: print_jobs, print_recipes, recipe_gallery, rewind_snapshots, evidence_registry, macros, kiosk_walls. Snapshots cifrados."
+        },
+        {
+          "id": "C-08",
+          "name": "ai-copilot",
+          "process": "main",
+          "responsibility": "Sinais locais + diagnostico. Remoto so opt-in, redigido, via ai.cjs."
+        },
+        {
+          "id": "C-09",
+          "name": "workspace-extensions",
+          "process": "main",
+          "responsibility": "Delta em cima de workspaces/Session Tabs: proxy, locale, timezone, UA, download dir. Nao nova particao."
+        },
+        {
+          "id": "C-10",
+          "name": "recorder",
+          "process": "main",
+          "responsibility": "Macros de pagina. Segredos via safeStorage. Nao recriar o canvas de agente."
+        }
+      ]
+    },
+    "features": [
+      {
+        "id": "F-DEV-01",
+        "name": "DevTools Shell com docking e atalhos",
+        "priority": "P0",
+        "status": "novo",
+        "reuse": "Mira Ctrl+Shift+C (inspector.cjs) vira o modo inspecionar. Nao criar segundo overlay.",
+        "requirements": [
+          "Painel dockavel: direita, inferior, janela separada, undocked.",
+          "Persistir dock por workspace existente.",
+          "Atalhos: F12 e Ctrl/Cmd+Shift+I alternam; Ctrl/Cmd+Shift+J abre Console; Ctrl/Cmd+Shift+M device mode. Ctrl/Cmd+Shift+C continua na mira ja publicada e, com o shell aberto, seleciona o no em Elements.",
+          "Aba Terminal dentro do shell reusa o PTY principal.",
+          "Seletor de target (pagina, iframe, worker, service worker).",
+          "Estado dos paineis preservado ao fechar/reabrir na mesma aba."
+        ],
+        "acceptance_criteria": [
+          "F12 abre e fecha em menos de 300 ms.",
+          "Dock sobrevive a reinicio.",
+          "3 iframes: seletor lista pagina + iframes e alternar nao trava.",
+          "Inspecionar destaca e seleciona o no em Elements, reusando a mira."
+        ]
+      },
+      {
+        "id": "F-DEV-02",
+        "name": "Painel Elements (DOM + CSS)",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "Arvore DOM com busca, edicao inline, Styles com cascata e toggle, Computed, box model, overlays de flex/grid.",
+          "Edicao ao vivo e reversivel.",
+          "Virtualizar arvore grande. Shadow open inspecionavel; closed nao quebra a arvore."
+        ],
+        "acceptance_criteria": [
+          "Busca por seletor foca o no.",
+          "Desmarcar declaracao atualiza o render.",
+          "Overlay de grid por container.",
+          "Undo restaura o valor."
+        ]
+      },
+      {
+        "id": "F-DEV-03",
+        "name": "Console",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "console.* de todos os contextos, filtros, preserve log, editor multilinha, $0 e $_.",
+          "Stack abre em Sources.",
+          "Abrir no terminal insere JSON no buffer existente sem executar.",
+          "Snippets por workspace."
+        ],
+        "acceptance_criteria": [
+          "Erro nao capturado aparece com stack clicavel.",
+          "Preserve log mantem mensagens apos navegacao.",
+          "Abrir no terminal nao executa.",
+          "Objeto circular nao trava o painel."
+        ]
+      },
+      {
+        "id": "F-DEV-04",
+        "name": "Painel Network",
+        "priority": "P0",
+        "status": "novo",
+        "note": "API Scratchpad e painel de portas nao substituem este painel. Nao remove-los.",
+        "requirements": [
+          "Lista, waterfall, filtros, detalhe (headers, payload, preview, response, timing, initiator).",
+          "Bloquear URL, throttling, breakpoint de XHR com edit-and-resend.",
+          "Copy as cURL/fetch/PowerShell para o terminal sem executar.",
+          "Exportar/importar HAR 1.2.",
+          "Web Vitals (LCP, CLS, INP) quando disponiveis."
+        ],
+        "acceptance_criteria": [
+          "HAR exportado abre no Chrome DevTools.",
+          "Slow 3G altera o tempo medido.",
+          "URL bloqueada aparece como blocked.",
+          "Edit-and-resend de POST mostra o response."
+        ]
+      },
+      {
+        "id": "F-DEV-05",
+        "name": "Painel Sources (debugger JS/TS)",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Arquivos, breakpoints de linha/condicionais/evento, source maps, blackbox, pretty print, stepping, watch, logpoints.",
+          "Breakpoints persistidos por URL e reaplicados apos navegacao."
+        ],
+        "acceptance_criteria": [
+          "Breakpoint em TS cai no arquivo original.",
+          "Logpoint imprime sem pausar.",
+          "Blackbox tira terceiro do stepping."
+        ]
+      },
+      {
+        "id": "F-DEV-06",
+        "name": "Performance, Memory e Profiler de pagina",
+        "priority": "P1",
+        "status": "novo",
+        "reuse": "GX Control permanece o limitador de RAM/CPU/rede. Este painel e tracing/heap da pagina.",
+        "requirements": [
+          "Timeline (frames, long tasks, layout, paint), heap diff, allocation timeline, exportar/importar trace.",
+          "Aviso de custo; limite default de 60 s."
+        ],
+        "acceptance_criteria": [
+          "10 s de gravacao mostram long tasks.",
+          "Dois heap snapshots mostram retidos.",
+          "Trace abre no DevTools do Chrome."
+        ]
+      },
+      {
+        "id": "F-DEV-07",
+        "name": "Application / Storage / Security",
+        "priority": "P1",
+        "status": "novo",
+        "reuse": "Revogacao de geolocation/camera/mic usa permissions.cjs. Nao criar segunda loja de permissao.",
+        "requirements": [
+          "Cookies (HttpOnly so leitura), localStorage, sessionStorage, IndexedDB paginado, Cache Storage.",
+          "Service workers: listar, atualizar, bypass, unregister.",
+          "Clear site data.",
+          "Security: certificado, protocolo, misto."
+        ],
+        "acceptance_criteria": [
+          "Editar cookie reflete apos reload.",
+          "Clear site data limpa cookies e localStorage.",
+          "Security mostra validade e mixed content."
+        ]
+      },
+      {
+        "id": "F-DEV-08",
+        "name": "Emulation / Device Mode",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Presets e custom (largura, altura, DPR), rotacao, touch, UA, offline, prefers-*, timezone, locale, geolocalizacao.",
+          "Sair do modo limpa todas as overrides.",
+          "Screenshot do device usa o Print Engine, nao a captura de viewport antiga."
+        ],
+        "acceptance_criteria": [
+          "Preset iPhone reflui o layout.",
+          "prefers-reduced-motion desliga animacao que respeita a media.",
+          "Timezone override muda new Date() na pagina."
+        ]
+      },
+      {
+        "id": "F-TRM-01",
+        "name": "Barramento agzos no terminal existente",
+        "priority": "P0",
+        "status": "novo (integracao)",
+        "reuse": "electron/terminal*.cjs. Mesma sessao, mesmo historico.",
+        "requirements": [
+          "Comandos: agzos devtools, net, print, cdp, ws, ev, rewind, ocr, perf.",
+          "agzos cdp <target> <Domain.method> '<json>' imprime JSON; --json para pipe.",
+          "agzos net curl <requestId> e agzos print current --preset --out.",
+          "Enviar para o terminal nao executa. Executar pede confirmacao se destrutivo.",
+          "Comando que muda estado exige --yes."
+        ],
+        "acceptance_criteria": [
+          "agzos cdp Page.getLayoutMetrics imprime JSON valido.",
+          "Copy as cURL cai no buffer sem executar.",
+          "agzos print current gera PDF.",
+          "Aba Terminal do DevTools e o terminal principal compartilham historico."
+        ]
+      },
+      {
+        "id": "F-PRT-01",
+        "name": "Print Engine 2.0 - nucleo e preview",
+        "priority": "P0",
+        "status": "novo",
+        "note": "Fecha o backlog NAV-012. Nao existe printToPDF no app.",
+        "requirements": [
+          "Preview paginado fiel.",
+          "Destino, papel (A4, A3, Letter, Legal, Tabloid, custom mm), orientacao, margens, escala, intervalo, cinza, fundo, preferCSSPageSize.",
+          "Header/footer com {title} {url} {date} {time} {pageNumber} {totalPages}.",
+          "Perfil por dominio.",
+          "Progresso e cancelar sem arquivo corrompido."
+        ],
+        "acceptance_criteria": [
+          "Preview e PDF tem o mesmo numero de paginas e o mesmo header/footer.",
+          "printBackground liga/desliga fundo.",
+          "pageNumber/totalPages corretos.",
+          "Perfil de dominio reaplicado.",
+          "Cancelar nao deixa arquivo corrompido."
+        ]
+      },
+      {
+        "id": "F-PRT-02",
+        "name": "Rendering deterministico",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "Esperar document.fonts.ready e imagens, com timeout.",
+          "Congelar animacoes/transicoes por padrao.",
+          "Esperar networkIdle.",
+          "deviceScaleFactor e largura de render fixos.",
+          "Modo sem scripts opcional.",
+          "preparePhase/cleanupPhase em try/finally."
+        ],
+        "acceptance_criteria": [
+          "3 capturas iguais com diferenca visual desprezivel.",
+          "Fonte web nao sai em fallback.",
+          "Carrossel sai no slide atual congelado."
+        ]
+      },
+      {
+        "id": "F-PRT-03",
+        "name": "Pagina inteira estatica",
+        "priority": "P0",
+        "status": "novo",
+        "note": "Fecha o backlog UX-001 na parte de captureBeyondViewport. Captura de viewport Ctrl+Shift+S permanece.",
+        "requirements": [
+          "PDF paginado via printToPDF ou imagem longa via captureBeyondViewport.",
+          "Acima do teto de bitmap (capability, default conservador 32767 px): fatiar e costurar.",
+          "Preview informa altura e numero de paginas."
+        ],
+        "acceptance_criteria": [
+          "12.000 px gera PDF completo e PNG integro.",
+          "40.000 px fatia e costura sem emenda visivel.",
+          "Preview mostra a contagem antes de confirmar."
+        ]
+      },
+      {
+        "id": "F-PRT-04",
+        "name": "Pagina inteira por rolagem e costura",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "Checkbox 'Rolar a pagina ao imprimir': passo, overlap, espera, max passos/altura.",
+          "Por passo: rolar, esperar idle + altura estavel, capturar fatia.",
+          "Parar se altura nao cresce por 2 passos, ou no teto.",
+          "Costura com overlap; sticky so na primeira fatia.",
+          "Progresso e cancelamento restauram o scroll.",
+          "Fatias em disco; costura por streaming (sharp)."
+        ],
+        "acceptance_criteria": [
+          "30 imagens lazy aparecem na captura.",
+          "Overlap de 40 px sem faixa duplicada.",
+          "Feed infinito respeita maxSteps.",
+          "Cancelar restaura o scroll.",
+          "20.000 px nao estoura o teto de RSS; aborta com erro claro."
+        ]
+      },
+      {
+        "id": "F-PRT-05",
+        "name": "Fixos, sticky, overlays e limpeza",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "Fixed/sticky uma vez (estatico) ou so na primeira fatia (rolagem).",
+          "Sugerir remocao de cookie banner, modal, chat, rodape flutuante.",
+          "Clique para remover, com undo, vira recipe por dominio.",
+          "So age no que esta renderizado."
+        ],
+        "acceptance_criteria": [
+          "Header sticky aparece uma vez.",
+          "Banner removido nao volta na proxima impressao do dominio.",
+          "Undo restaura antes de confirmar."
+        ]
+      },
+      {
+        "id": "F-PRT-06",
+        "name": "Print Shield",
+        "priority": "P0",
+        "status": "novo",
+        "requirements": [
+          "Ligado por padrao, desligavel por recipe.",
+          "SHIELD-1 neutraliza window.print e beforeprint/afterprint.",
+          "SHIELD-2 corrige @media print que esconde bloco ja visivel.",
+          "SHIELD-3 remove overlay que cobre conteudo visivel, sem revelar paywall.",
+          "SHIELD-4 reabilita selecao/contextmenu que atrapalham a captura.",
+          "SHIELD-5 render sem scripts, opcional.",
+          "SHIELD-6 congela animacao, carrossel e video.",
+          "SHIELD-7 rasteriza canvas/video quando o motor nao imprime.",
+          "Relatorio do que foi alterado no preview.",
+          "Proibido furar login, paywall, DRM ou conteudo nao renderizado."
+        ],
+        "acceptance_criteria": [
+          "Ctrl+P bloqueado por JS abre o Print Engine.",
+          "@media print { body { display:none } } sai com o conteudo visivel.",
+          "Cookie banner nao sai no PDF.",
+          "Preview lista o que o Shield alterou.",
+          "Paywall nao e revelado."
+        ]
+      },
+      {
+        "id": "F-PRT-07",
+        "name": "Saidas, nomes e destinos",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Destinos: impressora, PDF, imagem, clipboard, pasta padrao de prints.",
+          "Nome com {date} {time} {domain} {title} {counter}.",
+          "Abrir arquivo/pasta apos salvar, opcional.",
+          "HTML renderizado opcional.",
+          "Metadados de PDF (titulo, autor Agzos Browser, data).",
+          "Impressora ausente degrada para Salvar PDF."
+        ],
+        "acceptance_criteria": [
+          "Template gera o nome esperado.",
+          "Copiar coloca a imagem no clipboard.",
+          "Sem impressora, o fluxo oferece PDF."
+        ]
+      },
+      {
+        "id": "F-PRT-08",
+        "name": "Batch print",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Lista de URLs ou abas abertas, recipe por dominio, concorrencia limitada.",
+          "Relatorio de sucesso/falha e ZIP.",
+          "Retomar job cancelado.",
+          "Uma falha nao aborta o lote."
+        ],
+        "acceptance_criteria": [
+          "10 URLs com 1 falha forcada geram 9 arquivos e relatorio.",
+          "ZIP contem os PDFs e o relatorio.",
+          "Cancelar para a fila sem corromper os ja salvos."
+        ]
+      },
+      {
+        "id": "F-PRT-09",
+        "name": "Print Recipes por dominio",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Salvar opcoes, shield, seletores ocultos e estrategia por padrao de dominio.",
+          "Aplicar automaticamente na proxima impressao.",
+          "Escopo por workspace existente."
+        ],
+        "acceptance_criteria": [
+          "Recipe de um dominio nao vaza para outro.",
+          "Desligar recipe volta ao padrao.",
+          "Recipe de workspace A nao aplica em B."
+        ]
+      },
+      {
+        "id": "F-PRT-10",
+        "name": "Recipe Gallery (pacotes locais)",
+        "priority": "P2",
+        "status": "novo",
+        "note": "Sem cloud sync (NG.5). Import/export de arquivo.",
+        "requirements": [
+          "Exportar/importar pacote .agzos-recipes.json.",
+          "Instalar, desinstalar, nao sobrescrever recipe local sem confirmacao.",
+          "Assinatura opcional; pacote sem assinatura instala com aviso."
+        ],
+        "acceptance_criteria": [
+          "Round-trip de export/import preserva opcoes e seletores.",
+          "Desinstalar pacote remove so o que veio dele."
+        ]
+      },
+      {
+        "id": "F-SOC-01",
+        "name": "Social Long-Print Studio",
+        "priority": "P1",
+        "status": "novo",
+        "requirements": [
+          "Fatiar captura longa em slides 9:16, 4:5, 1:1, 16:9 ou imagem continua.",
+          "Safe zone, logo Agzos opcional (default on so neste preset), legenda com placeholders, numeracao.",
+          "Exportar pasta sequencial e ZIP.",
+          "Preview por slide."
+        ],
+        "acceptance_criteria": [
+          "Pagina longa gera slides 1080x1920 numerados sem corte na safe zone.",
+          "Logo liga/desliga.",
+          "Slide continuo respeita teto de bitmap."
+        ]
+      },
+      {
+        "id": "F-AI-01",
+        "name": "AI Debug Copilot",
+        "priority": "P2",
+        "status": "novo",
+        "reuse": "Remoto = Groq ja cifrado em electron/ai.cjs. Nao criar chat nem segundo cofre.",
+        "requirements": [
+          "Aba Copilot le sinais locais: console, 4xx/5xx/CORS, long tasks, heap delta.",
+          "Diagnostico em PT-BR: o que houve, causa provavel, o que tentar.",
+          "Acoes sugeridas, nunca automaticas: abrir Sources, reenviar request, rascunho de CSS, enviar ao terminal.",
+          "Default local. Remoto so com opt-in e chave ja cadastrada.",
+          "Redacao obrigatoria: sem cookie, Authorization, query, corpo, conteudo de pagina.",
+          "Cache por assinatura de erro; dispensar por dominio."
+        ],
+        "acceptance_criteria": [
+          "CORS gera diagnostico em PT-BR acionavel.",
+          "Sem opt-in remoto, Copilot nao faz rede.",
+          "Abrir no Sources salta para a linha.",
+          "Fixture sentinela: cookie/token/query ausentes do payload."
+        ]
+      },
+      {
+        "id": "F-PRF-01",
+        "name": "Perf Advisor",
+        "priority": "P2",
+        "status": "novo",
+        "reuse": "Numeros saem de Network/Performance novos. GX Control nao e fonte.",
+        "requirements": [
+          "Regras deterministicas: img sem dimensao, render-blocking, font-display, JS nao usado, terceiro pesado, long task, CLS por elemento, cache.",
+          "Impacto, evidencia e acao. NL opcional nao altera numero.",
+          "Funciona sem IA. Exporta Markdown/JSON. Comando agzos perf advise."
+        ],
+        "acceptance_criteria": [
+          "img sem width/height gera perf/img-dim com seletor.",
+          "Numeros batem com os paineis.",
+          "Sem IA o relatorio sai completo."
+        ]
+      },
+      {
+        "id": "F-REW-01",
+        "name": "Session Rewind local",
+        "priority": "P3",
+        "status": "novo",
+        "note": "Hibernacao de guia nao e replay. Nao reusar hibernate.cjs como viewer.",
+        "requirements": [
+          "Snapshots DOM em navegacao, rota SPA, clique, submit, erro e timer opcional.",
+          "Viewer local com scrubber e diff. Sem rede e sem executar script do snapshot.",
+          "Cifrar em disco (safeStorage ou AES-GCM). Mascarar password e cartao.",
+          "Teto de snapshots/bytes e retencao com expiracao.",
+          "Exportar .agzos-rewind cifrado. Imprimir estado via Print Engine."
+        ],
+        "acceptance_criteria": [
+          "3 rotas geram 3+ snapshots.",
+          "Arquivo em disco nao e HTML cru.",
+          "Senha preenchida nao aparece no replay.",
+          "Diff mostra nos adicionados/removidos.",
+          "Retencao apaga a sessao."
+        ]
+      },
+      {
+        "id": "F-EVD-01",
+        "name": "Evidence Vault",
+        "priority": "P2",
+        "status": "novo",
+        "requirements": [
+          "PDF + manifesto {url, titulo, UTC, timezone, UA, versao, SHA-256, bytes}.",
+          "Carimbo no rodape. Registro local. agzos ev verify.",
+          "ZIP verificavel.",
+          "UI diz que hash nao e ICP-Brasil."
+        ],
+        "acceptance_criteria": [
+          "Manifesto bate com o PDF.",
+          "verify INTEGRO no original e ALTERADO apos 1 byte.",
+          "Carimbo visivel no rodape."
+        ]
+      },
+      {
+        "id": "F-WS-01",
+        "name": "Delta de workspace: proxy, locale, UA, download",
+        "priority": "P2",
+        "status": "delta",
+        "reuse": "Workspaces 2.0 e Session Tabs 4.5. Nao criar outro sistema de particao.",
+        "requirements": [
+          "Proxy, locale, timezone, user-agent e pasta de download por workspace, aplicados na particao que ja existe.",
+          "Clonar config sem clonar cookies.",
+          "Export/import de config sem cookies.",
+          "agzos ws list|use no terminal existente.",
+          "Proxy invalido avisa e segue sem proxy.",
+          "Migracao: sessao atual continua no workspace Default, sem perder cookies."
+        ],
+        "acceptance_criteria": [
+          "Login no workspace A nao aparece em B (regressao do que ja funciona).",
+          "Proxy de A nao afeta B.",
+          "agzos ws use troca o contexto e o indicador visual.",
+          "Export nao contem cookie."
+        ]
+      },
+      {
+        "id": "F-AUT-01",
+        "name": "Macros gravadas de pagina",
+        "priority": "P3",
+        "status": "novo",
+        "reuse": "Nao recriar o modo agente Ctrl+Shift+G.",
+        "requirements": [
+          "Gravar navegar, clicar, preencher, esperar seletor/rede/texto, rolar, imprimir, rodar agzos.",
+          "Replay em 1 clique, headless opcional, no workspace de origem.",
+          "Agenda so com o app aberto; UI avisa que nao sobrevive ao fechar.",
+          "Senha por placeholder + safeStorage, nunca no JSON exportado.",
+          "Falha de passo gera screenshot e para. Passo irreversivel pede confirmacao."
+        ],
+        "acceptance_criteria": [
+          "Macro de 4 passos gera o PDF.",
+          "Falha no passo 3 nao executa o 4 e guarda screenshot.",
+          "Export nao contem senha."
+        ]
+      },
+      {
+        "id": "F-A11Y-01",
+        "name": "PDF taggeado e auditoria no preview",
+        "priority": "P3",
+        "status": "novo",
+        "reuse": "Pos-processo delega ao PDF Tools. Nao duplicar merge/OCR/AES.",
+        "requirements": [
+          "generateTaggedPDF e generateDocumentOutline quando a versao suportar; senao esconder a opcao.",
+          "Auditoria informativa: h1, alt, contraste, link sem texto. Nao bloqueia impressao."
+        ],
+        "acceptance_criteria": [
+          "PDF taggeado abre com tags e outline quando suportado.",
+          "Img sem alt aparece no relatorio e a impressao segue.",
+          "Versao sem flag esconde a opcao e o print funciona."
+        ]
+      },
+      {
+        "id": "F-OCR-01",
+        "name": "Clip e anotacao da captura",
+        "priority": "P3",
+        "status": "delta",
+        "reuse": "OCR pt/en/es do PDF Tools. Captura de viewport Ctrl+Shift+S permanece para o caso simples.",
+        "requirements": [
+          "Selecionar regiao da pagina ou do print: copiar imagem, anotar (retangulo, seta, texto, destaque), extrair texto.",
+          "OCR offline pelo motor ja embarcado. Texto vai ao clipboard e ao terminal.",
+          "agzos ocr e agzos print clip --annotate.",
+          "Aviso se a resolucao for baixa."
+        ],
+        "acceptance_criteria": [
+          "OCR de regiao legivel acerta >= 90% e funciona offline.",
+          "Anotacao sai na imagem final.",
+          "agzos ocr clip imprime o texto no terminal.",
+          "Nenhum segundo binario de OCR e empacotado."
+        ]
+      },
+      {
+        "id": "F-KSK-01",
+        "name": "Kiosk / wall de dashboards",
+        "priority": "P3",
+        "status": "novo",
+        "reuse": "Nao substituir split de 2 guias nem a barra lateral.",
+        "requirements": [
+          "Grade 2x2, 3x2, 1xN em tela cheia, sem chrome.",
+          "Recarga com jitter, keep-awake, playlist, print agendado via Print Engine.",
+          "Painel caido recarrega sozinho. Sessao expirada marca 'precisa login' e nao autentica.",
+          "Sair com Ctrl/Cmd+Shift+Esc + confirmacao."
+        ],
+        "acceptance_criteria": [
+          "Wall 2x2 recarrega no intervalo.",
+          "Print agendado gera PDF sem interacao.",
+          "Derrubar um painel nao derruba os outros.",
+          "Atalho de saida devolve o controle."
+        ]
+      },
+      {
+        "id": "F-CORE-01",
+        "name": "Comandos novos na paleta existente",
+        "priority": "P1",
+        "status": "delta",
+        "reuse": "Ctrl+K de 2.0.0 (commands.ts). Nao criar outra paleta.",
+        "requirements": [
+          "Registrar DevTools, Print, Recipes, Copilot, Rewind, Macros, Kiosk e agzos ws na paleta atual.",
+          "Frases curtas mapeadas: 'imprimir pagina inteira', 'abrir console', 'trocar workspace'.",
+          "Ranking local de frequencia, sem telemetria remota."
+        ],
+        "acceptance_criteria": [
+          "Ctrl+K existente executa imprimir pagina inteira e abrir console.",
+          "Trocar workspace lista os workspaces ja criados."
+        ]
+      }
+    ],
+    "implementation_plan": [
+      {
+        "phase": 0,
+        "name": "Capabilities e flags",
+        "steps": [
+          "Ler process.versions e registrar printToPDF, ReturnAsStream, generateTaggedPDF e teto de bitmap.",
+          "Flags: devtools_enabled, print_shield_enabled, scroll_stitch_enabled, copilot_enabled, rewind_enabled, kiosk_enabled.",
+          "Adapters Electron. Nao criar CEF/Qt."
+        ],
+        "gate": "Runtime.evaluate na aba ativa; capabilities gravadas; cookies do workspace Default intactos."
+      },
+      {
+        "phase": 1,
+        "name": "cdp-bridge + Elements + Console",
+        "steps": [
+          "Bridge 127.0.0.1 com token.",
+          "Shell e atalhos, mira reusada.",
+          "Elements e Console."
+        ],
+        "gate": "Inspecionar, editar CSS ao vivo, console com stack."
+      },
+      {
+        "phase": 2,
+        "name": "Network, Sources, Storage, Emulation",
+        "steps": [
+          "Network + HAR.",
+          "Sources.",
+          "Application sem duplicar permissions.cjs.",
+          "Device mode."
+        ],
+        "gate": "HAR importa no Chrome; breakpoint TS mapeado; preset reflui."
+      },
+      {
+        "phase": 3,
+        "name": "Namespace agzos",
+        "steps": [
+          "CLI interna no terminal existente.",
+          "Enviar para o terminal sem executar."
+        ],
+        "gate": "agzos cdp retorna JSON; cURL cai no buffer."
+      },
+      {
+        "phase": 4,
+        "name": "Print nucleo",
+        "steps": [
+          "Preview, opcoes, perfis.",
+          "prepare/cleanup.",
+          "Destinos e nomes."
+        ],
+        "gate": "PDF respeita margem e header; preview bate."
+      },
+      {
+        "phase": 5,
+        "name": "Pagina inteira estatica",
+        "steps": [
+          "captureBeyondViewport, fatiar, stitcher, sticky uma vez."
+        ],
+        "gate": "12k px integro; 40k px sem emenda."
+      },
+      {
+        "phase": 6,
+        "name": "Rolagem + Shield",
+        "steps": [
+          "scroll-stitch.",
+          "SHIELD-1..7 e relatorio.",
+          "AC negativo de paywall."
+        ],
+        "gate": "30 lazy images; print bloqueado imprime; paywall nao revelado."
+      },
+      {
+        "phase": 7,
+        "name": "Lote, recipes, paleta",
+        "steps": [
+          "Batch.",
+          "Recipes e pacote local.",
+          "Registrar comandos na paleta existente."
+        ],
+        "gate": "10 URLs com relatorio; recipe aplica; pacote instala e desinstala."
+      },
+      {
+        "phase": 8,
+        "name": "Social, evidencia, a11y, clip",
+        "steps": [
+          "Slides.",
+          "Evidence verify.",
+          "Tagged PDF se capability.",
+          "Clip/anotacao reusando OCR."
+        ],
+        "gate": "Carrossel numerado; verify INTEGRO/ALTERADO; OCR offline sem segundo motor."
+      },
+      {
+        "phase": 9,
+        "name": "Copilot e Perf Advisor",
+        "steps": [
+          "Regras deterministicas.",
+          "Copilot local; remoto via ai.cjs com redacao."
+        ],
+        "gate": "Diagnostico CORS em PT-BR; sentinelas nao vazam."
+      },
+      {
+        "phase": 10,
+        "name": "Delta de workspace, macros, rewind, wall",
+        "steps": [
+          "Proxy/locale/UA na particao existente.",
+          "Macros sem senha no JSON.",
+          "Rewind cifrado.",
+          "Wall com saida de emergencia."
+        ],
+        "gate": "Cookies nao vazam; macro exporta sem senha; snapshot ilegivel; wall recupera painel."
+      },
+      {
+        "phase": 11,
+        "name": "Hardening",
+        "steps": [
+          "Teto de memoria no bridge, stitcher, rewind e wall.",
+          "Atalhos e limitacoes do Shield/Evidence na UI."
+        ],
+        "gate": "30 min com DevTools e wall sem crash."
+      }
+    ],
+    "test_plan": {
+      "unit": [
+        "mm para unidade da API de print.",
+        "stitcher sem faixa duplicada.",
+        "erro CDP -32601 vira mensagem legivel.",
+        "recipe round-trip.",
+        "redacao do Copilot com sentinela.",
+        "evidence detecta 1 byte.",
+        "proxy de workspace nao vaza (regressao de Session Tabs).",
+        "social: safe zone e numeracao."
+      ],
+      "integration": [
+        "Estatico em pagina sintetica de altura conhecida.",
+        "Scroll-stitch com 30 lazy e footer sticky.",
+        "Shield com window.print sobrescrito e @media print display none; paywall nao revelado.",
+        "Batch de 10 com 1 falha.",
+        "Macro de 4 passos; falha no 3 gera screenshot.",
+        "Rewind: senha ausente."
+      ],
+      "non_regression": [
+        "Ctrl+K, terminal, Session Tabs, Agzos AI, PDF Tools, mira e Ctrl+Shift+S continuam iguais.",
+        "Workspace Default mantem os cookies de antes.",
+        "Abrir DevTools nao altera o layout da pagina."
+      ]
+    },
+    "security_and_compliance": {
+      "print_shield_limits": [
+        "So neutraliza bloqueio tecnico no que o usuario ja ve.",
+        "Proibido furar autenticacao, paywall, DRM ou conteudo nao renderizado.",
+        "Proibido stealth/anti-deteccao para scraping."
+      ],
+      "ai_privacy": [
+        "Copilot local por padrao.",
+        "Remoto reusa Groq e exige opt-in.",
+        "Redacao obrigatoria e teste de sentinela."
+      ],
+      "network": [
+        "Bridge apenas em 127.0.0.1 com token e checagem de Origin.",
+        "Nunca --remote-debugging-port em interface publica."
+      ],
+      "aviso_produto": "Burlar protecao de impressao pode contrariar termos de terceiros. Evidence Vault nao substitui ICP-Brasil."
+    },
+    "risks": [
+      {
+        "id": "R-01",
+        "risk": "Bitmap gigante.",
+        "mitigation": "Fatiar, streaming, teto, abort claro."
+      },
+      {
+        "id": "R-02",
+        "risk": "Scroll infinito nao termina.",
+        "mitigation": "max_steps, max_height, cancelar."
+      },
+      {
+        "id": "R-03",
+        "risk": "Shield apaga conteudo legitimo.",
+        "mitigation": "Relatorio e undo."
+      },
+      {
+        "id": "R-04",
+        "risk": "DevTools custom divergir do Chrome.",
+        "mitigation": "Hibrido: bundled no padrao, custom so Terminal/Print/Copilot/Rewind."
+      },
+      {
+        "id": "R-07",
+        "risk": "Copilot vazar dado.",
+        "mitigation": "Local default, redacao, sentinela, reuso do ai.cjs."
+      },
+      {
+        "id": "R-10",
+        "risk": "Escopo atrasar o nucleo.",
+        "mitigation": "P0 nas fases 0-6; delta e P3 nas fases 8-10; flags permitem soltar o nucleo."
+      }
+    ],
+    "definition_of_done": [
+      "Gates verdes.",
+      "AC de DevTools, terminal-bus e Print, inclusive paywall nao revelado.",
+      "Nenhum modulo ja publicado foi reescrito: terminal, paleta, workspaces, Session Tabs, Agzos AI, PDF Tools, OCR, mira, captura de viewport, permissions.",
+      "Redacao do Copilot passa.",
+      "Cookies nao vazam entre workspaces.",
+      "Rewind cifrado e senha ausente.",
+      "30 min sem crash com DevTools e wall.",
+      "UI documenta limite do Shield e do Evidence Vault."
+    ]
+  }
+}
