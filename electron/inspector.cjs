@@ -176,7 +176,7 @@ function colorsOf(style) {
  * Roda na página (mundo isolado). Liga a mira ou, se já estiver ligada, desliga.
  * Devolve true quando ficou ligada.
  */
-function inspectorPageScript(rgbToHexFn, tailwindForFn, colorsOfFn) {
+function inspectorPageScript(rgbToHexFn, tailwindForFn, colorsOfFn, devtoolsToken) {
   const KEY = "__agzosInspector";
   if (window[KEY]) {
     window[KEY].stop();
@@ -296,6 +296,22 @@ function inspectorPageScript(rgbToHexFn, tailwindForFn, colorsOfFn) {
       card = null;
     });
     const copyClasses = copyButton(classes, "Copiar classes", false);
+    // 4.8: "Abrir no DevTools" sai da mira e pede ao main o DevTools neste elemento. O
+    // aviso vai pelo console do mundo isolado com o token desta ligação (a página não o
+    // vê nem consegue imitar).
+    let inspectButton = null;
+    if (devtoolsToken) {
+      inspectButton = el("button", { type: "button", class: "ghost", text: "Abrir no DevTools" });
+      inspectButton.addEventListener("click", () => {
+        const rect = element.getBoundingClientRect();
+        const point = {
+          x: Math.round(rect.left + Math.min(rect.width / 2, 8)),
+          y: Math.round(rect.top + Math.min(rect.height / 2, 8)),
+        };
+        stop();
+        console.debug(`agzos-devtools:${devtoolsToken}:${JSON.stringify(point)}`);
+      });
+    }
     card = el("div", { class: "card", role: "dialog", "aria-label": "Mira de elemento" }, [
       el("span", { class: "title", text: label(element) }),
       ...colors.map((item) =>
@@ -311,7 +327,7 @@ function inspectorPageScript(rgbToHexFn, tailwindForFn, colorsOfFn) {
         el("code", { text: `${family} · ${style.fontSize} · ${style.fontWeight}` }),
       ]),
       el("code", { class: "tw", text: classes || "(sem sugestão)" }),
-      el("div", { class: "actions" }, [close, copyClasses]),
+      el("div", { class: "actions" }, [close, inspectButton, copyClasses]),
       el("small", { text: "Sugestão a partir do estilo calculado, não o CSS original do site." }),
     ]);
     root.appendChild(card);
@@ -376,14 +392,21 @@ function inspectorPageScript(rgbToHexFn, tailwindForFn, colorsOfFn) {
   return true;
 }
 
-/** Código para executeJavaScriptInIsolatedWorld: liga/desliga a mira. */
-function inspectorSource() {
+/**
+ * Código para executeJavaScriptInIsolatedWorld: liga/desliga a mira. Com `devtoolsToken`
+ * (4.8, DevTools ligado), o cartão ganha "Abrir no DevTools".
+ */
+function inspectorSource({ devtoolsToken = null } = {}) {
+  const token =
+    typeof devtoolsToken === "string" && /^[a-f0-9]{16,64}$/.test(devtoolsToken)
+      ? JSON.stringify(devtoolsToken)
+      : "null";
   // As três funções puras entram como declarações (colorsOf e tailwindFor usam rgbToHex).
   return `(() => {
 ${rgbToHex.toString()}
 ${tailwindFor.toString()}
 ${colorsOf.toString()}
-return (${inspectorPageScript.toString()})(rgbToHex, tailwindFor, colorsOf);
+return (${inspectorPageScript.toString()})(rgbToHex, tailwindFor, colorsOf, ${token});
 })()`;
 }
 

@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.1",
+    date: "2026-10-08",
+    items: [
+      "DevTools do Chromium dentro da janela: F12 ou Ctrl+Shift+I abre o DevTools encaixado à direita ou embaixo da página (ou numa janela separada), e Ctrl+Shift+J vai direto ao Console. A página encolhe para dar espaço, como nos painéis laterais. O lado e o tamanho ficam gravados por workspace, e cada guia tem o seu DevTools.",
+      "Integrado ao que já existia: com o DevTools aberto, Ctrl+Shift+C seleciona o elemento nele; fechado, continua sendo a mira de cores e Tailwind, que ganhou o botão “Abrir no DevTools”. O clique direito → Inspecionar abre direto no elemento, e a aba Terminal do dock mostra o terminal da janela com as mesmas sessões. Também está nas Ferramentas e na busca de comandos (Ctrl+K), incluindo o modo dispositivo.",
+      "Guia com o DevTools aberto não hiberna, e sair do modo dispositivo devolve a identidade do Chrome à página (o login do Google continua funcionando). Dá para desligar o DevTools em Configurações → Recursos → DevTools.",
+    ],
+  },
+  {
     version: "4.8.0",
     date: "2026-10-08",
     items: [

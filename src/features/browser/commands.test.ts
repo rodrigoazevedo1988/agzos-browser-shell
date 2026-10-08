@@ -54,6 +54,9 @@ function context(state: BrowserState = initialState, desktop = false) {
     toggleColors: vi.fn(),
     openPdfTools: vi.fn(),
     togglePageTheme: vi.fn(),
+    devtools: vi.fn(),
+    devtoolsEnabled: () => true,
+    devtoolsSide: vi.fn(),
   };
   const ctx: CommandContext = {
     state,

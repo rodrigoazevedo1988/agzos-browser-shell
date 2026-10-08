@@ -48,6 +48,7 @@ import {
   PageThemeSettings,
   PdfToolsSettings,
 } from "./v47-rows";
+import { DevtoolsSettings } from "./v48-rows";
 import { desktopBridge } from "@/features/browser/desktop";
 import { AiKeySettings, GestureRow, GpuSettings, TerminalShellSelect } from "./v4-rows";
 import {
@@ -993,6 +994,17 @@ export function SettingsPage(props: SettingsPageProps) {
             <section className="sf-card">
               <h3>PDF Tools</h3>
               <PdfToolsSettings {...featureProps} />
+            </section>
+          ),
+        },
+        {
+          id: "recurso-devtools",
+          label: "DevTools",
+          keywords: "desenvolvedor inspecionar f12 console elementos dispositivo debug",
+          node: (
+            <section className="sf-card">
+              <h3>DevTools</h3>
+              <DevtoolsSettings desktop={featureProps.desktop} isMac={props.isMac} />
             </section>
           ),
         },

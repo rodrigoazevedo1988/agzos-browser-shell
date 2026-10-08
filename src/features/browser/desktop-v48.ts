@@ -29,6 +29,24 @@ export type RuntimeCapabilities = {
   capture: { measured: boolean; maxHeight: number; safeCap: number };
 };
 
+/** 4.8 (Fase 1): onde o DevTools fica: encaixado à direita, embaixo ou numa janela. */
+export type DevtoolsSide = "right" | "bottom" | "window";
+
+export type DevtoolsDock = { side: DevtoolsSide; width: number; height: number };
+
+/** Ações do DevTools de uma guia ("inspect-at" usa x/y da página). */
+export type DevtoolsAction =
+  "toggle" | "open" | "close" | "console" | "elements" | "inspect" | "device" | "inspect-at";
+
+export type DevtoolsResult = {
+  ok: boolean;
+  open: boolean;
+  side: DevtoolsSide | null;
+  reason?: "tab" | "disabled" | "action";
+};
+
+type Rect = { x: number; y: number; width: number; height: number };
+
 export type DesktopV48 = {
   featureFlags(): Promise<FeatureFlags>;
   /** null volta ao padrão do build. */
@@ -36,4 +54,24 @@ export type DesktopV48 = {
   /** Medidas na primeira vez (alguns segundos); null se a sonda falhou. */
   runtimeCapabilities(): Promise<RuntimeCapabilities | null>;
   onFeatureFlags(callback: (flags: FeatureFlags) => void): () => void;
+  devtools(
+    id: number,
+    action: DevtoolsAction,
+    options?: { side?: DevtoolsSide; x?: number; y?: number },
+  ): Promise<DevtoolsResult>;
+  /** Área do dock na janela; null esconde. */
+  devtoolsBounds(rect: Rect | null): Promise<void>;
+  /** Lado e tamanho por workspace ("default" sem workspace). */
+  devtoolsDocks(): Promise<Record<string, DevtoolsDock>>;
+  setDevtoolsDock(
+    workspace: number | null,
+    dock: DevtoolsDock,
+  ): Promise<Record<string, DevtoolsDock>>;
+  onDevtools(
+    callback: (event: { id: number; open: boolean; side: DevtoolsSide }) => void,
+  ): () => void;
+  /** Pedido vindo do main: menu "Inspecionar", mira ou tecla no próprio DevTools. */
+  onDevtoolsRequest(
+    callback: (event: { id: number; action: DevtoolsAction; x?: number; y?: number }) => void,
+  ): () => void;
 };

@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -231,5 +232,216 @@ describe("4.8 Fase 0: flags por bloco", () => {
 
   it("AGZOS_FLAGS não vale no pacote", () => {
     expect(main).toContain("env: app.isPackaged ? {} : parseFlagList(process.env.AGZOS_FLAGS)");
+  });
+});
+
+type DockSide = "right" | "bottom" | "window";
+type Dock = { side: DockSide; width: number; height: number };
+type FakeContents = EventEmitter & {
+  id: number;
+  destroyed: boolean;
+  calls: string[];
+  isDestroyed(): boolean;
+  setDevToolsWebContents(fe: unknown): void;
+  openDevTools(options: { mode: string; activate: boolean }): void;
+  closeDevTools(): void;
+  devToolsWebContents: unknown;
+};
+
+const devtools = require(path.join(root, "electron/devtools-dock.cjs")) as {
+  DEFAULT_DOCK: Dock;
+  cleanDock(value: unknown): Dock;
+  cleanDockMap(value: unknown): Record<string, Dock>;
+  withDock(map: unknown, workspace: unknown, dock: unknown): Record<string, Dock>;
+  dockKeyAction(input: unknown): string | null;
+  frontendScript(action: string, side?: string): string | null;
+  createDevtoolsDocks(options: {
+    WebContentsView: unknown;
+    hiddenRect: unknown;
+    onChange?: (contents: FakeContents, state: { open: boolean; side: DockSide }) => void;
+    onKey?: (contents: FakeContents, action: string) => void;
+  }): {
+    open(contents: FakeContents, options?: { side?: DockSide; window?: unknown }): unknown;
+    close(contents: FakeContents): boolean;
+    closeAll(): void;
+    toggle(contents: FakeContents, options?: { side?: DockSide; window?: unknown }): boolean;
+    layout(window: unknown, options: { visible: unknown; rect: unknown }): void;
+    isOpen(contents: FakeContents): boolean;
+    sideOf(contents: FakeContents): DockSide | null;
+    views(window: unknown): { bounds: unknown; webContents: { closed: boolean } }[];
+  };
+};
+
+const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
+
+function fakeFrontend() {
+  const emitter = new EventEmitter();
+  const frontend = Object.assign(emitter, {
+    closed: false,
+    isDestroyed: () => false,
+    close: () => {
+      frontend.closed = true;
+      emitter.emit("destroyed");
+    },
+    debugger: { isAttached: () => true, detach: () => {} },
+  });
+  return frontend;
+}
+
+/** WebContentsView falsa: guarda os bounds e o webContents (frontend). */
+class FakeView {
+  bounds: unknown = null;
+  webContents = fakeFrontend();
+  setBounds(rect: unknown) {
+    this.bounds = rect;
+  }
+}
+
+function fakeTab(id: number): FakeContents {
+  const calls: string[] = [];
+  return Object.assign(new EventEmitter(), {
+    id,
+    destroyed: false,
+    calls,
+    isDestroyed() {
+      return this.destroyed;
+    },
+    setDevToolsWebContents: () => calls.push("set"),
+    openDevTools: ({ mode }: { mode: string }) => calls.push(`open:${mode}`),
+    closeDevTools: () => calls.push("close"),
+    devToolsWebContents: null,
+  }) as FakeContents;
+}
+
+function fakeWindow() {
+  const children = new Set<unknown>();
+  return {
+    children,
+    isDestroyed: () => false,
+    contentView: {
+      addChildView: (view: unknown) => children.add(view),
+      removeChildView: (view: unknown) => children.delete(view),
+    },
+  };
+}
+
+describe("4.8 Fase 1: DevTools encaixado (devtools-dock.cjs)", () => {
+  it("lado e tamanho válidos por workspace; o resto volta ao padrão", () => {
+    expect(devtools.cleanDock({ side: "bottom", width: 9999, height: 10 })).toEqual({
+      side: "bottom",
+      width: 1600,
+      height: 160,
+    });
+    expect(devtools.cleanDock({ side: "esquerda" })).toEqual(devtools.DEFAULT_DOCK);
+    const map = devtools.withDock({ x: 1, "2": { side: "window" } }, 7, { side: "right" });
+    expect(Object.keys(map)).toEqual(["2", "7"]);
+    expect(map["2"]!.side).toBe("window");
+    expect(devtools.withDock({}, null, { side: "bottom" })["default"]!.side).toBe("bottom");
+  });
+
+  it("teclas no próprio DevTools: F12 e Ctrl+Shift+I fecham, Ctrl+Shift+J vai ao Console", () => {
+    const key = (key: string, extra = {}) => ({ type: "keyDown", key, ...extra });
+    expect(devtools.dockKeyAction(key("F12"))).toBe("toggle");
+    expect(devtools.dockKeyAction(key("I", { control: true, shift: true }))).toBe("toggle");
+    expect(devtools.dockKeyAction(key("j", { meta: true, shift: true }))).toBe("console");
+    // Ctrl+Shift+C e Ctrl+Shift+M ficam com o frontend (seletor e modo dispositivo).
+    expect(devtools.dockKeyAction(key("c", { control: true, shift: true }))).toBeNull();
+    expect(devtools.dockKeyAction(key("m", { control: true, shift: true }))).toBeNull();
+    expect(devtools.dockKeyAction({ type: "keyUp", key: "F12" })).toBeNull();
+  });
+
+  it("ações no frontend usam a API que o Chrome usa (DevToolsAPI)", () => {
+    expect(devtools.frontendScript("console")).toContain("DevToolsAPI.showPanel('console')");
+    expect(devtools.frontendScript("inspect")).toContain("DevToolsAPI.enterInspectElementMode()");
+    expect(devtools.frontendScript("device")).toContain("emulation.toggle-device-mode");
+    expect(devtools.frontendScript("side", "bottom")).toContain('setDockSide("bottom")');
+    expect(devtools.frontendScript("side", "window")).toBeNull();
+    expect(devtools.frontendScript("eval")).toBeNull();
+  });
+
+  it("abre encaixado num WebContentsView próprio e só mostra o da guia à vista", () => {
+    const events: string[] = [];
+    const docks = devtools.createDevtoolsDocks({
+      WebContentsView: FakeView,
+      hiddenRect: HIDDEN,
+      onChange: (contents, { open, side }) => events.push(`${contents.id}:${open}:${side}`),
+    });
+    const win = fakeWindow();
+    const a = fakeTab(1);
+    const b = fakeTab(2);
+    docks.open(a, { side: "right", window: win });
+    docks.open(b, { side: "right", window: win });
+    // mode "right" (não "detach"): o frontend nasce com can_dock e modo dispositivo.
+    expect(a.calls).toEqual(["set", "open:right"]);
+    expect(win.children.size).toBe(2);
+    const rect = { x: 10, y: 20, width: 500, height: 600 };
+    docks.layout(win, { visible: a, rect });
+    const [viewA, viewB] = docks.views(win);
+    expect(viewA!.bounds).toEqual(rect);
+    expect(viewB!.bounds).toEqual(HIDDEN);
+    // Aba Terminal ou painel por cima: nenhum aparece.
+    docks.layout(win, { visible: a, rect: null });
+    expect(viewA!.bounds).toEqual(HIDDEN);
+    expect(docks.isOpen(a)).toBe(true);
+    expect(events).toEqual(["1:true:right", "2:true:right"]);
+  });
+
+  it("direita ↔ embaixo mantém a view; janela separada só abre com o frontend destruído", async () => {
+    const docks = devtools.createDevtoolsDocks({ WebContentsView: FakeView, hiddenRect: HIDDEN });
+    const win = fakeWindow();
+    const tab = fakeTab(1);
+    docks.open(tab, { side: "right", window: win });
+    const [view] = docks.views(win);
+    docks.open(tab, { side: "bottom", window: win });
+    expect(docks.views(win)[0]).toBe(view);
+    expect(tab.calls).toEqual(["set", "open:right"]);
+    tab.emit("devtools-opened");
+    docks.open(tab, { side: "window", window: win });
+    // Com o frontend externo vivo, o Electron reabriria dentro dele: espera o destroyed.
+    expect(tab.calls).toEqual(["set", "open:right", "close"]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(tab.calls).toEqual(["set", "open:right", "close", "open:detach"]);
+    expect(view!.webContents.closed).toBe(true);
+    expect(docks.sideOf(tab)).toBe("window");
+    // O devtools-closed do dock anterior chega depois: não fecha o novo.
+    tab.emit("devtools-closed");
+    expect(docks.isOpen(tab)).toBe(true);
+    tab.emit("devtools-opened");
+    tab.emit("devtools-closed");
+    expect(docks.isOpen(tab)).toBe(false);
+  });
+
+  it("fechar pelo X do frontend, fechar a guia e desligar a flag limpam o dock", () => {
+    const closed: number[] = [];
+    const docks = devtools.createDevtoolsDocks({
+      WebContentsView: FakeView,
+      hiddenRect: HIDDEN,
+      onChange: (contents, { open }) => !open && closed.push(contents.id),
+    });
+    const win = fakeWindow();
+    const [a, b, c] = [fakeTab(1), fakeTab(2), fakeTab(3)];
+    for (const tab of [a, b, c]) docks.open(tab, { side: "bottom", window: win });
+    a.emit("devtools-opened");
+    a.emit("devtools-closed");
+    b.emit("destroyed");
+    expect(closed).toEqual([1, 2]);
+    expect(docks.toggle(c)).toBe(false);
+    docks.open(c, { side: "right", window: win });
+    docks.closeAll();
+    expect([docks.isOpen(a), docks.isOpen(b), docks.isOpen(c)]).toEqual([false, false, false]);
+    expect(win.children.size).toBe(0);
+  });
+
+  it("main: hibernação pergunta ao dock, a flag manda e Inspecionar vai para a casca", () => {
+    expect(main).toContain(
+      "devtools: contents.isDevToolsOpened() || devtoolsDocks.isOpen(contents),",
+    );
+    expect(main).toContain("contents.isDevToolsOpened() || devtoolsDocks.isOpen(contents);");
+    expect(main).toContain('if (input.type !== "keyDown" || featureFlags().devtools) return;');
+    expect(main).toContain('action: "inspect-at"');
+    expect(main).toContain("if (!flags.devtools) devtoolsDocks.closeAll();");
+    // A guia que muda de janela fecha o DevTools antes (a view é filha da janela antiga).
+    expect(main).toContain("if (entry) devtoolsDocks.close(entry.view.webContents);");
+    expect(main).not.toContain('openDevTools({ mode: "split" })');
   });
 });

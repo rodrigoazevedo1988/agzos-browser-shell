@@ -361,6 +361,110 @@ button {
 .terminal-dock[hidden] {
   display: none;
 }
+/* 4.8: DevTools encaixado. O corpo é só a área reservada: o frontend é uma view nativa
+   que o main põe por cima dele. */
+.devtools-dock {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+}
+.devtools-dock[data-dock="right"] {
+  border-top: 0;
+  border-left: 1px solid var(--border);
+}
+.devtools-dock[hidden] {
+  display: none;
+}
+.devtools-resize {
+  position: absolute;
+  inset: -3px 0 auto;
+  z-index: 2;
+  height: 6px;
+  cursor: row-resize;
+}
+.devtools-dock[data-dock="right"] .devtools-resize {
+  inset: 0 auto 0 -3px;
+  width: 6px;
+  height: auto;
+  cursor: col-resize;
+}
+.devtools-resize:focus-visible {
+  outline: 2px solid var(--primary);
+}
+.devtools-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.devtools-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+.devtools-tab,
+.devtools-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  border-radius: 6px;
+  color: inherit;
+  opacity: 0.75;
+}
+.devtools-tab {
+  padding: 0 8px;
+  font-weight: 600;
+}
+.devtools-tool {
+  justify-content: center;
+  width: 26px;
+}
+.devtools-tab svg,
+.devtools-tool svg {
+  width: 15px;
+  height: 15px;
+}
+.devtools-tab:hover,
+.devtools-tool:hover,
+.devtools-tab.on,
+.devtools-tool.on {
+  opacity: 1;
+  background: color-mix(in oklab, currentColor 10%, transparent);
+}
+.devtools-tab:focus-visible,
+.devtools-tool:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.devtools-spacer {
+  flex: 1;
+}
+.devtools-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+.devtools-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #0e0e0e;
+  color: #e8e6e3;
+}
 .terminal-resize {
   position: absolute;
   inset: -3px 0 auto;

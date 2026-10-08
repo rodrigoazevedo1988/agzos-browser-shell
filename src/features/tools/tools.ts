@@ -10,6 +10,7 @@ import {
   Network,
   NotebookPen,
   Puzzle,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ export type ToolId =
   | "ports.open"
   | "scratchpad.open"
   | "page.inspect"
+  | "devtools.toggle"
   | "page.capture"
   | "page.reader"
   | "notes.toggle"
@@ -67,6 +69,15 @@ export const TOOLS: Tool[] = [
     hint: "Cores HEX, fonte e classes Tailwind",
     icon: Crosshair,
     shortcut: "Ctrl+Shift+C",
+    needsPage: true,
+  },
+  // 4.8
+  {
+    id: "devtools.toggle",
+    label: "DevTools",
+    hint: "Elementos, Console, Rede e modo dispositivo",
+    icon: Wrench,
+    shortcut: "F12",
     needsPage: true,
   },
   {

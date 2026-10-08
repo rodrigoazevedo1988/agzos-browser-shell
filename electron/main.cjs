@@ -112,6 +112,12 @@ const {
   withUserFlag,
 } = require("./feature-flags.cjs");
 const {
+  cleanDockMap,
+  createDevtoolsDocks,
+  validRect: validDockRect,
+  withDock,
+} = require("./devtools-dock.cjs");
+const {
   CLI_TOOLS,
   agentProgram,
   cleanToolIds,
@@ -215,6 +221,24 @@ const developmentUrl = process.argv
 const contexts = new Map();
 // webContents.id de cada guia → { ctx, id }. Mover a guia de janela só troca esta entrada.
 const tabOfContents = new Map();
+// 4.8 (Fase 1): DevTools encaixado por guia (devtools-dock.cjs). A casca reserva a área e
+// manda o retângulo (ctx.devtoolsRect); abrir, fechar e o lado sempre vêm dela, que sabe
+// o lado gravado do workspace.
+const devtoolsDocks = createDevtoolsDocks({
+  WebContentsView,
+  hiddenRect: HIDDEN_RECT,
+  onChange: (contents, { open, side }) => {
+    const where = tabOfContents.get(contents.id);
+    if (!where) return;
+    send(where.ctx, "agzos:devtools", { id: where.id, open, side });
+    applyLayout(where.ctx);
+  },
+  // F12 / Ctrl+Shift+I / Ctrl+Shift+J com o foco no próprio DevTools.
+  onKey: (contents, action) => {
+    const where = tabOfContents.get(contents.id);
+    if (where) send(where.ctx, "agzos:devtools-request", { id: where.id, action });
+  },
+});
 // Popups (OAuth) → janela de onde saíram (atalhos, permissões).
 const popupOwner = new WeakMap();
 const pendingPermissions = new Map();
@@ -651,6 +675,7 @@ function leaveHtmlFullscreen(ctx) {
 
 function applyLayout(ctx) {
   layoutSidePanels(ctx);
+  layoutDevtools(ctx);
   if (ctx.fullscreenActive || ctx.window.isDestroyed()) return;
   const now = Date.now();
   const panes = paneIds(ctx);
@@ -664,6 +689,47 @@ function applyLayout(ctx) {
       if (!entry.view.webContents.isDestroyed()) gxControl.visible(entry.view.webContents.id);
     } else entry.hiddenSince ??= now;
   }
+}
+
+// 4.8: "Abrir no DevTools" do cartão da mira. O mundo isolado não tem IPC: o pedido sai
+// pelo console com um token por guia, que a página não vê (outro mundo) nem adivinha.
+const inspectorTokens = new WeakMap();
+const INSPECTOR_DEVTOOLS_PREFIX = "agzos-devtools:";
+
+function inspectorDevtoolsToken(contents) {
+  if (!featureFlags().devtools) return null;
+  let token = inspectorTokens.get(contents);
+  if (token) return token;
+  token = require("node:crypto").randomBytes(16).toString("hex");
+  inspectorTokens.set(contents, token);
+  contents.on("console-message", (event) => {
+    const message = String(event?.message ?? "");
+    const prefix = `${INSPECTOR_DEVTOOLS_PREFIX}${token}:`;
+    if (!message.startsWith(prefix)) return;
+    const where = tabOfContents.get(contents.id);
+    if (!where || !featureFlags().devtools) return;
+    let point = null;
+    try {
+      point = JSON.parse(message.slice(prefix.length));
+    } catch {
+      return;
+    }
+    // Coordenadas CSS da página → pontos da view (zoom da guia).
+    const zoom = contents.getZoomFactor();
+    const x = Number.isFinite(point?.x) ? Math.round(point.x * zoom) : 0;
+    const y = Number.isFinite(point?.y) ? Math.round(point.y * zoom) : 0;
+    send(where.ctx, "agzos:devtools-request", { id: where.id, action: "inspect-at", x, y });
+  });
+  return token;
+}
+
+/** DevTools da guia ativa na área que a casca reservou; os das outras guias somem. */
+function layoutDevtools(ctx) {
+  if (ctx.window.isDestroyed()) return;
+  const id = ctx.activeTabId;
+  const visible =
+    id !== null && !ctx.fullscreenActive && isShown(ctx, id) ? tabContents(ctx, id) : null;
+  devtoolsDocks.layout(ctx.window, { visible, rect: ctx.devtoolsRect ?? null });
 }
 
 /** Guia à vista cujo pane contém o ponto (coordenadas da janela). */
@@ -944,8 +1010,23 @@ function buildPageContextMenu(contents, params) {
     },
   );
 
-  if (isDevelopment) {
-    template.push({ label: "Inspecionar", click: () => contents.openDevTools({ mode: "split" }) });
+  // 4.8: "Inspecionar" abre o DevTools encaixado no elemento clicado (a casca escolhe o
+  // lado gravado do workspace). Fora de uma guia, só em desenvolvimento.
+  const inspectTab = tabOfContents.get(contents.id);
+  if (inspectTab && featureFlags().devtools) {
+    template.push({
+      label: "Inspecionar",
+      accelerator: "CmdOrCtrl+Shift+I",
+      click: () =>
+        send(inspectTab.ctx, "agzos:devtools-request", {
+          id: inspectTab.id,
+          action: "inspect-at",
+          x: params.x,
+          y: params.y,
+        }),
+    });
+  } else if (isDevelopment) {
+    template.push({ label: "Inspecionar", click: () => contents.openDevTools({ mode: "detach" }) });
   }
 
   return Menu.buildFromTemplate(template);
@@ -1270,6 +1351,10 @@ const FORWARDED_SHORTCUTS = new Set([
   "f5",
   "shift+f5",
   "f11",
+  // 4.8: DevTools (F12, Ctrl+Shift+I) e Console (Ctrl+Shift+J).
+  "f12",
+  "mod+shift+i",
+  "mod+shift+j",
 ]);
 
 // Com Ctrl, alguns teclados/layouts do Windows entregam um caractere de controle (ou
@@ -2423,7 +2508,7 @@ async function checkHibernation() {
           capturing: capturingContents.has(contents) || pipContents.has(contents),
           pendingPermission: hasPendingPermission(contents),
           fullscreen: ctx.fullscreenActive && id === ctx.activeTabId,
-          devtools: contents.isDevToolsOpened(),
+          devtools: contents.isDevToolsOpened() || devtoolsDocks.isOpen(contents),
         };
         if (canHibernate(candidate, { now, afterMs: hibernateConfig.afterMs })) {
           await hibernateTab(ctx, id);
@@ -2447,7 +2532,7 @@ function gxTabs() {
       const contents = entry.view.webContents;
       if (contents.isDestroyed()) continue;
       const visible = panes.includes(id);
-      const devtools = contents.isDevToolsOpened();
+      const devtools = contents.isDevToolsOpened() || devtoolsDocks.isOpen(contents);
       const candidate = {
         visible,
         hiddenSince: entry.hiddenSince,
@@ -3400,6 +3485,7 @@ function startPanelDrag(ctx) {
   const views = [
     ...[...ctx.views.values()].map((entry) => entry.view?.webContents),
     ...[...ctx.sidePanels.values()].map((entry) => entry.view.webContents),
+    ...devtoolsDocks.views(ctx.window).map((view) => view.webContents),
   ].filter((contents) => contents && !contents.isDestroyed());
   for (const contents of views) {
     const listener = (event, mouse) => {
@@ -3909,7 +3995,7 @@ function registerIpc() {
     try {
       const active = await contents.executeJavaScriptInIsolatedWorld(
         INSPECTOR_WORLD,
-        [{ code: inspectorSource() }],
+        [{ code: inspectorSource({ devtoolsToken: inspectorDevtoolsToken(contents) }) }],
         true,
       );
       // O foco vai para a página: o Esc e o clique chegam nela.
@@ -3918,6 +4004,65 @@ function registerIpc() {
     } catch {
       return { ok: false };
     }
+  });
+
+  // 4.8 (Fase 1): DevTools encaixado. A casca manda a ação e o lado gravado do workspace.
+  ipcMain.handle("devtools:action", async (event, { id, action, side, x, y } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, id);
+    if (!ctx || !contents) return { ok: false, open: false, side: null, reason: "tab" };
+    if (!featureFlags().devtools) {
+      return { ok: false, open: false, side: null, reason: "disabled" };
+    }
+    const options = { side, window: ctx.window };
+    let ok = true;
+    switch (action) {
+      case "toggle":
+        devtoolsDocks.toggle(contents, options);
+        break;
+      case "open":
+        devtoolsDocks.open(contents, options);
+        break;
+      case "close":
+        devtoolsDocks.close(contents);
+        break;
+      case "console":
+      case "elements":
+      case "inspect":
+      case "device":
+        devtoolsDocks.open(contents, options);
+        raisePanelLayer(ctx);
+        applyLayout(ctx);
+        ok = await devtoolsDocks.run(contents, action);
+        break;
+      case "inspect-at": {
+        devtoolsDocks.open(contents, options);
+        const point = [x, y].map((value) => (Number.isFinite(value) ? Math.round(value) : 0));
+        if (!contents.isDestroyed()) contents.inspectElement(point[0], point[1]);
+        break;
+      }
+      default:
+        return { ok: false, open: devtoolsDocks.isOpen(contents), side: null, reason: "action" };
+    }
+    raisePanelLayer(ctx);
+    applyLayout(ctx);
+    return { ok, open: devtoolsDocks.isOpen(contents), side: devtoolsDocks.sideOf(contents) };
+  });
+
+  // Área do dock na casca; null esconde (aba Terminal, tela cheia, dock fechado).
+  ipcMain.handle("devtools:bounds", (event, rect) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return;
+    ctx.devtoolsRect = validDockRect(rect);
+    layoutDevtools(ctx);
+  });
+
+  // Lado e tamanho do dock por workspace (meta devtoolsDock).
+  ipcMain.handle("devtools:dock-get", () => cleanDockMap(database?.getMeta("devtoolsDock")));
+  ipcMain.handle("devtools:dock-set", (_event, { workspace, dock } = {}) => {
+    const next = withDock(database?.getMeta("devtoolsDock"), workspace, dock);
+    database?.setMeta("devtoolsDock", next);
+    return next;
   });
 
   // 4.5: modo leitura. O artigo sai da página (mundo isolado) já em blocos validados.
@@ -4299,6 +4444,8 @@ function registerIpc() {
     closePanelLayer(ctx, { notify: true });
     const entry = ctx.views.get(id);
     const moved = { id: 1, view: entry?.view ?? null, history: ctx.hibernated.get(id) ?? null };
+    // 4.8: o dock do DevTools é filho da janela antiga; fecha antes de mudar.
+    if (entry) devtoolsDocks.close(entry.view.webContents);
     if (entry) {
       ctx.window.contentView.removeChildView(entry.view);
       ctx.views.delete(id);
@@ -4949,6 +5096,8 @@ function registerIpc() {
     }
     database?.setMeta("featureFlags", withUserFlag(database.getMeta("featureFlags"), name, value));
     const flags = featureFlags();
+    // 4.8: DevTools desligado fecha os que estiverem abertos.
+    if (!flags.devtools) devtoolsDocks.closeAll();
     broadcast("agzos:flags", flags);
     return flags;
   });
@@ -6517,8 +6666,10 @@ app.on("web-contents-created", (_event, contents) => {
   // Antes da primeira navegação de qualquer guia ou popup (inclusive OAuth).
   applyChromeIdentity(contents);
   if (!app.isPackaged) return;
+  // 4.8: o DevTools é do navegador para dev (flag devtools, ligada por padrão). Desligada,
+  // volta o bloqueio do pacote: F12 e Ctrl+Shift+I/J/C não abrem e ele fecha se abrir.
   contents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown") return;
+    if (input.type !== "keyDown" || featureFlags().devtools) return;
     const key = input.key.toLowerCase();
     if (
       key === "f12" ||
@@ -6527,7 +6678,9 @@ app.on("web-contents-created", (_event, contents) => {
       event.preventDefault();
     }
   });
-  contents.on("devtools-opened", () => contents.closeDevTools());
+  contents.on("devtools-opened", () => {
+    if (!featureFlags().devtools) contents.closeDevTools();
+  });
 });
 
 /** Pasta de downloads do sistema (ou a dos testes). */
@@ -6878,6 +7031,8 @@ function macMenuTemplate() {
         command("Modo leitura", "page.reader", "Alt+Cmd+R"),
         command("Notas desta página", "notes.toggle", "Shift+Cmd+M"),
         command("Mira de elemento", "page.inspect", "Shift+Cmd+C"),
+        command("Ferramentas do desenvolvedor", "devtools.toggle", "Alt+Cmd+I"),
+        command("Console JavaScript", "devtools.console", "Alt+Cmd+J"),
         command("Capturar tela…", "page.capture", "Shift+Cmd+S"),
         command("Portas em uso", "ports.open"),
         command("API Scratchpad", "scratchpad.open"),

@@ -17,6 +17,8 @@ import { AI_NEW_CHAT_EVENT, AiPanel } from "@/features/ai/panel";
 import { runGesture } from "@/features/gestures/run";
 import { useGestures } from "@/features/gestures/use-gestures";
 import { TerminalDock } from "@/features/terminal/dock";
+import { TerminalView } from "@/features/terminal/view";
+import { DevtoolsDock } from "@/features/dev/devtools-dock";
 import { terminalKeepsBrowserKey } from "@/features/terminal/model";
 import { BookmarkEditor } from "@/features/bookmarks/editor";
 import { BookmarksManager, type BookmarkActions } from "@/features/bookmarks/manager";
@@ -85,6 +87,7 @@ import { createDownloadsApi } from "@/features/downloads/api";
 import { PdfHelpPage } from "@/features/pdf/help";
 import { comboOfHotkey } from "./feature-prefs";
 import { useV47Shell, type PdfRequest } from "./v47-shell";
+import { useV48Shell } from "./v48-shell";
 import type { SettingsSectionId } from "@/features/settings/page";
 import type { ToolId } from "@/features/tools/tools";
 import type { ExtensionMenuAction } from "@/features/extensions/menu";
@@ -1271,6 +1274,13 @@ export function AgzosBrowser() {
     openSettings: () => openSettingsAt("recursos"),
   });
   const setFeatures = v47.setFeatures;
+  // 4.8: flags por bloco e DevTools encaixado.
+  const v48 = useV48Shell({
+    desktop,
+    activeTabId: activeTab.id,
+    workspaceId: state.activeWorkspaceId,
+    setNotice,
+  });
   // 4.7: API interna agzos.downloads (só na casca, nunca nas páginas).
   useEffect(() => {
     if (!desktop) return;
@@ -1283,6 +1293,11 @@ export function AgzosBrowser() {
   // 4.5: mira de elemento, com aviso na casca (ligou, desligou ou não dá nesta guia).
   const inspect = async (tabId: number) => {
     if (!desktop) return;
+    // 4.8: com o DevTools aberto na guia, Ctrl+Shift+C é o seletor de elemento dele.
+    if (v48.isDevtoolsOpen(tabId)) {
+      void v48.run(tabId, "inspect");
+      return;
+    }
     const tab = state.tabs.find((item) => item.id === tabId);
     if (!tab || entryOf(tab).kind !== "page") {
       setNotice(
@@ -1300,7 +1315,7 @@ export function AgzosBrowser() {
   // 4.5: Ferramentas da página inicial, do Discador e da barra. Mira e modo leitura usam a
   // guia de site aberta (ou a última de site, se a atual for a página inicial).
   const runTool = (id: ToolId) => {
-    if (id === "page.inspect" || id === "page.reader") {
+    if (id === "page.inspect" || id === "page.reader" || id === "devtools.toggle") {
       const target =
         current.kind === "page"
           ? activeTab.id
@@ -1310,7 +1325,9 @@ export function AgzosBrowser() {
         setNotice(
           id === "page.inspect"
             ? "Abra um site primeiro: a mira mostra as cores e as classes de um elemento da página."
-            : "Abra um artigo primeiro: o modo leitura mostra só o texto dele.",
+            : id === "devtools.toggle"
+              ? "Abra um site primeiro: o DevTools inspeciona a página da guia."
+              : "Abra um artigo primeiro: o modo leitura mostra só o texto dele.",
         );
         return;
       }
@@ -1511,6 +1528,9 @@ export function AgzosBrowser() {
       toggleColors: () => v47.toggleColors(),
       openPdfTools: () => openPdfTools(),
       togglePageTheme: (tabId) => v47.togglePageTheme(tabId),
+      devtools: (tabId, action) => void v48.run(tabId, action),
+      devtoolsEnabled: () => v48.devtoolsEnabled,
+      devtoolsSide: (side) => v48.setSide(side),
       bookmarkPage,
       bookmarkAllTabs,
       pictureInPicture,
@@ -1965,8 +1985,22 @@ export function AgzosBrowser() {
   const setTerminal = (patch: Partial<Prefs["terminal"]>) =>
     setPrefs({ terminal: { ...prefs.terminal, ...patch } });
   const terminalBottom = prefs.terminal.dock !== "right";
+  // 4.8: a aba Terminal do DevTools mostra o terminal da janela; enquanto isso o dock do
+  // terminal sai (um TerminalView por vez: o outro remonta com terminal:list).
+  const devtoolsSide = state.fullscreen ? null : v48.dockedSide;
+  // Muda quando algo acima da página entra ou sai (a página e o dock remedem).
+  const frameLayout = [
+    prefs.bookmarksBar ? "b" : "",
+    permission ? "p" : "",
+    saveCandidate ? "sv" : "",
+    state.find && state.find.id === activeTab.id ? "f" : "",
+    startupInfo ? "s" : "",
+    state.unresponsive.includes(activeTab.id) ? "u" : "",
+    prefs.orientation,
+  ].join("|");
+  const devtoolsTerminal = devtoolsSide !== null && v48.tab === "terminal";
   const terminalDock =
-    desktop && terminalMounted && prefs.terminal.dock !== "window" ? (
+    desktop && terminalMounted && prefs.terminal.dock !== "window" && !devtoolsTerminal ? (
       <TerminalDock
         key={prefs.terminal.dock}
         desktop={desktop}
@@ -1980,6 +2014,44 @@ export function AgzosBrowser() {
         defaultCwd={prefs.terminalCwd}
         isMac={isMac}
         onClose={() => setPrefs({ terminalOpen: false })}
+      />
+    ) : null;
+
+  const devtoolsDock =
+    desktop && devtoolsSide ? (
+      <DevtoolsDock
+        key={devtoolsSide}
+        desktop={desktop}
+        side={devtoolsSide}
+        size={devtoolsSide === "right" ? v48.dock.width : v48.dock.height}
+        tab={v48.tab}
+        layout={frameLayout}
+        hidden={false}
+        onTab={v48.setTab}
+        onSide={v48.setSide}
+        onSize={(size) =>
+          v48.setDock(devtoolsSide === "right" ? { width: size } : { height: size })
+        }
+        onClose={() => void v48.run(activeTab.id, "close")}
+        onAction={(action) => void v48.run(activeTab.id, action)}
+        terminal={() => (
+          <TerminalView
+            desktop={desktop}
+            settings={prefs.terminal}
+            defaultShell={prefs.terminalShell}
+            defaultCwd={prefs.terminalCwd}
+            isMac={isMac}
+            mode={devtoolsSide}
+            onHide={() => v48.setTab("devtools")}
+            onDock={(dock) => {
+              v48.setTab("devtools");
+              setTerminal({ dock });
+              setPrefs({ terminalOpen: true });
+              setTerminalMounted(true);
+            }}
+            onSettings={setTerminal}
+          />
+        )}
       />
     ) : null;
 
@@ -2722,15 +2794,7 @@ export function AgzosBrowser() {
                   blockedToday={blockedToday}
                   snapshot={viewHidden ? snapshot : null}
                   desktop={desktop}
-                  layoutSignature={[
-                    prefs.bookmarksBar ? "b" : "",
-                    permission ? "p" : "",
-                    saveCandidate ? "sv" : "",
-                    state.find && state.find.id === activeTab.id ? "f" : "",
-                    startupInfo ? "s" : "",
-                    state.unresponsive.includes(activeTab.id) ? "u" : "",
-                    prefs.orientation,
-                  ].join("|")}
+                  layoutSignature={frameLayout}
                   onOpen={openAddress}
                   onRequestAddLink={() => setLinkDialog("home")}
                   onRemoveLink={(url) => dispatch({ type: "links/remove", url })}
@@ -2852,8 +2916,10 @@ export function AgzosBrowser() {
                   </div>
                 )}
               </div>
+              {devtoolsSide === "bottom" && devtoolsDock}
               {terminalBottom && terminalDock}
             </div>
+            {devtoolsSide === "right" && devtoolsDock}
             {!terminalBottom && terminalDock}
             {prefs.notesOpen && !state.fullscreen && (
               <NotesPanel

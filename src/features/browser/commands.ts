@@ -39,6 +39,13 @@ export type CommandId =
   | "tab.new-private"
   | "tab.new-session"
   | "page.inspect"
+  | "devtools.toggle"
+  | "devtools.console"
+  | "devtools.inspect"
+  | "devtools.device"
+  | "devtools.dock-right"
+  | "devtools.dock-bottom"
+  | "devtools.dock-window"
   | "page.capture"
   | "page.reader"
   | "notes.toggle"
@@ -160,6 +167,12 @@ export type CommandContext = {
     toggleColors: () => void;
     openPdfTools: () => void;
     togglePageTheme: (tabId: number) => void;
+    /** 4.8: DevTools encaixado da guia (abrir/fechar, Console, seletor, modo dispositivo). */
+    devtools: (tabId: number, action: "toggle" | "console" | "inspect" | "device") => void;
+    /** 4.8: flag devtools ligada (Configurações → Recursos). */
+    devtoolsEnabled: () => boolean;
+    /** 4.8: lado do DevTools no workspace (move o da guia ativa, se aberto). */
+    devtoolsSide: (side: "right" | "bottom" | "window") => void;
   };
 };
 
@@ -650,6 +663,53 @@ export const commands: Command[] = [
     visible: ({ desktop }) => desktop !== null,
     run: ({ ui }, tabId) => ui.inspect(tabId),
   },
+  // 4.8 (Fase 1): DevTools do Chromium encaixado na janela. Ctrl+Shift+C continua sendo
+  // a mira; com o DevTools aberto na guia, ela vira o seletor de elemento dele.
+  {
+    id: "devtools.toggle",
+    label: "Ferramentas do desenvolvedor (DevTools)",
+    shortcuts: [
+      { key: "f12", mod: false },
+      { key: "i", shift: true },
+    ],
+    enabled: onDesktopPage,
+    visible: ({ desktop, ui }) => desktop !== null && ui.devtoolsEnabled(),
+    run: ({ ui }, tabId) => ui.devtools(tabId, "toggle"),
+  },
+  {
+    id: "devtools.console",
+    label: "DevTools: Console",
+    shortcuts: [{ key: "j", shift: true }],
+    enabled: onDesktopPage,
+    visible: ({ desktop, ui }) => desktop !== null && ui.devtoolsEnabled(),
+    run: ({ ui }, tabId) => ui.devtools(tabId, "console"),
+  },
+  {
+    id: "devtools.inspect",
+    label: "DevTools: selecionar elemento na página",
+    enabled: onDesktopPage,
+    visible: ({ desktop, ui }) => desktop !== null && ui.devtoolsEnabled(),
+    run: ({ ui }, tabId) => ui.devtools(tabId, "inspect"),
+  },
+  {
+    id: "devtools.device",
+    label: "DevTools: modo dispositivo (celular e tablet)",
+    enabled: onDesktopPage,
+    visible: ({ desktop, ui }) => desktop !== null && ui.devtoolsEnabled(),
+    run: ({ ui }, tabId) => ui.devtools(tabId, "device"),
+  },
+  ...(
+    [
+      ["right", "DevTools: encaixar à direita"],
+      ["bottom", "DevTools: encaixar embaixo"],
+      ["window", "DevTools: abrir em janela separada"],
+    ] as const
+  ).map(([side, label]): Command => ({
+    id: `devtools.dock-${side}`,
+    label,
+    visible: ({ desktop, ui }) => desktop !== null && ui.devtoolsEnabled(),
+    run: ({ ui }) => ui.devtoolsSide(side),
+  })),
   // 4.7: atalhos configuráveis (Configurações > Recursos), por isso sem `shortcuts` aqui.
   {
     id: "colors.eyedropper",

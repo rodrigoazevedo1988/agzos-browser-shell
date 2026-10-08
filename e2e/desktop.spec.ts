@@ -159,6 +159,11 @@ const PAGES: Record<string, string> = {
     <button id="alvo" style="color:#fff;background:#D10A11;font:600 14px Inter, sans-serif;
       padding:8px 16px;border:0;border-radius:8px;width:200px;height:60px">Comprar</button></body>`,
   "/scratch": `<!doctype html><title>Scratch</title><h1>API</h1>`,
+  // 4.8: página com três iframes para o seletor de contexto do DevTools.
+  "/v48/quadros": `<!doctype html><title>Quadros</title><body style="margin:0;padding:40px">
+    <button id="alvo" style="width:200px;height:60px">Alvo</button>
+    <iframe srcdoc="<p>um</p>"></iframe><iframe srcdoc="<p>dois</p>"></iframe>
+    <iframe srcdoc="<p>tres</p>"></iframe></body>`,
 };
 
 // /instavel derruba a conexão (ERR_EMPTY_RESPONSE) enquanto o "servidor" estiver fora.
@@ -5080,6 +5085,282 @@ test("4.8 Fase 0: capacidades gravadas, CDP na guia ativa, flags e cookies intac
     expect(flags.copilot).toBe(true);
     await window.waitForTimeout(1500);
     expect(JSON.parse(fs.readFileSync(file, "utf8")).measuredAt).toBe(measuredAt);
+  } finally {
+    await app.close();
+  }
+});
+
+/** Estado do DevTools encaixado da guia `url`: aberto, bounds da view e o frontend pronto. */
+async function devtoolsState(app: ElectronApplication, url: string) {
+  return app.evaluate(({ BrowserWindow, webContents }, target) => {
+    const page = webContents.getAllWebContents().find((item) => item.getURL() === target);
+    const front = page?.devToolsWebContents ?? null;
+    let bounds = null;
+    for (const window of BrowserWindow.getAllWindows()) {
+      for (const child of window.contentView.children) {
+        const contents = (child as { webContents?: Electron.WebContents }).webContents;
+        if (front && contents === front) bounds = child.getBounds();
+      }
+    }
+    return { front: Boolean(front && !front.isDestroyed()), bounds };
+  }, url);
+}
+
+/** Roda no frontend do DevTools da guia `url` (módulos ES do próprio DevTools). */
+async function inDevtools<T>(app: ElectronApplication, url: string, code: string): Promise<T> {
+  return app.evaluate(
+    ({ webContents }, [target, source]) =>
+      webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === target)!
+        .devToolsWebContents!.executeJavaScript(source!),
+    [url, code] as const,
+  ) as Promise<T>;
+}
+
+type V48Bridge = {
+  agzosDesktop: {
+    devtools(
+      id: number,
+      action: string,
+      options?: { side?: string },
+    ): Promise<{ ok: boolean; open: boolean; side: string | null; reason?: string }>;
+  };
+};
+
+test("4.8 Fase 1: F12 encaixa o DevTools, iframes, modo dispositivo, mira, terminal e lado gravado", async () => {
+  const profile = tempProfile();
+  const page = `${origin}/v48/quadros`;
+  let { app, window } = await launch(profile);
+  try {
+    await go(window, page);
+    await expect(tabs(window).first()).toContainText("Quadros");
+
+    // F12 na página: a view do DevTools aparece na área do dock em menos de 300 ms (o
+    // conteúdo do frontend termina de carregar depois, dentro dela).
+    const elapsed = await app.evaluate(async ({ BrowserWindow, webContents }, target) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const before = new Set(window.contentView.children);
+      contents.focus();
+      const start = Date.now();
+      contents.sendInputEvent({ type: "keyDown", keyCode: "F12" });
+      contents.sendInputEvent({ type: "keyUp", keyCode: "F12" });
+      while (Date.now() - start < 5000) {
+        const fresh = window.contentView.children.filter((child) => !before.has(child));
+        if (fresh.some((child) => child.getBounds().width > 0)) return Date.now() - start;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return -1;
+    }, page);
+    expect(elapsed).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(300);
+    const dock = window.locator(".devtools-dock");
+    await expect(dock).toHaveAttribute("data-dock", "right");
+    // A página encolheu: o dock fica ao lado, sem cobrir a guia.
+    await expect
+      .poll(async () => (await devtoolsState(app, page)).front, { timeout: 15_000 })
+      .toBe(true);
+    await expect
+      .poll(async () => {
+        const state = await devtoolsState(app, page);
+        const tabView = (await nativeChildren(app)).find((item) => item.url === page)!;
+        return state.bounds!.x - (tabView.bounds.x + tabView.bounds.width);
+      })
+      .toBeGreaterThanOrEqual(0);
+
+    // Os três iframes aparecem como contextos (seletor de contexto do Console).
+    await expect
+      .poll(
+        () =>
+          inDevtools<number>(
+            app,
+            page,
+            `import('./core/sdk/sdk.js').then((SDK) => SDK.TargetManager.TargetManager.instance()
+              .models(SDK.RuntimeModel.RuntimeModel).flatMap((model) => model.executionContexts())
+              .filter((context) => context.isDefault).length).catch(() => 0)`,
+          ),
+        { timeout: 20_000 },
+      )
+      .toBeGreaterThanOrEqual(4);
+
+    // Ctrl+Shift+C com o DevTools aberto vai para o seletor dele, não para a mira.
+    await keyInTab(app, page, "C", ["control", "shift"]);
+    await window.waitForTimeout(600);
+    await expect(window.getByText(/Mira ligada/)).toHaveCount(0);
+    const mira = await app.evaluate(({ webContents }, url) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+      return contents.executeJavaScriptInIsolatedWorld(4132, [
+        { code: "Boolean(window.__agzosInspector)" },
+      ]);
+    }, page);
+    expect(mira).toBe(false);
+
+    // Modo dispositivo e, ao sair, a identidade de Chrome volta (login do Google).
+    const tabId = await tabIdOf(window, "Quadros");
+    const device = await window.evaluate(
+      (id) => (window as unknown as V48Bridge).agzosDesktop.devtools(id, "device"),
+      tabId,
+    );
+    expect(device.ok).toBe(true);
+    await expect
+      .poll(() => inTab<string>(app, page, "navigator.userAgent"), { timeout: 10_000 })
+      .toContain("Mobile");
+    await window.evaluate(
+      (id) => (window as unknown as V48Bridge).agzosDesktop.devtools(id, "device"),
+      tabId,
+    );
+    await expect
+      .poll(
+        () =>
+          inTab<string>(
+            app,
+            page,
+            "navigator.userAgentData.brands.map((item) => item.brand).join(',')",
+          ),
+        { timeout: 10_000 },
+      )
+      .toContain("Google Chrome");
+
+    // Aba Terminal: o frontend sai da área e o terminal da janela entra no lugar.
+    await dock.getByRole("tab", { name: "Terminal" }).click();
+    await expect(dock.locator(".terminal-view")).toBeVisible();
+    await expect.poll(async () => (await devtoolsState(app, page)).bounds?.width).toBe(0);
+    await dock.getByRole("tab", { name: "DevTools" }).click();
+    await expect
+      .poll(async () => (await devtoolsState(app, page)).bounds?.width ?? 0)
+      .toBeGreaterThan(0);
+
+    // Embaixo: grava no workspace.
+    await dock.getByRole("button", { name: "Encaixar embaixo" }).click();
+    await expect(dock).toHaveAttribute("data-dock", "bottom");
+    await expect
+      .poll(async () => {
+        const below = await devtoolsState(app, page);
+        const tabNow = (await nativeChildren(app)).find((item) => item.url === page)!;
+        return below.bounds!.y - (tabNow.bounds.y + tabNow.bounds.height);
+      })
+      .toBeGreaterThanOrEqual(0);
+
+    // F12 fecha; com o DevTools fechado, Ctrl+Shift+C volta a ser a mira.
+    await keyInTab(app, page, "F12");
+    await expect(dock).toHaveCount(0);
+    await expect.poll(async () => (await devtoolsState(app, page)).bounds).toBeNull();
+    await keyInTab(app, page, "C", ["control", "shift"]);
+    await expect(window.locator(".agzos-notice")).toContainText("Mira ligada");
+
+    // Cartão da mira → "Abrir no DevTools": abre no elemento clicado.
+    const target = await inTab<{ x: number; y: number }>(
+      app,
+      page,
+      `(() => { const r = document.getElementById("alvo").getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + 20) }; })()`,
+    );
+    await mouseInTab(app, page, [
+      { type: "mouseMove", x: target.x, y: target.y },
+      { type: "mouseDown", x: target.x, y: target.y, button: "left", clickCount: 1 },
+      { type: "mouseUp", x: target.x, y: target.y, button: "left", clickCount: 1 },
+    ]);
+    const clicked = await app.evaluate(({ webContents }, url) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+      return contents.executeJavaScriptInIsolatedWorld(4132, [
+        {
+          code: `(() => { const b = [...(window.__agzosInspector?.root.querySelectorAll("button") ?? [])].find((item) => item.textContent === "Abrir no DevTools"); b?.click(); return Boolean(b); })()`,
+        },
+      ]);
+    }, page);
+    expect(clicked).toBe(true);
+    await expect(dock).toHaveAttribute("data-dock", "bottom");
+    await expect
+      .poll(async () => (await devtoolsState(app, page)).bounds?.height ?? 0)
+      .toBeGreaterThan(0);
+
+    // Janela separada: o dock sai e o DevTools do Chromium abre solto.
+    const detached = () =>
+      app.evaluate(
+        ({ webContents }, url) =>
+          webContents
+            .getAllWebContents()
+            .find((item) => item.getURL() === url)!
+            .isDevToolsOpened(),
+        page,
+      );
+    await dock.getByRole("button", { name: "Abrir em janela separada" }).click();
+    await expect(dock).toHaveCount(0);
+    await expect.poll(detached).toBe(true);
+    // De volta ao dock (paleta: "DevTools: encaixar embaixo").
+    await window.evaluate(
+      (id) =>
+        (window as unknown as V48Bridge).agzosDesktop.devtools(id, "open", { side: "bottom" }),
+      tabId,
+    );
+    await expect(window.locator(".devtools-dock")).toHaveAttribute("data-dock", "bottom");
+    await expect
+      .poll(async () => (await devtoolsState(app, page)).bounds?.height ?? 0, { timeout: 15_000 })
+      .toBeGreaterThan(0);
+    // E solto de novo, para o reinício abaixo conferir o lado gravado.
+    await window
+      .locator(".devtools-dock")
+      .getByRole("button", { name: "Abrir em janela separada" })
+      .click();
+    await expect.poll(detached).toBe(true);
+    await window.evaluate(
+      (id) => (window as unknown as V48Bridge).agzosDesktop.devtools(id, "close"),
+      tabId,
+    );
+    await expect.poll(detached).toBe(false);
+  } finally {
+    await app.close();
+  }
+
+  // Reabrir: o lado gravado do workspace (janela separada) volta.
+  ({ app, window } = await launch(profile));
+  try {
+    await expect(tabs(window).first()).toContainText("Quadros");
+    await expect.poll(async () => (await liveViews(app, page)).length).toBeGreaterThan(0);
+    await keyInTab(app, page, "F12");
+    await expect
+      .poll(() =>
+        app.evaluate(
+          ({ webContents }, url) =>
+            webContents
+              .getAllWebContents()
+              .find((item) => item.getURL() === url)!
+              .isDevToolsOpened(),
+          page,
+        ),
+      )
+      .toBe(true);
+    await expect(window.locator(".devtools-dock")).toHaveCount(0);
+
+    // Fechar a guia com o DevTools encaixado: o dock some e o app segue de pé.
+    await keyInTab(app, page, "F12");
+    await expect.poll(async () => (await liveViews(app, "devtools://")).length).toBe(0);
+    const other = `${origin}/a`;
+    await window.keyboard.press(`${MOD}+t`);
+    await go(window, other);
+    await expect(tabs(window).nth(1)).toContainText("Página A");
+    const otherId = await tabIdOf(window, "Página A");
+    await window.evaluate(
+      (id) => (window as unknown as V48Bridge).agzosDesktop.devtools(id, "open", { side: "right" }),
+      otherId,
+    );
+    await expect(window.locator(".devtools-dock")).toHaveAttribute("data-dock", "right");
+    await keyInTab(app, other, "W", ["control"]);
+    await expect(tabs(window)).toHaveCount(1);
+    await expect(window.locator(".devtools-dock")).toHaveCount(0);
+    await expect.poll(async () => (await liveViews(app, "devtools://")).length).toBe(0);
+  } finally {
+    await app.close();
+  }
+
+  // Flag desligada: F12 não abre e a casca explica.
+  ({ app, window } = await launch(profile, { AGZOS_FLAGS: "devtools=0" }));
+  try {
+    await expect(tabs(window).first()).toContainText("Quadros");
+    await expect.poll(async () => (await liveViews(app, page)).length).toBeGreaterThan(0);
+    await keyInTab(app, page, "F12");
+    await expect(window.locator(".agzos-notice")).toContainText("DevTools está desligado");
+    expect((await devtoolsState(app, page)).front).toBe(false);
   } finally {
     await app.close();
   }

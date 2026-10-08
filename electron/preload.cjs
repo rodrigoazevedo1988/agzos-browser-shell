@@ -277,6 +277,15 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   setFeatureFlag: (name, value) => ipcRenderer.invoke("flags:set", { name, value }),
   runtimeCapabilities: () => ipcRenderer.invoke("capabilities:get"),
   onFeatureFlags: subscribe("agzos:flags"),
+  // 4.8 (Fase 1): DevTools encaixado.
+  devtools: (id, action, options = {}) =>
+    ipcRenderer.invoke("devtools:action", { id, action, ...options }),
+  devtoolsBounds: (rect) => ipcRenderer.invoke("devtools:bounds", rect),
+  devtoolsDocks: () => ipcRenderer.invoke("devtools:dock-get"),
+  setDevtoolsDock: (workspace, dock) =>
+    ipcRenderer.invoke("devtools:dock-set", { workspace, dock }),
+  onDevtools: subscribe("agzos:devtools"),
+  onDevtoolsRequest: subscribe("agzos:devtools-request"),
   onPdfOpen: subscribe("agzos:pdf-open"),
   onPdfProgress: subscribe("agzos:pdf-progress"),
 });
