@@ -236,6 +236,7 @@ describe("4.8 Fase 0: flags por bloco", () => {
 });
 
 type DockSide = "right" | "bottom" | "window";
+type Rect = { x: number; y: number; width: number; height: number };
 type Dock = { side: DockSide; width: number; height: number };
 type FakeContents = EventEmitter & {
   id: number;
@@ -254,7 +255,9 @@ const devtools = require(path.join(root, "electron/devtools-dock.cjs")) as {
   cleanDockMap(value: unknown): Record<string, Dock>;
   withDock(map: unknown, workspace: unknown, dock: unknown): Record<string, Dock>;
   dockKeyAction(input: unknown): string | null;
-  frontendScript(action: string, side?: string): string | null;
+  frontendScript(action: string, options?: { side?: string; token?: string }): string | null;
+  frontendRect(dock: { device: boolean; side: string }, area: Rect, page: Rect | null): Rect;
+  parseHookMessage(message: unknown, token: string): { kind: string; value: unknown } | null;
   createDevtoolsDocks(options: {
     WebContentsView: unknown;
     hiddenRect: unknown;
@@ -279,6 +282,8 @@ function fakeFrontend() {
   const frontend = Object.assign(emitter, {
     closed: false,
     isDestroyed: () => false,
+    executeJavaScript: async () => true,
+    setWindowOpenHandler: () => {},
     close: () => {
       frontend.closed = true;
       emitter.emit("destroyed");
@@ -354,9 +359,50 @@ describe("4.8 Fase 1: DevTools encaixado (devtools-dock.cjs)", () => {
     expect(devtools.frontendScript("console")).toContain("DevToolsAPI.showPanel('console')");
     expect(devtools.frontendScript("inspect")).toContain("DevToolsAPI.enterInspectElementMode()");
     expect(devtools.frontendScript("device")).toContain("emulation.toggle-device-mode");
-    expect(devtools.frontendScript("side", "bottom")).toContain('setDockSide("bottom")');
-    expect(devtools.frontendScript("side", "window")).toBeNull();
+    // Gancho: só com token válido; o lado do encaixe vale só no modo dispositivo.
+    const token = "a".repeat(32);
+    expect(devtools.frontendScript("hook", { token, side: "bottom" })).toContain('"bottom"');
+    expect(devtools.frontendScript("hook", { token: "x" })).toBeNull();
+    expect(devtools.frontendScript("side", { side: "bottom" })).toContain("__agzosDock.side");
+    expect(devtools.frontendScript("side", { side: "window" })).toBeNull();
     expect(devtools.frontendScript("eval")).toBeNull();
+  });
+
+  it("modo dispositivo: o frontend cobre página + dock e a guia vai para os bounds dele", () => {
+    const page = { x: 0, y: 80, width: 900, height: 800 };
+    const area = { x: 900, y: 112, width: 500, height: 768 };
+    // Fora do modo: só a área do dock.
+    expect(devtools.frontendRect({ device: false, side: "right" }, area, page)).toEqual(area);
+    // À direita: da página até o fim do dock, a partir do corpo do dock (cabeçalho à vista).
+    expect(devtools.frontendRect({ device: true, side: "right" }, area, page)).toEqual({
+      x: 0,
+      y: 112,
+      width: 1400,
+      height: 768,
+    });
+    const below = { x: 0, y: 600, width: 900, height: 280 };
+    const top = { x: 0, y: 80, width: 900, height: 480 };
+    expect(devtools.frontendRect({ device: true, side: "bottom" }, below, top)).toEqual({
+      x: 0,
+      y: 80,
+      width: 900,
+      height: 800,
+    });
+    const token = "b".repeat(32);
+    expect(
+      devtools.parseHookMessage(
+        `agzos-dock:${token}:bounds:{"x":223,"y":67,"width":400,"height":813}`,
+        token,
+      ),
+    ).toEqual({ kind: "bounds", value: { x: 223, y: 67, width: 400, height: 813 } });
+    expect(devtools.parseHookMessage(`agzos-dock:${token}:device:true`, token)).toEqual({
+      kind: "device",
+      value: true,
+    });
+    // Token de outro dock, tipo desconhecido ou JSON quebrado: ignorado.
+    expect(devtools.parseHookMessage(`agzos-dock:${"c".repeat(32)}:device:true`, token)).toBeNull();
+    expect(devtools.parseHookMessage(`agzos-dock:${token}:eval:1`, token)).toBeNull();
+    expect(devtools.parseHookMessage(`agzos-dock:${token}:bounds:{`, token)).toBeNull();
   });
 
   it("abre encaixado num WebContentsView próprio e só mostra o da guia à vista", () => {

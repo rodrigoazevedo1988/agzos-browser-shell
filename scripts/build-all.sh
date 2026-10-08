@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="4.8.1"
+VERSION="4.8.2"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).

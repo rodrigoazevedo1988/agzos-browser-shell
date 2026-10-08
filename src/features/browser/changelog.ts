@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.2",
+    date: "2026-10-08",
+    items: [
+      "DevTools mais compacto: o espaço vazio que ele reservava ao lado do painel sumiu. Com o dock estreito, o Styles fica embaixo do Elements, e a divisão entre os dois pode ser arrastada.",
+      "Modo dispositivo como no Chrome: ao ligar (botão de celular no dock, no próprio DevTools ou Ctrl+Shift+M dentro dele), a área da página vira a tela de teste, com a barra de dimensões em cima e o celular ou tablet centralizado no tamanho real. Antes a página ficava espremida num canto com o resto preto. Desligando, tudo volta ao normal e o login do Google continua funcionando.",
+    ],
+  },
+  {
     version: "4.8.1",
     date: "2026-10-08",
     items: [

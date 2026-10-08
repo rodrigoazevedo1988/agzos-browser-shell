@@ -233,6 +233,18 @@ const devtoolsDocks = createDevtoolsDocks({
     send(where.ctx, "agzos:devtools", { id: where.id, open, side });
     applyLayout(where.ctx);
   },
+  // Modo dispositivo (modelo do Chrome): a guia vai para os bounds que o frontend pede,
+  // por cima dele.
+  onLayout: (contents) => {
+    const where = tabOfContents.get(contents.id);
+    if (!where || where.ctx.window.isDestroyed()) return;
+    const entry = where.ctx.views.get(where.id);
+    if (entry && devtoolsDocks.isDevice(contents)) {
+      where.ctx.window.contentView.addChildView(entry.view);
+      raisePanelLayer(where.ctx);
+    }
+    applyLayout(where.ctx);
+  },
   // F12 / Ctrl+Shift+I / Ctrl+Shift+J com o foco no próprio DevTools.
   onKey: (contents, action) => {
     const where = tabOfContents.get(contents.id);
@@ -680,7 +692,11 @@ function applyLayout(ctx) {
   const now = Date.now();
   const panes = paneIds(ctx);
   for (const [id, entry] of ctx.views) {
-    const rect = isShown(ctx, id) ? rectOf(ctx, id) : null;
+    let rect = isShown(ctx, id) ? rectOf(ctx, id) : null;
+    // 4.8: modo dispositivo do DevTools encaixado (fora da tela dividida).
+    if (rect && id === ctx.activeTabId && !ctx.split && !entry.view.webContents.isDestroyed()) {
+      rect = devtoolsDocks.pageRect(entry.view.webContents, ctx.devtoolsRect, rect) ?? rect;
+    }
     entry.view.setBounds(rect ?? HIDDEN_RECT);
     // Hibernação conta o tempo desde que a guia deixou de estar à vista.
     if (panes.includes(id)) {
@@ -729,7 +745,12 @@ function layoutDevtools(ctx) {
   const id = ctx.activeTabId;
   const visible =
     id !== null && !ctx.fullscreenActive && isShown(ctx, id) ? tabContents(ctx, id) : null;
-  devtoolsDocks.layout(ctx.window, { visible, rect: ctx.devtoolsRect ?? null });
+  devtoolsDocks.layout(ctx.window, {
+    visible,
+    rect: ctx.devtoolsRect ?? null,
+    // Modo dispositivo: o frontend cobre também a área da página (fora da tela dividida).
+    pageRect: visible && !ctx.split ? ctx.lastRect : null,
+  });
 }
 
 /** Guia à vista cujo pane contém o ponto (coordenadas da janela). */

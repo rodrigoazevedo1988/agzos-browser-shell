@@ -10,6 +10,14 @@
 //   frontend acha que está solto e esconde o modo dispositivo;
 // - com o webContents externo, isDevToolsOpened() responde false: quem sabe se o dock
 //   está aberto é este módulo (isOpen), e a hibernação pergunta para ele;
+// - encaixado, o frontend reserva um pedaço da própria view para a página e diz onde ela
+//   deve ficar (InspectorFrontendHost.setInspectedPageBounds); o Chrome põe a página ali.
+//   Fora do modo dispositivo esse pedaço só sobraria (a página já tem a área dela): o
+//   frontend fica "undocked" e compacto. No modo dispositivo vale o modelo do Chrome: o
+//   frontend encaixa, cobre a área da página mais a do dock (barra "Dimensions" e o fundo)
+//   e a guia vai para os bounds que ele pede, centralizada no tamanho do aparelho. O
+//   gancho (frontendScript "hook") avisa a troca do modo e os bounds pelo console do
+//   frontend, com um token por dock;
 // - o frontend expõe DevToolsAPI.showPanel e DevToolsAPI.enterInspectElementMode, os
 //   mesmos que o Chrome usa para Ctrl+Shift+J e Ctrl+Shift+C.
 
@@ -26,6 +34,7 @@ const MAX_DOCK_ENTRIES = 64;
 const READY_TIMEOUT_MS = 8000;
 const READY_POLL_MS = 40;
 const RELEASE_TIMEOUT_MS = 1500;
+const RETRY_MS = 150;
 
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const clamp = (value, { min, max }, fallback) =>
@@ -64,8 +73,64 @@ function withDock(map, workspace, dock) {
   return cleanDockMap(next);
 }
 
+/**
+ * Roda no frontend do DevTools (texto via executeJavaScript). Modo dispositivo ligado →
+ * encaixa no lado do dock (a área da página aparece com a barra "Dimensions"); desligado
+ * → solto e compacto. Os bounds da página e o estado do modo vão pelo console.
+ */
+function frontendHook(token, initialSide) {
+  if (window.__agzosDock) return true;
+  const say = (kind, value) =>
+    console.debug(`agzos-dock:${token}:${kind}:${JSON.stringify(value)}`);
+  const host = window.InspectorFrontendHost;
+  // Uma tentativa anterior pode ter embrulhado antes de o import falhar (frontend iniciando).
+  if (!host.__agzosBounds) {
+    const original = host.setInspectedPageBounds.bind(host);
+    host.setInspectedPageBounds = (bounds) => {
+      say("bounds", bounds);
+      original(bounds);
+    };
+    host.__agzosBounds = true;
+  }
+  return import("./ui/legacy/legacy.js").then((UI) => {
+    const dock = UI.DockController.DockController.instance();
+    const action = UI.ActionRegistry.ActionRegistry.instance().getAction(
+      "emulation.toggle-device-mode",
+    );
+    let side = initialSide;
+    const apply = () => {
+      const device = Boolean(action?.toggled());
+      const wanted = device ? side : "undocked";
+      if (dock.dockSide() !== wanted) dock.setDockSide(wanted);
+      say("device", device);
+    };
+    action?.addEventListener("Toggled", apply);
+    // O Electron manda o lado do openDevTools ao terminar de carregar, às vezes depois.
+    dock.addEventListener("AfterDockSideChanged", () => {
+      const wanted = action?.toggled() ? side : "undocked";
+      if (dock.dockSide() !== wanted) dock.setDockSide(wanted);
+    });
+    window.__agzosDock = {
+      side: (next) => {
+        side = next;
+        apply();
+      },
+      // Painel do DevTools com o tamanho do dock da casca: a área do aparelho fica com o
+      // tamanho da página (o frontend guardava o dele, 555 px, e ela ficava estreita).
+      size: (pixels) => {
+        const split = UI.Widget.Widget.get(document.querySelector(".split-widget"));
+        if (!split?.setSidebarSize) return false;
+        split.setSidebarSize(pixels);
+        return true;
+      },
+    };
+    apply();
+    return true;
+  });
+}
+
 /** Script de cada ação no frontend; null se a ação não existe. */
-function frontendScript(action, side) {
+function frontendScript(action, { side = null, token = null, size = null } = {}) {
   switch (action) {
     case "console":
       return "DevToolsAPI.showPanel('console'); true";
@@ -79,10 +144,21 @@ function frontendScript(action, side) {
         "import('./ui/legacy/legacy.js').then((UI) => UI.ActionRegistry.ActionRegistry" +
         ".instance().getAction('emulation.toggle-device-mode').execute()).then(() => true)"
       );
+    // Lado do encaixe enquanto o modo dispositivo estiver ligado.
     case "side":
       return side === "right" || side === "bottom"
-        ? "import('./ui/legacy/legacy.js').then((UI) => { UI.DockController.DockController" +
-            `.instance().setDockSide(${JSON.stringify(side)}); return true; })`
+        ? `window.__agzosDock ? (window.__agzosDock.side(${JSON.stringify(side)}), true) : false`
+        : null;
+    case "size":
+      return Number.isFinite(size) && size > 0
+        ? `window.__agzosDock ? window.__agzosDock.size(${Math.round(size)}) : false`
+        : null;
+    // Gancho (ver o topo do arquivo). Repetir não instala de novo.
+    case "hook":
+      return typeof token === "string" && /^[a-f0-9]{16,64}$/.test(token)
+        ? `(${frontendHook.toString()})(${JSON.stringify(token)}, ${JSON.stringify(
+            side === "bottom" ? "bottom" : "right",
+          )})`
         : null;
     default:
       return null;
@@ -98,6 +174,48 @@ function dockKeyAction(input) {
   if (mod && input.shift && !input.alt && key === "i") return "toggle";
   if (mod && input.shift && !input.alt && key === "j") return "console";
   return null;
+}
+
+function randomToken() {
+  return require("node:crypto").randomBytes(16).toString("hex");
+}
+
+/** "agzos-dock:<token>:<kind>:<json>" do gancho; null se não é dele. */
+function parseHookMessage(message, token) {
+  const prefix = `agzos-dock:${token}:`;
+  const text = String(message ?? "");
+  if (!token || !text.startsWith(prefix)) return null;
+  const rest = text.slice(prefix.length);
+  const colon = rest.indexOf(":");
+  const kind = rest.slice(0, colon);
+  if (kind !== "device" && kind !== "bounds") return null;
+  try {
+    return { kind, value: JSON.parse(rest.slice(colon + 1)) };
+  } catch {
+    return null;
+  }
+}
+
+/** Bounds do frontend (podem vir com fração): inteiros, sem negativos. */
+function validBounds(value) {
+  const rect = validRect(value);
+  return rect && rect.x >= 0 && rect.y >= 0 ? rect : null;
+}
+
+/**
+ * Área do frontend: a do dock, ou, no modo dispositivo, a do dock mais a da página. À
+ * direita começa na altura do corpo do dock (o cabeçalho da casca segue à vista).
+ */
+function frontendRect(dock, area, page) {
+  if (!dock.device || !page) return area;
+  if (dock.side === "right") {
+    const top = Math.max(area.y, page.y);
+    const bottom = Math.min(area.y + area.height, page.y + page.height);
+    return { x: page.x, y: top, width: area.x + area.width - page.x, height: bottom - top };
+  }
+  const left = Math.min(area.x, page.x);
+  const right = Math.max(area.x + area.width, page.x + page.width);
+  return { x: left, y: page.y, width: right - left, height: area.y + area.height - page.y };
 }
 
 function validRect(rect) {
@@ -123,6 +241,7 @@ function createDevtoolsDocks({
   hiddenRect,
   onChange = () => {},
   onKey = () => {},
+  onLayout = () => {},
   now = () => Date.now(),
 }) {
   /** contents.id da guia → { contents, view, window, side, openedAt, ready } */
@@ -202,7 +321,7 @@ function createDevtoolsDocks({
     let releasing = null;
     if (known) {
       if (known.side === wanted) return known;
-      // Direita ↔ embaixo: a mesma view, o frontend só reorganiza os painéis.
+      // Direita ↔ embaixo: a mesma view, só a área da casca muda.
       if (known.view && wanted !== "window") {
         known.side = wanted;
         void run(contents, "side");
@@ -219,6 +338,10 @@ function createDevtoolsDocks({
       openedAt: now(),
       opened: false,
       ready: null,
+      token: randomToken(),
+      device: false,
+      pageBounds: null,
+      panelSize: null,
     };
     docks.set(contents.id, dock);
     if (wanted === "window") {
@@ -243,6 +366,10 @@ function createDevtoolsDocks({
       } catch {
         // Nada anexado.
       }
+      // Solto ("undocked"), o DevTools abre uma janela própria para o modo dispositivo
+      // (device_mode_emulation_frame.html), que aparecia por cima do app. Aqui o modo
+      // dispositivo encaixa o frontend (ver o topo do arquivo) e não usa essa janela.
+      fe.setWindowOpenHandler(() => ({ action: "deny" }));
       fe.on("before-input-event", (event, input) => {
         const action = dockKeyAction(input);
         if (!action) return;
@@ -252,10 +379,20 @@ function createDevtoolsDocks({
       fe.once("destroyed", () => {
         if (docks.get(contents.id) === dock) forget(contents);
       });
+      fe.on("console-message", (event) => {
+        const message = parseHookMessage(event?.message, dock.token);
+        if (!message || docks.get(contents.id) !== dock) return;
+        if (message.kind === "device") {
+          dock.device = message.value === true;
+          dock.panelSize = null;
+        } else if (message.kind === "bounds") dock.pageBounds = validBounds(message.value);
+        onLayout(contents);
+      });
       dock.view = view;
       if (window && !window.isDestroyed()) window.contentView.addChildView(view);
       contents.setDevToolsWebContents(fe);
       contents.openDevTools({ mode: wanted, activate: false });
+      void run(contents, "hook");
     }
     wire(contents);
     notify(contents, true, wanted);
@@ -322,15 +459,27 @@ function createDevtoolsDocks({
   async function run(contents, action) {
     const dock = docks.get(contents?.id);
     if (!dock) return false;
-    const script = frontendScript(action, dock.side);
+    const script = frontendScript(action, {
+      side: dock.side,
+      token: dock.token,
+      size: dock.panelSize,
+    });
     if (!script) return false;
     if (!(await ready(contents))) return false;
-    const fe = dock.view ? frontendOf(dock) : contents.devToolsWebContents;
-    if (!fe || fe.isDestroyed()) return false;
-    try {
-      return Boolean(await fe.executeJavaScript(script, true));
-    } catch {
-      return false;
+    // Logo depois de abrir, os módulos do frontend ainda podem falhar ("No locale data
+    // registered"): tenta de novo até o prazo.
+    const limit = now() + READY_TIMEOUT_MS;
+    for (;;) {
+      if (docks.get(contents.id) !== dock) return false;
+      const fe = dock.view ? frontendOf(dock) : contents.devToolsWebContents;
+      if (!fe || fe.isDestroyed()) return false;
+      try {
+        if (await fe.executeJavaScript(script, true)) return true;
+      } catch {
+        // Frontend ainda iniciando.
+      }
+      if (now() >= limit) return false;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
     }
   }
 
@@ -338,13 +487,39 @@ function createDevtoolsDocks({
    * Põe na área do dock a view da guia à vista (`visible`, um webContents) e esconde as
    * outras da mesma janela. `rect` null esconde todas (aba Terminal, painel por cima).
    */
-  function layout(window, { visible = null, rect = null } = {}) {
+  function layout(window, { visible = null, rect = null, pageRect = null } = {}) {
     const area = validRect(rect);
     for (const dock of docks.values()) {
       if (dock.window !== window || !dock.view) continue;
       const shown = area && visible && dock.contents === visible;
-      dock.view.setBounds(shown ? area : hiddenRect);
+      dock.view.setBounds(shown ? frontendRect(dock, area, validRect(pageRect)) : hiddenRect);
+      // Modo dispositivo: o painel do frontend acompanha o tamanho do dock.
+      const panel = dock.side === "bottom" ? area?.height : area?.width;
+      if (shown && dock.device && panel && dock.panelSize !== panel) {
+        dock.panelSize = panel;
+        void run(dock.contents, "size");
+      }
     }
+  }
+
+  /**
+   * Onde a guia fica no modo dispositivo: nos bounds que o frontend pediu, relativos à
+   * view dele. null fora do modo (a guia segue no retângulo dela); hiddenRect enquanto os
+   * bounds não chegaram.
+   */
+  function pageRect(contents, rect, page) {
+    const dock = docks.get(contents?.id);
+    const area = validRect(rect);
+    const own = validRect(page);
+    if (!dock?.view || !dock.device || !area || !own) return null;
+    if (!dock.pageBounds) return hiddenRect;
+    const front = frontendRect(dock, area, own);
+    return {
+      x: front.x + dock.pageBounds.x,
+      y: front.y + dock.pageBounds.y,
+      width: dock.pageBounds.width,
+      height: dock.pageBounds.height,
+    };
   }
 
   /** A guia vai para outra janela: o DevTools fecha (a view é filha da janela antiga). */
@@ -367,6 +542,8 @@ function createDevtoolsDocks({
     ready,
     layout,
     detachWindow,
+    pageRect,
+    isDevice: (contents) => Boolean(docks.get(contents?.id)?.device),
     isOpen: (contents) => Boolean(contents && docks.has(contents.id)),
     sideOf: (contents) => docks.get(contents?.id)?.side ?? null,
     frontend: (contents) => frontendOf(docks.get(contents?.id)),
@@ -388,7 +565,9 @@ module.exports = {
   createDevtoolsDocks,
   dockKey,
   dockKeyAction,
+  frontendRect,
   frontendScript,
+  parseHookMessage,
   validRect,
   withDock,
 };

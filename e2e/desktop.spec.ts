@@ -5168,6 +5168,16 @@ test("4.8 Fase 1: F12 encaixa o DevTools, iframes, modo dispositivo, mira, termi
         return state.bounds!.x - (tabView.bounds.x + tabView.bounds.width);
       })
       .toBeGreaterThanOrEqual(0);
+    // Solto por dentro: sem a área vazia que o frontend encaixado reserva para a página.
+    await expect
+      .poll(() =>
+        inDevtools<string>(
+          app,
+          page,
+          `import('./ui/legacy/legacy.js').then((UI) => UI.DockController.DockController.instance().dockSide())`,
+        ),
+      )
+      .toBe("undocked");
 
     // Os três iframes aparecem como contextos (seletor de contexto do Console).
     await expect
@@ -5206,6 +5216,24 @@ test("4.8 Fase 1: F12 encaixa o DevTools, iframes, modo dispositivo, mira, termi
     await expect
       .poll(() => inTab<string>(app, page, "navigator.userAgent"), { timeout: 10_000 })
       .toContain("Mobile");
+    // Como no Chrome: o frontend cobre a área da página e a guia fica dentro dele,
+    // estreita (tamanho do aparelho) e afastada da borda (barra "Dimensions" em cima).
+    await expect
+      .poll(
+        async () => {
+          const front = (await devtoolsState(app, page)).bounds!;
+          const tab = (await nativeChildren(app)).find((item) => item.url === page)!.bounds;
+          return (
+            tab.width > 0 &&
+            tab.width < front.width / 2 &&
+            tab.x > front.x &&
+            tab.y > front.y &&
+            tab.x + tab.width <= front.x + front.width
+          );
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
     await window.evaluate(
       (id) => (window as unknown as V48Bridge).agzosDesktop.devtools(id, "device"),
       tabId,
@@ -5221,6 +5249,16 @@ test("4.8 Fase 1: F12 encaixa o DevTools, iframes, modo dispositivo, mira, termi
         { timeout: 10_000 },
       )
       .toContain("Google Chrome");
+    // Nenhuma janela solta do DevTools (device_mode_emulation_frame) no caminho.
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+    // Fora do modo, o dock volta a ser compacto ao lado da página.
+    await expect
+      .poll(async () => {
+        const front = (await devtoolsState(app, page)).bounds!;
+        const tab = (await nativeChildren(app)).find((item) => item.url === page)!.bounds;
+        return front.x - (tab.x + tab.width);
+      })
+      .toBeGreaterThanOrEqual(0);
 
     // Aba Terminal: o frontend sai da área e o terminal da janela entra no lugar.
     await dock.getByRole("tab", { name: "Terminal" }).click();
