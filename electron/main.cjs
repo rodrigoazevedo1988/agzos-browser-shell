@@ -103,6 +103,14 @@ const { createNetCapture, sendRequest } = require("./scratchpad.cjs");
 const { POPUP_MEASURE, createExtensions, popupPlacement } = require("./extensions.cjs");
 const { createTooltip } = require("./tooltip.cjs");
 const { captureFileName, imageFileName, isPngDataUrl } = require("./capture.cjs");
+const { probeCapabilities, versionKey } = require("./capabilities.cjs");
+const {
+  FLAG_NAMES,
+  buildFlagsOf,
+  parseFlagList,
+  resolveFlags,
+  withUserFlag,
+} = require("./feature-flags.cjs");
 const {
   CLI_TOOLS,
   agentProgram,
@@ -4932,6 +4940,19 @@ function registerIpc() {
   ipcMain.handle("pdf:session-end", (_event, { id } = {}) => pdfService().endSession(id));
   ipcMain.handle("pdf:ocr-asset", (_event, { name } = {}) => pdfService().ocrAsset(name));
   ipcMain.handle("pdf:ocr-languages", () => pdfService().ocrLanguages());
+
+  // 4.8 (Fase 0): flags por bloco e capacidades medidas do runtime.
+  ipcMain.handle("flags:get", () => featureFlags());
+  ipcMain.handle("flags:set", (_event, { name, value } = {}) => {
+    if (!FLAG_NAMES.includes(name) || (value !== null && typeof value !== "boolean")) {
+      return featureFlags();
+    }
+    database?.setMeta("featureFlags", withUserFlag(database.getMeta("featureFlags"), name, value));
+    const flags = featureFlags();
+    broadcast("agzos:flags", flags);
+    return flags;
+  });
+  ipcMain.handle("capabilities:get", () => runtimeCapabilities());
   ipcMain.handle("pdf:ocr-download", (_event, { lang } = {}) =>
     pdfService().downloadLanguage(String(lang ?? "")),
   );
@@ -6656,6 +6677,95 @@ function openStateDatabase() {
   }
 }
 
+// --- 4.8 (Fase 0): flags por bloco e capacidades medidas do runtime. ---
+
+// A sonda roda alguns segundos depois de abrir, para não disputar o início com as janelas.
+const CAPABILITY_DELAY_MS = 5000;
+// Partição em memória: a sonda nunca toca os cookies nem o cache da sessão padrão.
+const CAPABILITY_PARTITION = "agzos-capabilities";
+let capabilitiesRun = null;
+let buildFlags = null;
+
+function capabilitiesFile() {
+  return path.join(app.getPath("userData"), "capabilities.json");
+}
+
+/** As capacidades gravadas, se foram medidas neste mesmo Electron/Chromium. */
+function savedCapabilities() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(capabilitiesFile(), "utf8"));
+    return saved?.key === versionKey(process.versions) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * WebContents solta, sem janela e sem offscreen: printToPDF e CDP não precisam pintar.
+ * Offscreen derrubou o main (SIGSEGV) com a camada dos menus aberta; não voltar a usar.
+ */
+async function openCapabilityProbe(url) {
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: CAPABILITY_PARTITION,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+  const contents = view.webContents;
+  const dispose = () => {
+    if (!contents.isDestroyed()) contents.close();
+  };
+  try {
+    await contents.loadURL(url);
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+  return { contents, dispose };
+}
+
+/** Capacidades do runtime: as gravadas se nada mudou; senão mede uma vez e grava. */
+function runtimeCapabilities() {
+  capabilitiesRun ??= (async () => {
+    const saved = savedCapabilities();
+    if (saved) return saved;
+    const measured = await probeCapabilities({
+      open: openCapabilityProbe,
+      versions: process.versions,
+    });
+    fs.writeFileSync(capabilitiesFile(), `${JSON.stringify(measured, null, 2)}\n`);
+    return measured;
+  })().catch((error) => {
+    console.error("Agzos: não foi possível medir as capacidades do runtime.", error?.message);
+    capabilitiesRun = null;
+    return null;
+  });
+  return capabilitiesRun;
+}
+
+/** Flags do build: `agzosFlags` no package.json que o build-all.sh grava no pacote. */
+function packageFlags() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), "package.json"), "utf8"));
+    return buildFlagsOf(pkg.agzosFlags);
+  } catch {
+    return {};
+  }
+}
+
+function featureFlags() {
+  buildFlags ??= packageFlags();
+  return resolveFlags({
+    build: buildFlags,
+    user: database?.getMeta("featureFlags") ?? {},
+    // AGZOS_FLAGS só vale fora do pacote (testes e desenvolvimento).
+    env: app.isPackaged ? {} : parseFlagList(process.env.AGZOS_FLAGS),
+  });
+}
+
 // --- Barra de menus do Mac: o lugar de "Preferências…" (⌘,) e de Editar (⌘C/⌘V). ---
 
 /** Comando da casca (commands.ts) na janela em foco; abre uma janela se não houver. */
@@ -6893,6 +7003,10 @@ app.whenReady().then(() => {
     if (!contexts.size) createWindow();
   }
   startup = { ...startup, early: startup.early && startup.restoredWindows > 0 };
+  setTimeout(
+    () => void runtimeCapabilities(),
+    Number(process.env.AGZOS_CAPABILITY_DELAY_MS) || CAPABILITY_DELAY_MS,
+  ).unref();
   if (!launchPwa) {
     openSystemFiles([...pendingSystemFiles, ...filesOfArgv(process.argv)]);
     pendingSystemFiles.length = 0;

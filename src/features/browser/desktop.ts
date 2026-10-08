@@ -1,4 +1,5 @@
 import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
+import type { DesktopV48 } from "./desktop-v48";
 import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
 import type { PanelKind } from "./overlay/panels";
@@ -472,7 +473,10 @@ export type WidevineStatus = {
   version: string | null;
 };
 
-export type DesktopBridge = DesktopV47 & {
+/** Pontes de cada versão que ficam em arquivos à parte (só pelo tamanho). */
+type DesktopExtras = DesktopV47 & DesktopV48;
+
+export type DesktopBridge = DesktopExtras & {
   attachTab(
     id: number,
     url: string,

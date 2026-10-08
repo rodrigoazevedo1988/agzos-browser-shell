@@ -1,6 +1,6 @@
 {
   "name": "tanstack_start_ts",
-  "version": "4.7.2",
+  "version": "4.8.0",
   "dependencies": {
     "@cantoo/pdf-lib": "^2.11.1",
     "@hookform/resolvers": "^5.2.2",

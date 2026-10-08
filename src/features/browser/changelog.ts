@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.0",
+    date: "2026-10-08",
+    items: [
+      "Base do DevTools e do novo motor de impressão: o app agora mede o que esta versão do Chromium suporta (PDF com tags e sumário para leitores de tela, comandos do depurador nas guias) e guarda o resultado no perfil. É o que permite ligar o DevTools integrado e a impressão da página inteira nas próximas versões sem depender de suposições.",
+      "Recursos novos podem ser ligados ou desligados um a um (DevTools, proteção de impressão, captura por rolagem, Copilot de depuração, Rewind e modo quiosque). DevTools e proteção de impressão já nascem ligados; os demais ficam desligados até ficarem prontos.",
+    ],
+  },
+  {
     version: "4.7.2",
     date: "2026-10-04",
     items: [

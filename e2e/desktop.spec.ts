@@ -4997,3 +4997,90 @@ test("4.7: PDF Tools comprime as imagens (antes/depois) no worker", async () => 
     await app.close();
   }
 });
+
+test("4.8 Fase 0: capacidades gravadas, CDP na guia ativa, flags e cookies intactos", async () => {
+  const profile = tempProfile();
+  const file = path.join(profile, "capabilities.json");
+  const env = { AGZOS_CAPABILITY_DELAY_MS: "200", AGZOS_FLAGS: "kiosk=1" };
+  let { app, window } = await launch(profile, env);
+  try {
+    await go(window, `${origin}/a`);
+    await expect(tabs(window).first()).toContainText("Página A");
+    // Cookie da sessão padrão antes da sonda: ela usa uma partição em memória à parte.
+    await inTab(app, `${origin}/a`, `document.cookie = "agzos_fase0=1; max-age=3600"`);
+
+    await expect.poll(() => fs.existsSync(file), { timeout: 30_000 }).toBe(true);
+    const caps = JSON.parse(fs.readFileSync(file, "utf8"));
+    const versions = await app.evaluate(() => process.versions);
+    expect(caps.versions.electron).toBe(versions.electron);
+    expect(caps.versions.chrome).toBe(versions.chrome);
+    expect(caps.cdp.runtimeEvaluate).toBe(true);
+    expect(caps.printToPdf.available).toBe(true);
+    expect(typeof caps.printToPdf.taggedPdf).toBe("boolean");
+    expect(typeof caps.cdpPrintToPdf.returnAsStream).toBe("boolean");
+    expect(caps.capture).toEqual({ measured: false, maxHeight: 0, safeCap: 32767 });
+    // A casca lê o mesmo resultado pela ponte.
+    const fromBridge = await window.evaluate(() =>
+      (
+        window as unknown as { agzosDesktop: { runtimeCapabilities(): Promise<{ key: string }> } }
+      ).agzosDesktop.runtimeCapabilities(),
+    );
+    expect(fromBridge.key).toBe(caps.key);
+
+    // Runtime.evaluate no depurador que a guia ativa já tem (identidade de Chrome).
+    const evaluated = await app.evaluate(async ({ webContents }, url) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)!;
+      const reply = await contents.debugger.sendCommand("Runtime.evaluate", {
+        expression: "document.title",
+        returnByValue: true,
+      });
+      return { attached: contents.debugger.isAttached(), title: reply.result.value };
+    }, `${origin}/a`);
+    expect(evaluated).toEqual({ attached: true, title: "Página A" });
+
+    const cookies = await app.evaluate(async ({ session }, url) => {
+      const own = await session.defaultSession.cookies.get({ url, name: "agzos_fase0" });
+      const probe = await session.fromPartition("agzos-capabilities").cookies.get({});
+      return { own: own.length, probe: probe.length };
+    }, origin);
+    expect(cookies).toEqual({ own: 1, probe: 0 });
+
+    type Bridge = {
+      agzosDesktop: {
+        featureFlags(): Promise<Record<string, boolean>>;
+        setFeatureFlag(name: string, value: boolean | null): Promise<Record<string, boolean>>;
+      };
+    };
+    const flags = await window.evaluate(() =>
+      (window as unknown as Bridge).agzosDesktop.featureFlags(),
+    );
+    expect(flags).toMatchObject({
+      devtools: true,
+      print_shield: true,
+      copilot: false,
+      kiosk: true,
+    });
+    const changed = await window.evaluate(() =>
+      (window as unknown as Bridge).agzosDesktop.setFeatureFlag("copilot", true),
+    );
+    expect(changed.copilot).toBe(true);
+  } finally {
+    await app.close();
+  }
+
+  // Reabrir: a escolha do usuário fica e a sonda não mede de novo no mesmo Electron.
+  const measuredAt = JSON.parse(fs.readFileSync(file, "utf8")).measuredAt;
+  ({ app, window } = await launch(profile, env));
+  try {
+    const flags = await window.evaluate(() =>
+      (
+        window as unknown as { agzosDesktop: { featureFlags(): Promise<Record<string, boolean>> } }
+      ).agzosDesktop.featureFlags(),
+    );
+    expect(flags.copilot).toBe(true);
+    await window.waitForTimeout(1500);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).measuredAt).toBe(measuredAt);
+  } finally {
+    await app.close();
+  }
+});

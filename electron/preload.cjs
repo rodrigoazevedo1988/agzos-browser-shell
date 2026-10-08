@@ -272,6 +272,11 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   pdfPasswordRemember: (fingerprint, password) =>
     ipcRenderer.invoke("pdf:password-remember", { fingerprint, password }),
   pdfPasswordForget: (fingerprint) => ipcRenderer.invoke("pdf:password-forget", { fingerprint }),
+  // 4.8 (Fase 0): flags por bloco e capacidades do runtime.
+  featureFlags: () => ipcRenderer.invoke("flags:get"),
+  setFeatureFlag: (name, value) => ipcRenderer.invoke("flags:set", { name, value }),
+  runtimeCapabilities: () => ipcRenderer.invoke("capabilities:get"),
+  onFeatureFlags: subscribe("agzos:flags"),
   onPdfOpen: subscribe("agzos:pdf-open"),
   onPdfProgress: subscribe("agzos:pdf-progress"),
 });
