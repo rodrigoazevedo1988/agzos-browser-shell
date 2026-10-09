@@ -5403,3 +5403,53 @@ test("4.8 Fase 1: F12 encaixa o DevTools, iframes, modo dispositivo, mira, termi
     await app.close();
   }
 });
+
+test("4.8.3: modo app do PWA abre só a janela do app, com perfil próprio, e sai junto com ela", async () => {
+  const profile = tempProfile();
+  const id = "0123456789abcdef";
+  // Login de quando o app rodava dentro do navegador: vem junto para o perfil do app.
+  const before = path.join(profile, "Partitions", `pwa-${id}`);
+  fs.mkdirSync(before, { recursive: true });
+  fs.writeFileSync(path.join(before, "agzos-teste.txt"), "login");
+  const marker = path.join(profile, "agzos-pwa.json");
+  fs.writeFileSync(
+    marker,
+    JSON.stringify({
+      schema: 1,
+      id,
+      name: "Agzos Teste PWA",
+      startUrl: `${origin}/pwa/`,
+      scope: `${origin}/pwa/`,
+      origin,
+      version: "teste",
+      agzosApp: null,
+      userData: profile,
+    }),
+  );
+  const app = await electron.launch({
+    args: ["--no-sandbox", root],
+    cwd: root,
+    env: { ...process.env, AGZOS_USER_DATA: profile, AGZOS_TEST_PWA_HOST: marker },
+  });
+  const closed = new Promise<void>((resolve) => app.on("close", () => resolve()));
+  const window = await app.firstWindow();
+  await expect.poll(() => window.url()).toBe(`${origin}/pwa/`);
+  await expect(window).toHaveTitle("App PWA");
+  const state = await app.evaluate(({ app: electronApp, BrowserWindow, webContents }) => ({
+    userData: electronApp.getPath("userData"),
+    windows: BrowserWindow.getAllWindows().length,
+    shells: webContents
+      .getAllWebContents()
+      .filter((contents) => /index\.html|overlay\.html/.test(contents.getURL())).length,
+  }));
+  expect(state).toEqual({ userData: path.join(profile, "PwaApps", id), windows: 1, shells: 0 });
+  expect(
+    fs.readFileSync(
+      path.join(profile, "PwaApps", id, "Partitions", `pwa-${id}`, "agzos-teste.txt"),
+      "utf8",
+    ),
+  ).toBe("login");
+  // Fechar a janela encerra o app (o navegador não fica aberto atrás).
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  await closed;
+});

@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.3",
+    date: "2026-10-09",
+    items: [
+      "No Mac, cada app instalado (PWA) agora é um aplicativo de verdade: tem o próprio ícone e nome no Dock, aparece separado no ⌘Tab e no Mission Control, e continua aberto quando você fecha o navegador. Antes ele abria como mais uma janela do Agzos, com o ícone do navegador.",
+      "Os apps que você já tinha são convertidos sozinhos na primeira vez que o navegador abre nesta versão, e o login de cada um vem junto. Links para fora do app continuam abrindo numa guia do Agzos.",
+      "Dá para voltar ao jeito antigo em Configurações → Apps instalados → “Cada app com ícone próprio no Dock”. No Windows e no Linux nada muda.",
+    ],
+  },
+  {
     version: "4.8.2",
     date: "2026-10-08",
     items: [

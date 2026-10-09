@@ -43,6 +43,26 @@
 
 Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
+### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
+
+**4.8.3** (2026-10-09) — `docs/pwa-macos.md`
+
+- PWA no macOS vira app próprio: o `.app` em `~/Applications/Agzos Apps` é um clone APFS do `Agzos Browser.app` (`cp -c`) com `CFBundleIdentifier` `br.agzos.browser.pwa.<id>`, nome e ícone do PWA e assinatura ad-hoc local. Dock, ⌘Tab e Mission Control mostram o app separado; ele sobrevive ao ⌘Q do navegador.
+- Modo app no main (`pwaHost`, `electron/pwa-mac.cjs`): marcador `Contents/Resources/agzos-pwa.json`, perfil `<userData>/PwaApps/<id>` (lock e banco próprios), só a janela do app, sai quando ela fecha. A partição `pwa-<id>` antiga é copiada uma vez. Links fora do escopo vão ao navegador por `--agzos-open=<url>`.
+- Apps antigos (lançador em script) e clones de outra versão são remontados ao abrir o navegador (`refreshMacPwaApps`). Flag `pwa_mac_apps` (ligada); Windows e Linux sem mudança.
+
+**4.8.2** (2026-10-08)
+
+- DevTools compacto (frontend `undocked`, sem área vazia) e modo dispositivo como no Chrome (`setInspectedPageBounds` + `setSidebarSize`).
+
+**4.8.1** (2026-10-08) — Fase 1 do PRD v4.8
+
+- DevTools do Chromium encaixado por guia (`electron/devtools-dock.cjs`), integrado à mira, ao menu Inspecionar e ao terminal.
+
+**4.8.0** (2026-10-08) — Fase 0 do PRD v4.8
+
+- Capacidades medidas do runtime (`electron/capabilities.cjs`) e flags por bloco (`electron/feature-flags.cjs`).
+
 ### 4.7.x — Downloads, tema por site, ColorTools e PDF Tools
 
 **4.7.2** (2026-10-04)

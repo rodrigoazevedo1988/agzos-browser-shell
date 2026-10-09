@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { desktopBridge, type InstalledPwa, type PwaReason } from "@/features/browser/desktop";
+import type { FeatureFlags } from "@/features/browser/desktop-v48";
+import { Toggle } from "@/features/ui/toggle";
 
 /** Por que o site não virou app, em palavras. */
 function pwaReasonText(reason: PwaReason) {
@@ -118,6 +120,14 @@ function TryInstall({ siteTabs }: { siteTabs: SiteTab[] }) {
 export function InstalledAppsSetting({ siteTabs = [] }: { siteTabs?: SiteTab[] }) {
   const desktop = desktopBridge();
   const [apps, setApps] = useState<InstalledPwa[] | null>(null);
+  // 4.8.3: no Mac cada app vira um aplicativo próprio (flag pwa_mac_apps).
+  const isMac = /mac/i.test(navigator.platform);
+  const [flags, setFlags] = useState<FeatureFlags | null>(null);
+  useEffect(() => {
+    if (!desktop || !isMac) return;
+    void desktop.featureFlags().then(setFlags);
+    return desktop.onFeatureFlags(setFlags);
+  }, [desktop, isMac]);
   const load = useCallback(() => {
     void desktop?.pwaList().then(setApps);
   }, [desktop]);
@@ -135,6 +145,15 @@ export function InstalledAppsSetting({ siteTabs = [] }: { siteTabs?: SiteTab[] }
         › Agzos Apps) ou no menu de aplicativos. Login, zoom e permissões dele ficam separados das
         guias do mesmo site.
       </p>
+      {isMac && (
+        <Toggle
+          label="Cada app com ícone próprio no Dock"
+          hint="O app vira um aplicativo do macOS, separado do navegador no Dock, no ⌘Tab e no Mission Control. Desligado, abre como janela do navegador."
+          checked={flags?.pwa_mac_apps ?? true}
+          disabled={flags === null}
+          onChange={(value) => void desktop.setFeatureFlag("pwa_mac_apps", value).then(setFlags)}
+        />
+      )}
       <TryInstall siteTabs={siteTabs} />
       <ul className="terminal-list pwa-list" aria-label="Apps instalados">
         {apps?.map((app) => (

@@ -3,7 +3,7 @@
  * (electron/feature-flags.cjs, electron/capabilities.cjs).
  */
 export type FeatureFlagName =
-  "devtools" | "print_shield" | "scroll_stitch" | "copilot" | "rewind" | "kiosk";
+  "devtools" | "print_shield" | "scroll_stitch" | "copilot" | "rewind" | "kiosk" | "pwa_mac_apps";
 
 export type FeatureFlags = Record<FeatureFlagName, boolean>;
 

@@ -11,6 +11,8 @@ const FLAG_DEFAULTS = Object.freeze({
   copilot: false,
   rewind: false,
   kiosk: false,
+  // 4.8.3: no macOS cada PWA instalado vira um app próprio (ícone no Dock, Cmd+Tab).
+  pwa_mac_apps: true,
 });
 
 const FLAG_NAMES = Object.keys(FLAG_DEFAULTS);

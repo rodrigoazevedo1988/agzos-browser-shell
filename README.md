@@ -94,7 +94,7 @@ casca única, com tema escuro ou claro e efeito de vidro.
       <ul>
         <li>Modo leitura com um ícone de caderno na barra de URL, que só aparece quando a página tem artigo</li>
         <li>Notas por página em markdown, captura de tela (guia, região ou janela) e salvar imagem já carregada</li>
-        <li>Instalar sites como app (PWA) e abrir qualquer arquivo numa guia</li>
+        <li>Instalar sites como app (PWA), com ícone próprio no Dock do Mac, e abrir qualquer arquivo numa guia</li>
       </ul>
     </td>
   </tr>
@@ -277,6 +277,7 @@ publicação atualiza o `latest.json` que o app consulta. Cada versão ganha uma
 ## ✦ Documentação
 
 - [Login do Google no app desktop](docs/login-google-desktop.md): a identidade de Chrome e como testar
+- [PWA como app próprio no macOS](docs/pwa-macos.md): arquitetura, roteiro de teste e limitações
 - [Roadmap Opera/Vivaldi](docs/roadmap-opera-vivaldi.md): diagnóstico e evolução por fases
 - PRDs por versão em [`docs/prd/`](docs/prd/), por exemplo:
   - [4.6: extensões em pop-up, leitura na barra de URL e ferramentas sem repetição](docs/prd/v4.6-extensoes-popup-leitura-barra.md)

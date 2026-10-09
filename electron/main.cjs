@@ -151,6 +151,16 @@ const {
   shortcutPaths,
   writeMacBundle,
 } = require("./pwa.cjs");
+const {
+  appBundleOf,
+  buildMacPwaApp,
+  hostUserData,
+  markerPathOf,
+  needsRebuild,
+  openArgOf,
+  pwaMarker,
+  readMarker,
+} = require("./pwa-mac.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -171,6 +181,34 @@ if (process.platform === "win32") app.setAppUserModelId("br.agzos.browser");
 
 // Testes e2e isolam o perfil numa pasta temporária.
 if (process.env.AGZOS_USER_DATA) app.setPath("userData", process.env.AGZOS_USER_DATA);
+
+// 4.8.3: este processo é o .app de um PWA (clone do Agzos com o marcador agzos-pwa.json,
+// ver pwa-mac.cjs)? Então roda em "modo app": perfil próprio dentro do perfil do
+// navegador, só a janela do app, sai quando ela fecha. Fora do pacote, os testes apontam
+// o marcador por AGZOS_TEST_PWA_HOST.
+const pwaHost = (() => {
+  const bundle =
+    process.platform === "darwin" && app.isPackaged ? appBundleOf(process.execPath) : null;
+  const file = bundle
+    ? markerPathOf(bundle)
+    : !app.isPackaged && process.env.AGZOS_TEST_PWA_HOST
+      ? process.env.AGZOS_TEST_PWA_HOST
+      : null;
+  return file ? readMarker(file, fs) : null;
+})();
+if (pwaHost) {
+  const dir = hostUserData(pwaHost.userData, pwaHost.id);
+  // Login de antes (o app rodava dentro do navegador): a partição vem junto uma vez.
+  const before = path.join(pwaHost.userData, "Partitions", `pwa-${pwaHost.id}`);
+  const after = path.join(dir, "Partitions", `pwa-${pwaHost.id}`);
+  try {
+    if (!fs.existsSync(after) && fs.existsSync(before))
+      fs.cpSync(before, after, { recursive: true });
+  } catch (error) {
+    console.error("Agzos: login anterior do app não copiado.", error?.message);
+  }
+  app.setPath("userData", dir);
+}
 
 // Aceleração de hardware (4.0): flags da GPU e do decode de vídeo antes do ready (depois
 // dele o processo da GPU já subiu). Precisa do userData definido (estado em disco).
@@ -6318,10 +6356,20 @@ async function installPwa(ctx, tabId) {
     bounds: null,
     zoom: 0,
   };
-  try {
-    record.shortcuts = writePwaShortcuts(record, image);
-  } catch (error) {
-    console.error("Agzos: atalho do app não gravado.", error?.message);
+  // Mac (4.8.3): app próprio (clone do Agzos); se a montagem falhar, o lançador de antes.
+  if (macPwaAppsOn()) {
+    try {
+      record.shortcuts = await writeMacPwaApp(record, image);
+    } catch (error) {
+      console.error("Agzos: app próprio do PWA não montado.", error?.message);
+    }
+  }
+  if (!record.shortcuts.bundle) {
+    try {
+      record.shortcuts = writePwaShortcuts(record, image);
+    } catch (error) {
+      console.error("Agzos: atalho do app não gravado.", error?.message);
+    }
   }
   pwaStore.put(record);
   broadcast("agzos:pwa-changed", {});
@@ -6351,7 +6399,14 @@ async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
   const win = pwaWindows.get(id);
   if (win && !win.isDestroyed()) win.destroy();
   pwaWindows.delete(id);
+  // Mac (4.8.3): o app próprio fecha antes de o bundle e o perfil dele saírem.
+  await quitMacPwa(record);
   removePwaShortcuts(record);
+  try {
+    fs.rmSync(hostUserData(app.getPath("userData"), id), { recursive: true, force: true });
+  } catch {
+    // Arquivo preso: sai na próxima desinstalação.
+  }
   try {
     fs.rmSync(pwaDir(id), { recursive: true, force: true });
   } catch {
@@ -6447,6 +6502,10 @@ function wirePwaSession(ses, id) {
 
 /** Abre um endereço numa guia do navegador (abre uma janela se só houver apps). */
 function openInBrowser(url) {
+  if (pwaHost) {
+    openInBrowserFromHost(url);
+    return;
+  }
   const ctx = lastFocused ?? [...contexts.values()][0] ?? null;
   if (ctx) {
     send(ctx, "agzos:open-request", { url });
@@ -6477,6 +6536,11 @@ function bringPwaForward(win) {
 function openPwaWindow(id, url = null) {
   const record = pwaStore?.get(id);
   if (!record) return false;
+  const bundle = macPwaBundle(record);
+  if (bundle) {
+    launchMacPwa(bundle);
+    return true;
+  }
   const current = pwaWindows.get(id);
   if (current && !current.isDestroyed()) {
     if (url) void current.webContents.loadURL(url).catch(() => {});
@@ -6620,16 +6684,232 @@ function openPwaWindow(id, url = null) {
       { type: "separator" },
       { label: "Copiar endereço da página", click: () => clipboard.writeText(contents.getURL()) },
       { label: "Abrir no Agzos Browser", click: () => openInBrowser(contents.getURL()) },
-      { type: "separator" },
-      {
-        label: `Desinstalar ${record.name}…`,
-        click: () => void uninstallPwa(id, { parent: win }),
-      },
     );
+    // No modo app quem desinstala é o navegador (ele tem o registro e o atalho).
+    if (!pwaHost) {
+      items.push(
+        { type: "separator" },
+        {
+          label: `Desinstalar ${record.name}…`,
+          click: () => void uninstallPwa(id, { parent: win }),
+        },
+      );
+    }
     Menu.buildFromTemplate(items).popup({ window: win });
   });
   void contents.loadURL(url ?? record.startUrl).catch(() => {});
   return true;
+}
+
+// --- 4.8.3: PWA como app próprio no macOS (pwa-mac.cjs) ---
+
+/** O Agzos Browser.app deste processo (só no pacote: em dev não há bundle para clonar). */
+const agzosAppBundle =
+  process.platform === "darwin" && app.isPackaged ? appBundleOf(process.execPath) : null;
+
+function runFile(file, args) {
+  return new Promise((resolve, reject) => {
+    require("node:child_process").execFile(file, args, { timeout: 120_000 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout),
+    );
+  });
+}
+
+/** Mac com a flag ligada e no navegador (não no app de um PWA). */
+function macPwaAppsOn() {
+  return Boolean(agzosAppBundle && !pwaHost && featureFlags().pwa_mac_apps);
+}
+
+/** O .app próprio do PWA, se já foi montado como clone (senão, janela no navegador). */
+function macPwaBundle(record) {
+  if (!macPwaAppsOn()) return null;
+  const bundle = record.shortcuts?.bundle;
+  return bundle && readMarker(markerPathOf(bundle), fs)?.id === record.id ? bundle : null;
+}
+
+/** Abre (ou traz para a frente, se já aberto) o app do PWA pelo LaunchServices. */
+function launchMacPwa(bundle) {
+  require("node:child_process").execFile("/usr/bin/open", ["-a", bundle], (error) => {
+    if (error) console.error("Agzos: o app do PWA não abriu.", error.message);
+  });
+}
+
+/** Monta o .app do PWA (clone do Agzos) e devolve os atalhos gravados. */
+async function writeMacPwaApp(record, image, target = null) {
+  const dir = pwaDir(record.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "icon.png"), pngOf(image, 256));
+  const bundle =
+    target ??
+    shortcutPaths({
+      platform: "darwin",
+      home: integrationHome(),
+      env: process.env,
+      name: record.name,
+      id: record.id,
+    }).bundle;
+  await buildMacPwaApp({
+    source: agzosAppBundle,
+    target: bundle,
+    marker: pwaMarker(record, {
+      version: app.getVersion(),
+      agzosApp: agzosAppBundle,
+      userData: app.getPath("userData"),
+    }),
+    icns: icnsFromPngs([32, 64, 128, 256, 512].map((size) => ({ size, png: pngOf(image, size) }))),
+    run: runFile,
+    fs,
+  });
+  return { bundle };
+}
+
+/**
+ * Ao abrir o navegador: refaz os apps montados por outra versão (o clone leva o Electron
+ * daquela versão) e converte os lançadores antigos (script que abria o navegador).
+ */
+async function refreshMacPwaApps() {
+  for (const record of pwaStore?.list() ?? []) {
+    if (!macPwaAppsOn()) return;
+    const target = record.shortcuts?.bundle;
+    if (!target) continue;
+    const marker = readMarker(markerPathOf(target), fs);
+    if (
+      !needsRebuild(marker, {
+        version: app.getVersion(),
+        agzosApp: agzosAppBundle,
+        name: record.name,
+      })
+    ) {
+      continue;
+    }
+    const image = nativeImage.createFromPath(path.join(pwaDir(record.id), "icon.png"));
+    if (image.isEmpty()) continue;
+    try {
+      await writeMacPwaApp(record, image, target);
+    } catch (error) {
+      console.error(`Agzos: app do PWA ${record.id} não remontado.`, error?.message);
+    }
+  }
+}
+
+/** Fecha o app de um PWA que vai ser desinstalado (processos do executável do clone). */
+async function quitMacPwa(record) {
+  const bundle = record.shortcuts?.bundle;
+  if (process.platform !== "darwin" || !bundle) return;
+  const pattern = `${bundle}/Contents/MacOS/`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let pids = [];
+  try {
+    pids = String(await runFile("/usr/bin/pgrep", ["-f", pattern]))
+      .split(/\s+/)
+      .map(Number)
+      .filter((pid) => Number.isSafeInteger(pid) && pid > 1 && pid !== process.pid);
+  } catch {
+    return; // Nenhum processo (pgrep sai com 1).
+  }
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Já saiu.
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+}
+
+/** No app de um PWA: entrega o link ao navegador (abre o Agzos se estiver fechado). */
+function openInBrowserFromHost(url) {
+  if (!/^https?:/i.test(url)) return;
+  if (process.platform === "darwin" && pwaHost.agzosApp) {
+    const args = ["-n", "-a", pwaHost.agzosApp, "--args", `--agzos-open=${url}`];
+    require("node:child_process").execFile("/usr/bin/open", args, (error) => {
+      if (error) void shell.openExternal(url);
+    });
+    return;
+  }
+  void shell.openExternal(url);
+}
+
+/** Barra de menus do app de um PWA: Editar (⌘C/⌘V), Ver (zoom, recarregar) e Janela. */
+function pwaHostMenu(name) {
+  return [
+    {
+      label: name,
+      submenu: [
+        { role: "hide", label: `Ocultar ${name}` },
+        { role: "hideOthers", label: "Ocultar outros" },
+        { role: "unhide", label: "Mostrar tudo" },
+        { type: "separator" },
+        { role: "quit", label: `Encerrar ${name}` },
+      ],
+    },
+    {
+      label: "Editar",
+      submenu: [
+        { role: "undo", label: "Desfazer" },
+        { role: "redo", label: "Refazer" },
+        { type: "separator" },
+        { role: "cut", label: "Recortar" },
+        { role: "copy", label: "Copiar" },
+        { role: "paste", label: "Colar" },
+        { role: "selectAll", label: "Selecionar tudo" },
+      ],
+    },
+    {
+      label: "Ver",
+      submenu: [
+        { role: "reload", label: "Recarregar" },
+        { type: "separator" },
+        { role: "togglefullscreen", label: "Tela cheia" },
+      ],
+    },
+    {
+      label: "Janela",
+      role: "window",
+      submenu: [
+        { role: "minimize", label: "Minimizar" },
+        { role: "zoom", label: "Zoom" },
+        { role: "close", label: "Fechar" },
+      ],
+    },
+  ];
+}
+
+/** Modo app: perfil próprio, só a janela do PWA; o registro vem do marcador. */
+function startPwaHost() {
+  const host = pwaHost;
+  Menu.setApplicationMenu(
+    process.platform === "darwin" ? Menu.buildFromTemplate(pwaHostMenu(host.name)) : null,
+  );
+  openStateDatabase();
+  // Sem banco, o app abre do mesmo jeito (posição e zoom valem só nesta execução).
+  const memory = new Map();
+  pwaStore = createPwaStore({
+    database: database ?? {
+      getMeta: (key) => memory.get(key),
+      setMeta: (key, value) => memory.set(key, value),
+    },
+  });
+  const saved = pwaStore.get(host.id);
+  pwaStore.put({
+    installedAt: Date.now(),
+    shortcuts: {},
+    bounds: null,
+    zoom: 0,
+    ...saved,
+    id: host.id,
+    name: host.name,
+    startUrl: host.startUrl,
+    scope: host.scope,
+    origin: host.origin,
+    themeColor: host.themeColor,
+    backgroundColor: host.backgroundColor,
+    display: host.display,
+  });
+  // Clique no ícone com o app aberto: a janela vem para a frente (sem outra janela).
+  handleSecondInstance = () => openPwaWindow(host.id);
+  pendingSecondInstances.length = 0;
+  app.on("activate", () => openPwaWindow(host.id));
+  if (!openPwaWindow(host.id)) app.quit();
 }
 
 function pwaIconDataUrl(id) {
@@ -7124,6 +7404,10 @@ function openSavedWindows({ safe = false } = {}) {
 }
 
 app.whenReady().then(() => {
+  if (pwaHost) {
+    startPwaHost();
+    return;
+  }
   // Mac: barra de menus completa (Editar é o que faz ⌘C/⌘V funcionarem nos campos).
   // Windows e Linux: sem barra; o "⋯" da casca faz esse papel.
   if (process.platform === "darwin") {
@@ -7187,12 +7471,29 @@ app.whenReady().then(() => {
     openSystemFiles([...pendingSystemFiles, ...filesOfArgv(process.argv)]);
     pendingSystemFiles.length = 0;
   }
+  // Navegador aberto por um link do app de um PWA (4.8.3): vai para uma guia quando a
+  // casca carregar.
+  const startLink = launchPwa ? null : openArgOf(process.argv);
+  const firstCtx = [...contexts.values()][0];
+  if (startLink && firstCtx) {
+    firstCtx.window.webContents.once("did-finish-load", () =>
+      setTimeout(() => send(firstCtx, "agzos:open-request", { url: startLink }), 800),
+    );
+  }
+  // Apps de PWA no Mac montados por outra versão: refeitos depois do início.
+  if (agzosAppBundle) setTimeout(() => void refreshMacPwaApps(), 4000).unref();
   setInterval(
     () => void checkHibernation(),
     Number(process.env.AGZOS_HIBERNATE_CHECK_MS) || CHECK_INTERVAL_MS,
   ).unref();
   // Segunda execução (atalho de PWA, ícone do app clicado de novo): vem para esta.
   handleSecondInstance = (argv, workingDirectory) => {
+    // Link que o app de um PWA mandou para o navegador (4.8.3).
+    const link = openArgOf(argv);
+    if (link) {
+      openInBrowser(link);
+      return;
+    }
     const id = pwaArgOf(argv);
     // O id veio do atalho: o usuário quer o app do PWA. Se não der para abrir, avisamos
     // em vez de cair no navegador — cair ali é indistinguível de "o PWA abriu numa aba".
@@ -7271,5 +7572,6 @@ app.on("will-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // O app de um PWA fecha junto com a janela dele (como os apps do Chrome).
+  if (pwaHost || process.platform !== "darwin") app.quit();
 });

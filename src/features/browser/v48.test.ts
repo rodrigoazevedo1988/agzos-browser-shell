@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -191,7 +192,7 @@ describe("4.8 Fase 0: capacidades medidas do runtime", () => {
 });
 
 describe("4.8 Fase 0: flags por bloco", () => {
-  it("os seis blocos do PRD, com o núcleo ligado e o resto desligado", () => {
+  it("os seis blocos do PRD, com o núcleo ligado e o resto desligado (e o PWA do Mac)", () => {
     expect(flags.FLAG_DEFAULTS).toEqual({
       devtools: true,
       print_shield: true,
@@ -199,6 +200,7 @@ describe("4.8 Fase 0: flags por bloco", () => {
       copilot: false,
       rewind: false,
       kiosk: false,
+      pwa_mac_apps: true,
     });
   });
 
@@ -489,5 +491,182 @@ describe("4.8 Fase 1: DevTools encaixado (devtools-dock.cjs)", () => {
     // A guia que muda de janela fecha o DevTools antes (a view é filha da janela antiga).
     expect(main).toContain("if (entry) devtoolsDocks.close(entry.view.webContents);");
     expect(main).not.toContain('openDevTools({ mode: "split" })');
+  });
+});
+
+type PwaMarker = {
+  schema: number;
+  id: string;
+  name: string;
+  startUrl: string;
+  scope: string;
+  origin: string;
+  version: string | null;
+  agzosApp: string | null;
+  userData: string;
+};
+
+const pwaMac = require(path.join(root, "electron/pwa-mac.cjs")) as {
+  appBundleOf(execPath: string): string | null;
+  bundleIdOf(id: string): string;
+  displayName(name: unknown): string;
+  hostUserData(base: string, id: string): string;
+  markerPathOf(bundle: string): string;
+  needsRebuild(
+    marker: PwaMarker | null,
+    current: { version: string; agzosApp: string; name: string },
+  ): boolean;
+  openArgOf(argv: unknown): string | null;
+  parseMarker(value: unknown): PwaMarker | null;
+  plistEdits(marker: PwaMarker): [string, string, string][];
+  pwaMarker(
+    record: Record<string, unknown>,
+    options: { version: string; agzosApp: string; userData: string },
+  ): PwaMarker;
+  readMarker(file: string, fsModule: typeof fs): PwaMarker | null;
+  buildMacPwaApp(options: {
+    source: string;
+    target: string;
+    marker: PwaMarker;
+    icns: Buffer;
+    run: (file: string, args: string[]) => Promise<unknown>;
+    fs: typeof fs;
+  }): Promise<string>;
+};
+
+describe("4.8.3: PWA como app próprio no macOS", () => {
+  const id = "0123456789abcdef";
+  const record = {
+    id,
+    name: "  Meu\u0007 App  ",
+    startUrl: "https://app.exemplo.com/inbox/",
+    scope: "https://app.exemplo.com/",
+    origin: "https://app.exemplo.com",
+    themeColor: "#112233",
+    backgroundColor: null,
+    display: "standalone",
+  };
+  const where = {
+    version: "4.8.3",
+    agzosApp: "/Applications/Agzos Browser.app",
+    userData: "/Users/u/Library/Application Support/Agzos Browser",
+  };
+
+  it("marcador: id, nome limpo e URLs validadas; lixo vira null", () => {
+    const marker = pwaMac.pwaMarker(record, where);
+    expect(marker.name).toBe("Meu App");
+    expect(pwaMac.parseMarker(JSON.parse(JSON.stringify(marker)))).toMatchObject({
+      id,
+      name: "Meu App",
+      startUrl: "https://app.exemplo.com/inbox/",
+      origin: "https://app.exemplo.com",
+      agzosApp: where.agzosApp,
+    });
+    expect(pwaMac.parseMarker({ ...marker, id: "../x" })).toBeNull();
+    expect(pwaMac.parseMarker({ ...marker, startUrl: "file:///etc/passwd" })).toBeNull();
+    expect(pwaMac.parseMarker({ ...marker, scope: "https://outro.com/" })).toBeNull();
+    expect(pwaMac.parseMarker({ ...marker, userData: "relativo" })).toBeNull();
+    expect(pwaMac.parseMarker({ ...marker, schema: 2 })).toBeNull();
+    expect(pwaMac.parseMarker({ ...marker, agzosApp: "/bin/sh" })?.agzosApp).toBeNull();
+    expect(pwaMac.displayName("")).toBe("App");
+  });
+
+  it("identidade própria no Info.plist; CFBundleName fica (helpers do Electron)", () => {
+    const edits = pwaMac.plistEdits(pwaMac.pwaMarker(record, where));
+    expect(edits).toContainEqual(["CFBundleIdentifier", "string", `br.agzos.browser.pwa.${id}`]);
+    expect(edits).toContainEqual(["CFBundleDisplayName", "string", "Meu App"]);
+    expect(edits).toContainEqual(["CFBundleIconFile", "string", "pwa"]);
+    expect(edits).toContainEqual(["LSUIElement", "bool", "NO"]);
+    expect(edits.map(([key]) => key)).not.toContain("CFBundleName");
+    expect(pwaMac.bundleIdOf(id)).toBe(`br.agzos.browser.pwa.${id}`);
+  });
+
+  it("caminhos: bundle do executável, perfil do app e marcador", () => {
+    expect(pwaMac.appBundleOf("/Applications/Agzos Browser.app/Contents/MacOS/Agzos Browser")).toBe(
+      "/Applications/Agzos Browser.app",
+    );
+    expect(pwaMac.appBundleOf("/usr/bin/electron")).toBeNull();
+    expect(pwaMac.hostUserData("/perfil", id)).toBe(path.join("/perfil", "PwaApps", id));
+    expect(pwaMac.markerPathOf("/A/X.app")).toBe("/A/X.app/Contents/Resources/agzos-pwa.json");
+  });
+
+  it("refaz o clone quando muda a versão, o lugar do Agzos ou o nome", () => {
+    const marker = pwaMac.pwaMarker(record, where);
+    const same = { version: "4.8.3", agzosApp: where.agzosApp, name: "Meu App" };
+    expect(pwaMac.needsRebuild(marker, same)).toBe(false);
+    expect(pwaMac.needsRebuild(marker, { ...same, version: "4.9.0" })).toBe(true);
+    expect(pwaMac.needsRebuild(marker, { ...same, agzosApp: "/Users/u/Agzos.app" })).toBe(true);
+    expect(pwaMac.needsRebuild(marker, { ...same, name: "Outro" })).toBe(true);
+    expect(pwaMac.needsRebuild(null, same)).toBe(true);
+  });
+
+  it("--agzos-open só aceita http(s)", () => {
+    expect(pwaMac.openArgOf(["x", "--agzos-open=https://a.com/b?c=1"])).toBe("https://a.com/b?c=1");
+    expect(pwaMac.openArgOf(["--agzos-open=javascript:alert(1)"])).toBeNull();
+    expect(pwaMac.openArgOf(["--agzos-open=file:///etc"])).toBeNull();
+    expect(pwaMac.openArgOf(null)).toBeNull();
+  });
+
+  it("monta o clone ao lado e troca no fim, sem shell; falha não deixa bundle pela metade", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-pwamac-"));
+    const source = path.join(dir, "Agzos Browser.app");
+    fs.mkdirSync(path.join(source, "Contents", "Resources"), { recursive: true });
+    fs.writeFileSync(path.join(source, "Contents", "Info.plist"), "<plist/>");
+    const target = path.join(dir, "Apps", "Meu App.app");
+    const calls: [string, string[]][] = [];
+    const run = async (file: string, args: string[]) => {
+      calls.push([file, args]);
+      if (file === "/bin/cp") {
+        if (args[0] === "-Rc") throw new Error("sem clonefile");
+        fs.cpSync(args[1]!, args[2]!, { recursive: true });
+      }
+    };
+    const marker = pwaMac.pwaMarker(record, where);
+    await pwaMac.buildMacPwaApp({ source, target, marker, icns: Buffer.from("icns"), run, fs });
+    expect(pwaMac.readMarker(pwaMac.markerPathOf(target), fs)?.id).toBe(id);
+    expect(fs.readFileSync(path.join(target, "Contents", "Resources", "pwa.icns"), "utf8")).toBe(
+      "icns",
+    );
+    expect(fs.existsSync(`${target}.agzos-tmp`)).toBe(false);
+    const files = calls.map(([file]) => file);
+    expect(files.slice(0, 2)).toEqual(["/bin/cp", "/bin/cp"]);
+    expect(files).toContain("/usr/bin/xattr");
+    expect(calls).toContainEqual([
+      "/usr/bin/codesign",
+      ["--force", "--sign", "-", `${target}.agzos-tmp`],
+    ]);
+    // Nunca --deep: o framework segue clonado (sem reescrever 190 MB por app).
+    expect(calls.flatMap(([, args]) => args)).not.toContain("--deep");
+
+    // Falha na assinatura: o app anterior fica intacto.
+    const failing = async (file: string, args: string[]) => {
+      if (file === "/usr/bin/codesign") throw new Error("codesign");
+      await run(file, args);
+    };
+    await expect(
+      pwaMac.buildMacPwaApp({
+        source,
+        target,
+        marker: { ...marker, name: "Novo" },
+        icns: Buffer.from("x"),
+        run: failing,
+        fs,
+      }),
+    ).rejects.toThrow("codesign");
+    expect(pwaMac.readMarker(pwaMac.markerPathOf(target), fs)?.name).toBe("Meu App");
+    expect(fs.existsSync(`${target}.agzos-tmp`)).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("main: modo app antes do perfil, LaunchServices no Mac e sem janela do navegador", () => {
+    // O perfil do app é trocado antes do lock de instância única e das flags da GPU.
+    expect(main.indexOf('app.setPath("userData", dir)')).toBeLessThan(
+      main.indexOf("requestSingleInstanceLock()"),
+    );
+    expect(main).toContain("if (pwaHost) {\n    startPwaHost();\n    return;\n  }");
+    expect(main).toContain('execFile("/usr/bin/open", ["-a", bundle]');
+    expect(main).toContain('if (pwaHost || process.platform !== "darwin") app.quit();');
+    // O teste só aponta o marcador fora do pacote.
+    expect(main).toContain("!app.isPackaged && process.env.AGZOS_TEST_PWA_HOST");
   });
 });
