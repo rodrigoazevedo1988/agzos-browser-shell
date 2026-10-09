@@ -45,6 +45,12 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
+**4.8.4** (2026-10-09)
+
+- Instalador do Windows (`scripts/windows-installer.nsi`, NSIS gerado no Linux pelo `build-all.sh`, em paralelo com Linux e Mac): por usuário em `%LOCALAPPDATA%\Programs\Agzos Browser`, sem administrador; atalhos na Área de trabalho e no menu Iniciar; entrada em "Programas e Recursos" (HKCU). Nunca toca no perfil (`%APPDATA%`) nem em cópias portáteis; o desinstalador também mantém o perfil.
+- O OTA continua pelo ZIP. O app instalado acerta `DisplayVersion` e o AppUserModelID dos atalhos ao abrir (`electron/win-install.cjs`).
+- Mac assinado com o certificado autoassinado "Rodrigo Dev Local" (SHA-1 fixado) pelo `scripts/sign-mac.sh` (rcodesign, runtime endurecido, `scripts/entitlements.mac.plist`), conferido por `scripts/verify-mac-signature.sh`; a release falha se sair ad-hoc. O updater do Mac exige o mesmo certificado no `.app` novo (`verifyMacBundle`). Clones de PWA assinados com ele quando está nas Chaves (`hasSigningIdentity`). Ver `BUILD.md` e `SECURITY.md`.
+
 **4.8.3** (2026-10-09) — `docs/pwa-macos.md`
 
 - PWA no macOS vira app próprio: o `.app` em `~/Applications/Agzos Apps` é um clone APFS do `Agzos Browser.app` (`cp -c`) com `CFBundleIdentifier` `br.agzos.browser.pwa.<id>`, nome e ícone do PWA e assinatura ad-hoc local. Dock, ⌘Tab e Mission Control mostram o app separado; ele sobrevive ao ⌘Q do navegador.

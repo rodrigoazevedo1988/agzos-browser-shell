@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.4",
+    date: "2026-10-09",
+    items: [
+      "Windows com instalador de verdade: o novo instalador coloca o Agzos em Programas e Recursos (dá para desinstalar por lá), cria os atalhos na Área de trabalho e no menu Iniciar e não pede administrador. As atualizações continuam chegando sozinhas, e a versão mostrada em Programas e Recursos acompanha cada uma.",
+      "Instalar não apaga nada: login, abas, cache e configurações continuam onde estão, e a cópia portátil que você já usa fica intacta. Desinstalar também mantém o perfil.",
+      "Mac: o app agora vem assinado sempre com o mesmo certificado. Depois de clicar em “Permitir sempre” no pedido de senha das Chaves, ele não volta a cada atualização. As atualizações só são instaladas se o app novo vier com essa mesma assinatura.",
+      "Os apps instalados (PWA) no Mac também passam a ser assinados com esse certificado quando ele está nas suas Chaves; sem ele, o Agzos avisa ao instalar.",
+    ],
+  },
+  {
     version: "4.8.3",
     date: "2026-10-09",
     items: [

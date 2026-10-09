@@ -1,8 +1,9 @@
 // PWA como app de verdade no macOS (4.8.3). O .app do PWA é um clone APFS do próprio
 // Agzos Browser.app (cp -c: os blocos são compartilhados, quase não gasta disco) com
 // Info.plist próprio (identificador br.agzos.browser.pwa.<id>, nome e ícone do PWA) e
-// assinatura ad-hoc local. O macOS vê outro app: ícone e nome próprios no Dock, no
-// Cmd+Tab e no Mission Control, e ciclo de vida separado do navegador.
+// assinatura local (4.8.4: com o certificado do Agzos quando ele está nas Chaves deste
+// Mac, senão ad-hoc). O macOS vê outro app: ícone e nome próprios no Dock, no Cmd+Tab e
+// no Mission Control, e ciclo de vida separado do navegador.
 //
 // O clone roda o mesmo código em "modo app" (pwa host): ao abrir, o main lê o marcador
 // Contents/Resources/agzos-pwa.json do próprio bundle, troca o perfil para
@@ -127,6 +128,38 @@ function openArgOf(argv) {
   return httpUrl(value)?.href ?? null;
 }
 
+/**
+ * O certificado fixado (SHA-1) está entre as identidades de assinatura válidas do Mac?
+ * `output` é o de `security find-identity -v -p codesigning`.
+ */
+function hasSigningIdentity(output, sha1) {
+  const want = String(sha1 ?? "").toUpperCase();
+  return (
+    /^[0-9A-F]{40}$/.test(want) &&
+    String(output ?? "")
+      .split("\n")
+      .some((line) => new RegExp(`^\\s*\\d+\\)\\s+${want}\\s`, "i").test(line))
+  );
+}
+
+/**
+ * Argumentos do codesign para o clone: com o certificado do Agzos (o "Permitir sempre" das
+ * Chaves fica valendo entre versões) ou ad-hoc nos Macs sem ele. Runtime endurecido e os
+ * entitlements do app original; o identificador sai do Info.plist do clone.
+ */
+function cloneSignArgs(bundle, identity) {
+  return [
+    "--force",
+    "--sign",
+    identity || "-",
+    "--options",
+    "runtime",
+    "--preserve-metadata=entitlements",
+    "--timestamp=none",
+    bundle,
+  ];
+}
+
 /** Chaves do Info.plist do clone (CFBundleName fica: o Electron acha os helpers por ele). */
 function plistEdits(marker) {
   return [
@@ -142,7 +175,7 @@ function plistEdits(marker) {
  * Monta ao lado do destino e só troca no fim: um app aberto segue com os arquivos
  * antigos (o macOS mantém o que já está mapeado) e nunca fica um bundle pela metade.
  */
-async function buildMacPwaApp({ source, target, marker, icns, run, fs }) {
+async function buildMacPwaApp({ source, target, marker, icns, run, fs, identity = null }) {
   const tmp = `${target}.agzos-tmp`;
   const old = `${target}.agzos-old`;
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -168,7 +201,7 @@ async function buildMacPwaApp({ source, target, marker, icns, run, fs }) {
     // Atributos do Finder no clone fazem o codesign recusar ("detritus not allowed").
     await run("/usr/bin/xattr", ["-cr", tmp]);
     // Sem --deep: só o executável e o selo do bundle mudam; o framework segue clonado.
-    await run("/usr/bin/codesign", ["--force", "--sign", "-", tmp]);
+    await run("/usr/bin/codesign", cloneSignArgs(tmp, identity));
     if (fs.existsSync(target)) fs.renameSync(target, old);
     fs.renameSync(tmp, target);
   } catch (error) {
@@ -189,6 +222,8 @@ module.exports = {
   OPEN_ARG,
   appBundleOf,
   buildMacPwaApp,
+  cloneSignArgs,
+  hasSigningIdentity,
   bundleIdOf,
   displayName,
   hostUserData,

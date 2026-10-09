@@ -55,7 +55,7 @@ const {
 } = require("./permissions.cjs");
 const { fetchSuggestions } = require("./suggest.cjs");
 const { createAgzosKey } = require("./agzos-key.cjs");
-const { createUpdater, compareVersions, DEFAULT_FEED } = require("./updater.cjs");
+const { createUpdater, compareVersions, DEFAULT_FEED, MAC_CERT_SHA1 } = require("./updater.cjs");
 const {
   createWindowStore,
   fitBounds,
@@ -154,6 +154,7 @@ const {
 const {
   appBundleOf,
   buildMacPwaApp,
+  hasSigningIdentity,
   hostUserData,
   markerPathOf,
   needsRebuild,
@@ -161,6 +162,7 @@ const {
   pwaMarker,
   readMarker,
 } = require("./pwa-mac.cjs");
+const winInstall = require("./win-install.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -6357,9 +6359,12 @@ async function installPwa(ctx, tabId) {
     zoom: 0,
   };
   // Mac (4.8.3): app próprio (clone do Agzos); se a montagem falhar, o lançador de antes.
+  let unsigned = false;
   if (macPwaAppsOn()) {
     try {
-      record.shortcuts = await writeMacPwaApp(record, image);
+      const built = await writeMacPwaApp(record, image);
+      record.shortcuts = { bundle: built.bundle };
+      unsigned = built.unsigned;
     } catch (error) {
       console.error("Agzos: app próprio do PWA não montado.", error?.message);
     }
@@ -6375,7 +6380,8 @@ async function installPwa(ctx, tabId) {
   broadcast("agzos:pwa-changed", {});
   emitPwa(contents);
   openPwaWindow(record.id);
-  return { ok: true, id: record.id };
+  // 4.8.4: sem o certificado do Agzos nas Chaves, o clone sai ad-hoc (a casca avisa).
+  return unsigned ? { ok: true, id: record.id, unsigned: true } : { ok: true, id: record.id };
 }
 
 async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
@@ -6701,6 +6707,42 @@ function openPwaWindow(id, url = null) {
   return true;
 }
 
+// --- 4.8.4: instalação formal no Windows (win-install.cjs) ---
+
+/**
+ * App instalado pelo instalador: "Programas e Recursos" mostra a versão do OTA e os
+ * atalhos levam o AppUserModelID do app. Cópia portátil: nada muda.
+ */
+function syncWindowsInstall() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  if (!winInstall.isInstalled(process.execPath, fs.existsSync)) return;
+  const args = winInstall.versionRegArgs(app.getVersion());
+  if (args) {
+    require("node:child_process").execFile("reg.exe", args, { windowsHide: true }, (error) => {
+      if (error) console.error("Agzos: versão do instalador não atualizada.", error.message);
+    });
+  }
+  const startMenu = path.join(
+    app.getPath("appData"),
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+  );
+  for (const link of winInstall.shortcutPaths({ desktop: app.getPath("desktop"), startMenu })) {
+    try {
+      if (fs.existsSync(link)) {
+        shell.writeShortcutLink(link, "update", {
+          target: process.execPath,
+          appUserModelId: winInstall.APP_USER_MODEL_ID,
+        });
+      }
+    } catch {
+      // Atalho movido ou sem permissão: segue sem ele.
+    }
+  }
+}
+
 // --- 4.8.3: PWA como app próprio no macOS (pwa-mac.cjs) ---
 
 /** O Agzos Browser.app deste processo (só no pacote: em dev não há bundle para clonar). */
@@ -6734,6 +6776,23 @@ function launchMacPwa(bundle) {
   });
 }
 
+/**
+ * 4.8.4: o certificado do Agzos está nas Chaves deste Mac? Então o clone sai assinado por
+ * ele (o "Permitir sempre" das Chaves vale entre versões); senão, ad-hoc.
+ */
+let macIdentity;
+async function macSigningIdentity() {
+  if (macIdentity === undefined) {
+    try {
+      const out = await runFile("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
+      macIdentity = hasSigningIdentity(String(out), MAC_CERT_SHA1) ? MAC_CERT_SHA1 : null;
+    } catch {
+      macIdentity = null;
+    }
+  }
+  return macIdentity;
+}
+
 /** Monta o .app do PWA (clone do Agzos) e devolve os atalhos gravados. */
 async function writeMacPwaApp(record, image, target = null) {
   const dir = pwaDir(record.id);
@@ -6748,6 +6807,7 @@ async function writeMacPwaApp(record, image, target = null) {
       name: record.name,
       id: record.id,
     }).bundle;
+  const identity = await macSigningIdentity();
   await buildMacPwaApp({
     source: agzosAppBundle,
     target: bundle,
@@ -6759,8 +6819,14 @@ async function writeMacPwaApp(record, image, target = null) {
     icns: icnsFromPngs([32, 64, 128, 256, 512].map((size) => ({ size, png: pngOf(image, size) }))),
     run: runFile,
     fs,
+    identity,
   });
-  return { bundle };
+  if (!identity) {
+    console.warn(
+      `Agzos: app do PWA ${record.id} assinado ad-hoc (certificado do Agzos fora das Chaves); as Chaves vão pedir permissão para ele.`,
+    );
+  }
+  return { bundle, unsigned: !identity };
 }
 
 /**
@@ -7480,6 +7546,8 @@ app.whenReady().then(() => {
       setTimeout(() => send(firstCtx, "agzos:open-request", { url: startLink }), 800),
     );
   }
+  // Windows instalado: versão em "Programas e Recursos" depois do OTA.
+  setTimeout(() => syncWindowsInstall(), 5000).unref();
   // Apps de PWA no Mac montados por outra versão: refeitos depois do início.
   if (agzosAppBundle) setTimeout(() => void refreshMacPwaApps(), 4000).unref();
   setInterval(

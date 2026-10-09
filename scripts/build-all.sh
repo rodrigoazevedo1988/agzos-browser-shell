@@ -1,13 +1,34 @@
 #!/bin/bash
 set -e
 
-VERSION="4.8.3"
+VERSION="4.8.4"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs pwa-mac.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs tooltip.cjs download-rules.cjs page-theme.cjs color-tools.cjs pdf-tools.cjs capabilities.cjs feature-flags.cjs devtools-dock.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs pwa-mac.cjs win-install.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs tooltip.cjs download-rules.cjs page-theme.cjs color-tools.cjs pdf-tools.cjs capabilities.cjs feature-flags.cjs devtools-dock.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
+
+# Mac (4.8.4): assinatura com o certificado autoassinado "Rodrigo Dev Local", fixado pelo
+# SHA-1. O .p12 e a senha ficam só neste servidor, fora do repositório (ver BUILD.md e
+# SECURITY.md). Sem eles, ou com outro certificado, o build para aqui: nunca sai ad-hoc.
+set +x
+MAC_CERT_SHA1="D0582BBAA268109351724BA351903BC911344EC4"
+SIGN_DIR="${AGZOS_SIGNING_DIR:-/root/.agzos-signing}"
+MAC_P12="$SIGN_DIR/rodrigo-dev-local.p12"
+MAC_P12_PASS="$SIGN_DIR/rodrigo-dev-local.pass"
+for f in "$MAC_P12" "$MAC_P12_PASS"; do
+  [ -f "$f" ] || { echo "Certificado do Mac ausente: $f (ver BUILD.md)" >&2; exit 1; }
+  [ "$(stat -c '%a %U' "$f")" = "600 root" ] || { echo "$f precisa de chmod 600 e dono root" >&2; exit 1; }
+done
+# .p12 antigo (RC2-40) só abre com -legacy no openssl 3; o AES, sem.
+P12_SHA1="$({ openssl pkcs12 -in "$MAC_P12" -passin "file:$MAC_P12_PASS" -nokeys -clcerts 2>/dev/null ||
+  openssl pkcs12 -legacy -in "$MAC_P12" -passin "file:$MAC_P12_PASS" -nokeys -clcerts 2>/dev/null; } |
+  openssl x509 -noout -fingerprint -sha1 2>/dev/null | sed 's/.*=//; s/://g')"
+[ "$P12_SHA1" = "$MAC_CERT_SHA1" ] || {
+  echo "O .p12 em $SIGN_DIR não é o certificado fixado ($MAC_CERT_SHA1) ou a senha não abre." >&2
+  exit 1
+}
 
 cd /var/www/agzos-browser
 # Toda release precisa da entrada no changelog (é dela que saem as notas do latest.json e
@@ -99,6 +120,15 @@ node /var/www/agzos-browser/scripts/brand-win.mjs win/AgzosBrowser.exe /var/www/
 # Windows: a VMP vai depois de mexer no .exe (marca e ícone).
 vmp_sign win
 (cd win && zip -qr9 "$ARTIFACTS/Agzos-Browser-win32-x64.zip" .)
+# Instalador (4.8.4): por usuário, atalhos e "Programas e Recursos"; o OTA segue pelo ZIP.
+# O lzma do makensis leva alguns minutos: roda em paralelo com o Linux e o Mac.
+command -v makensis >/dev/null || { echo "makensis ausente (apt install nsis)" >&2; exit 1; }
+makensis -V2 -DVERSION="$VERSION" -DSRC="$PWD/win" \
+  -DICON=/var/www/agzos-browser/electron/icons/icon.ico \
+  -DOUT="$ARTIFACTS/Agzos-Browser-win32-x64-setup.exe" \
+  /var/www/agzos-browser/scripts/windows-installer.nsi > "$PWD/nsis.log" 2>&1 &
+NSIS_LOG="$PWD/nsis.log"
+NSIS_PID=$!
 echo "Win OK"
 
 # Linux
@@ -165,19 +195,14 @@ PY
   # macOS: a VMP vai antes da assinatura do bundle (o selo cobre o .sig).
   vmp_sign "mac-$arch"
 
-  # O Electron vem só "linker-signed", sem selo do bundle; depois de mexer no
-  # Info.plist e em Resources, o Gatekeeper do Apple Silicon acusa "danificado".
-  # Assinatura ad-hoc (rcodesign) sela o bundle inteiro, helpers incluídos.
-  rcodesign sign "$APP" > "mac-$arch/sign.log" 2>&1
-  [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || { echo "Falha ao assinar $APP" >&2; exit 1; }
-  # Todo helper precisa ser assinado como executável principal do próprio bundle.
-  if grep -q "could not find main executable" "mac-$arch/sign.log"; then
-    grep "could not find main executable" "mac-$arch/sign.log" >&2
-    echo "Assinatura incompleta em $APP (o Gatekeeper acusaria \"danificado\")" >&2
-    exit 1
-  fi
+  # Assinatura com o certificado fixado, de dentro para fora, runtime endurecido e
+  # entitlements (scripts/sign-mac.sh). Falha se sair ad-hoc ou com outro certificado.
+  bash /var/www/agzos-browser/scripts/sign-mac.sh "$APP" "$MAC_P12" "$MAC_P12_PASS" "$MAC_CERT_SHA1"
 
   (cd mac-$arch && zip -qry9 "$ARTIFACTS/Agzos-Browser-mac-$arch.app.zip" "Agzos Browser.app")
+  # O que vai para o OTA é o ZIP: confere o artefato em si, não só a pasta.
+  bash /var/www/agzos-browser/scripts/verify-mac-signature.sh \
+    "$ARTIFACTS/Agzos-Browser-mac-$arch.app.zip" "$MAC_CERT_SHA1"
   
   rm -rf dmgstage-$arch && mkdir dmgstage-$arch
   cp -a "$APP" "dmgstage-$arch/"
@@ -185,6 +210,9 @@ PY
   xorriso -as mkisofs -quiet -R -J -V "Agzos Browser" -o "$ARTIFACTS/Agzos-Browser-mac-$arch.dmg" "dmgstage-$arch"
   echo "Mac $arch OK"
 done
+
+wait "$NSIS_PID" || { cat "$NSIS_LOG" >&2; echo "Instalador do Windows falhou" >&2; exit 1; }
+[ -s "$ARTIFACTS/Agzos-Browser-win32-x64-setup.exe" ] || { echo "Instalador do Windows ausente" >&2; exit 1; }
 
 cd /var/www/agzos-browser
 # As notas do manifesto saem do changelog.ts, que é a fonte única das novidades (é o que

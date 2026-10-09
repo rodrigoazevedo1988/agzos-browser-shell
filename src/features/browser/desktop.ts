@@ -781,9 +781,14 @@ export type DesktopBridge = DesktopExtras & {
   /** Abre o pop-up da extensão com o DevTools dele. */
   extensionsInspect(dir: string, anchor: DesktopRect | null): Promise<{ ok: boolean }>;
   onExtensionsChanged(callback: () => void): () => void;
-  pwaInstall(
-    tabId: number,
-  ): Promise<{ ok: boolean; id?: string; error?: string; reason?: PwaReason }>;
+  pwaInstall(tabId: number): Promise<{
+    ok: boolean;
+    id?: string;
+    error?: string;
+    reason?: PwaReason;
+    /** Mac (4.8.4): o app saiu assinado ad-hoc (certificado do Agzos fora das Chaves). */
+    unsigned?: boolean;
+  }>;
   pwaOpen(id: string): Promise<boolean>;
   pwaUninstall(id: string): Promise<{ ok: boolean; error?: string }>;
   pwaList(): Promise<InstalledPwa[]>;

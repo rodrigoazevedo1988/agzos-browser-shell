@@ -68,7 +68,12 @@ function TryInstall({ siteTabs }: { siteTabs: SiteTab[] }) {
     }
     const result = await desktop.pwaInstall(tab.id);
     setBusy(false);
-    if (result.ok) setMessage({ ok: true, text: `${check.name} instalado como app.` });
+    if (result.ok && result.unsigned)
+      setMessage({
+        ok: true,
+        text: `${check.name} instalado como app, mas sem o certificado do Agzos: as Chaves do macOS vão pedir permissão para ele.`,
+      });
+    else if (result.ok) setMessage({ ok: true, text: `${check.name} instalado como app.` });
     else if (result.error === "cancelled") setMessage(null);
     else
       setMessage({

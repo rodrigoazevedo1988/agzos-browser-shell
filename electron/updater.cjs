@@ -149,6 +149,57 @@ async function extractArchive(platform, archive, dest) {
   }
 }
 
+/**
+ * Mac (4.8.4): certificado que assina o Agzos Browser.app ("Rodrigo Dev Local",
+ * autoassinado), fixado pelo SHA-1. O .app novo só é instalado se o codesign do sistema
+ * validar o bundle inteiro e o certificado folha for este. Vale além do SHA-256 do
+ * manifesto: um pacote trocado no servidor não passa sem a chave privada.
+ */
+const MAC_CERT_SHA1 = "D0582BBAA268109351724BA351903BC911344EC4";
+
+function runQuiet(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { windowsHide: true, ...options }, (error, _stdout, stderr) =>
+      error
+        ? reject(
+            new Error(
+              String(stderr || error.message)
+                .trim()
+                .split("\n")[0],
+            ),
+          )
+        : resolve(),
+    );
+  });
+}
+
+/** codesign --verify --deep --strict e o SHA-1 do certificado folha do .app. */
+async function macBundleCertificate(app, { run: exec = runQuiet } = {}) {
+  await exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "agzos-cert-"));
+  try {
+    const prefix = path.join(dir, "cert");
+    await exec("/usr/bin/codesign", ["-d", `--extract-certificates=${prefix}`, app]);
+    const der = fs.readFileSync(`${prefix}0`);
+    return crypto.createHash("sha1").update(der).digest("hex").toUpperCase();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Recusa o .app novo que não vem assinado pelo certificado fixado. */
+async function verifyMacBundle(app, { certificateOf = macBundleCertificate } = {}) {
+  let sha1;
+  try {
+    sha1 = await certificateOf(app);
+  } catch (error) {
+    throw new Error(`Assinatura do app novo inválida (${error?.message ?? error})`);
+  }
+  if (sha1 !== MAC_CERT_SHA1) {
+    throw new Error(`App novo assinado por outro certificado (${sha1}); atualização recusada`);
+  }
+}
+
 function createUpdater({
   feedUrl = DEFAULT_FEED,
   currentVersion,
@@ -164,6 +215,8 @@ function createUpdater({
   pid = process.pid,
   /** Testes: executável que roda o instalador (padrão: o da versão nova). */
   runner = null,
+  /** Mac: confere a assinatura do .app novo antes de instalar (testes trocam). */
+  verifyBundle = platform === "darwin" ? verifyMacBundle : null,
   installerSource = path.join(__dirname, INSTALLER),
 }) {
   const key = platformKey(platform, arch);
@@ -265,6 +318,15 @@ function createUpdater({
         ? path.join(root, "Contents", "Resources", "app", "package.json")
         : path.join(root, APP_MARKER);
     if (!fs.existsSync(marker)) throw new Error("Pacote sem o app do Agzos");
+    if (verifyBundle) {
+      try {
+        await verifyBundle(root);
+      } catch (error) {
+        // App recusado não fica na pasta de trabalho para ser instalado depois.
+        fs.rmSync(dir, { recursive: true, force: true });
+        throw error;
+      }
+    }
     staged = root;
     pending = manifest;
     set({ status: "ready", progress: 1 });
@@ -374,7 +436,10 @@ function createUpdater({
 }
 
 module.exports = {
+  MAC_CERT_SHA1,
   createUpdater,
+  macBundleCertificate,
+  verifyMacBundle,
   compareVersions,
   platformKey,
   parseManifest,

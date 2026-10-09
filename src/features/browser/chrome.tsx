@@ -221,6 +221,10 @@ function anchorOf(element: HTMLElement): FolderAnchor {
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
 }
 
+/** 4.8.4: o clone do PWA saiu ad-hoc no Mac (certificado do Agzos fora das Chaves). */
+const PWA_UNSIGNED_NOTICE =
+  "App instalado sem o certificado do Agzos: as Chaves do macOS vão pedir permissão para ele.";
+
 export function AgzosBrowser() {
   const [state, dispatch] = useReducer(browserReducer, initialState);
   const desktop = useMemo(() => desktopBridge(), []);
@@ -2560,7 +2564,9 @@ export function AgzosBrowser() {
                   onClick: () =>
                     void (activePwa.installed
                       ? desktop.pwaOpen(activePwa.id)
-                      : desktop.pwaInstall(activeTab.id)),
+                      : desktop.pwaInstall(activeTab.id).then((result) => {
+                          if (result.unsigned) setNotice(PWA_UNSIGNED_NOTICE);
+                        })),
                 }
               : null
           }

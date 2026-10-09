@@ -14,6 +14,7 @@ NOTES=""
 # leitura (pkg_name), porque a política KEEP=2 mantém a versão antiga publicada ao lado
 # da nova e a página de download precisa linkar o nome que existe em cada uma.
 EXPECTED=(
+  "Agzos-Browser-win32-x64-setup.exe"
   "Agzos-Browser-win32-x64.zip"
   "Agzos-Browser-linux-x64.tar.gz"
   "Agzos-Browser-mac-arm64.dmg"
@@ -51,7 +52,7 @@ for file in "${EXPECTED[@]}"; do
 done
 TARGET="$DEST/v$VERSION"
 mkdir -p "$TARGET"
-cp -f "$ARTIFACTS"/Agzos-Browser-*.zip "$ARTIFACTS"/Agzos-Browser-*.tar.gz "$ARTIFACTS"/Agzos-Browser-*.dmg "$TARGET/"
+cp -f "$ARTIFACTS"/Agzos-Browser-*.exe "$ARTIFACTS"/Agzos-Browser-*.zip "$ARTIFACTS"/Agzos-Browser-*.tar.gz "$ARTIFACTS"/Agzos-Browser-*.dmg "$TARGET/"
 ( cd "$ARTIFACTS" && sha256sum "${EXPECTED[@]}" > "$TARGET/SHA256SUMS.txt" )
 
 # Feed da atualização automática (electron/updater.cjs): versão nova, pacote de cada
@@ -143,7 +144,12 @@ render_dl() {
 render_version() {
   local dir="$1" tag="$2"
   printf '  <h2>%s · <a class="sums" href="%s/SHA256SUMS.txt">SHA256SUMS.txt</a></h2>\n' "$tag" "$dir"
-  render_dl "$dir" "Windows" 'portátil x64 — extraia o ZIP e execute <code>AgzosBrowser.exe</code>' \
+  # Instalador a partir da 4.8.4 (versões antigas publicadas ao lado não têm).
+  if [[ -f "$DEST/$dir/Agzos-Browser-win32-x64-setup.exe" ]]; then
+    render_dl "$dir" "Windows" 'instalador x64 — atalhos na Área de trabalho e no menu Iniciar, atualiza sozinho' \
+      "Agzos-Browser-win32-x64-setup.exe" "EXE"
+  fi
+  render_dl "$dir" "Windows — portátil" 'x64 — extraia o ZIP e execute <code>AgzosBrowser.exe</code>' \
     "Agzos-Browser-win32-x64.zip" "ZIP"
   render_dl "$dir" "Linux" 'x64 — extraia e execute <code>agzos-browser</code>' \
     "Agzos-Browser-linux-x64.tar.gz" "TAR.GZ"

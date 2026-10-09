@@ -531,7 +531,10 @@ const pwaMac = require(path.join(root, "electron/pwa-mac.cjs")) as {
     icns: Buffer;
     run: (file: string, args: string[]) => Promise<unknown>;
     fs: typeof fs;
+    identity?: string | null;
   }): Promise<string>;
+  cloneSignArgs(bundle: string, identity: string | null): string[];
+  hasSigningIdentity(output: string, sha1: string): boolean;
 };
 
 describe("4.8.3: PWA como app próprio no macOS", () => {
@@ -633,7 +636,16 @@ describe("4.8.3: PWA como app próprio no macOS", () => {
     expect(files).toContain("/usr/bin/xattr");
     expect(calls).toContainEqual([
       "/usr/bin/codesign",
-      ["--force", "--sign", "-", `${target}.agzos-tmp`],
+      [
+        "--force",
+        "--sign",
+        "-",
+        "--options",
+        "runtime",
+        "--preserve-metadata=entitlements",
+        "--timestamp=none",
+        `${target}.agzos-tmp`,
+      ],
     ]);
     // Nunca --deep: o framework segue clonado (sem reescrever 190 MB por app).
     expect(calls.flatMap(([, args]) => args)).not.toContain("--deep");
@@ -668,5 +680,138 @@ describe("4.8.3: PWA como app próprio no macOS", () => {
     expect(main).toContain('if (pwaHost || process.platform !== "darwin") app.quit();');
     // O teste só aponta o marcador fora do pacote.
     expect(main).toContain("!app.isPackaged && process.env.AGZOS_TEST_PWA_HOST");
+  });
+});
+
+const winInstall = require(path.join(root, "electron/win-install.cjs")) as {
+  APP_USER_MODEL_ID: string;
+  UNINSTALL_KEY: string;
+  isInstalled(execPath: string, exists: (file: string) => boolean): boolean;
+  shortcutPaths(dirs: { desktop: string; startMenu: string }): string[];
+  versionRegArgs(version: unknown): string[] | null;
+};
+
+describe("4.8.4: instalação formal no Windows", () => {
+  const exe = "C:\\Users\\u\\AppData\\Local\\Programs\\Agzos Browser\\AgzosBrowser.exe";
+
+  it("instalado só com o desinstalador ao lado (a cópia portátil fica como está)", () => {
+    const seen: string[] = [];
+    const exists = (file: string) => {
+      seen.push(file);
+      return file.endsWith("Desinstalar Agzos Browser.exe");
+    };
+    expect(winInstall.isInstalled(exe, exists)).toBe(true);
+    expect(seen).toEqual([
+      "C:\\Users\\u\\AppData\\Local\\Programs\\Agzos Browser\\Desinstalar Agzos Browser.exe",
+    ]);
+    expect(winInstall.isInstalled("D:\\portatil\\AgzosBrowser.exe", () => false)).toBe(false);
+  });
+
+  it("reg.exe só grava a versão x.y.z na chave do usuário (HKCU)", () => {
+    expect(winInstall.versionRegArgs("4.8.4")).toEqual([
+      "add",
+      winInstall.UNINSTALL_KEY,
+      "/v",
+      "DisplayVersion",
+      "/t",
+      "REG_SZ",
+      "/d",
+      "4.8.4",
+      "/f",
+    ]);
+    expect(winInstall.UNINSTALL_KEY.startsWith("HKCU\\")).toBe(true);
+    expect(winInstall.versionRegArgs("4.8.4 /f & calc")).toBeNull();
+    expect(winInstall.versionRegArgs(undefined)).toBeNull();
+  });
+
+  it("atalhos do instalador e o mesmo AppUserModelID do app", () => {
+    expect(winInstall.shortcutPaths({ desktop: "C:\\D", startMenu: "C:\\S" })).toEqual([
+      "C:\\D\\Agzos Browser.lnk",
+      "C:\\S\\Agzos Browser.lnk",
+    ]);
+    expect(main).toContain(`app.setAppUserModelId("${winInstall.APP_USER_MODEL_ID}")`);
+  });
+
+  it("instalador por usuário que nunca apaga o perfil", () => {
+    const nsi = fs.readFileSync(path.join(root, "scripts/windows-installer.nsi"), "utf8");
+    expect(nsi).toContain("RequestExecutionLevel user");
+    expect(nsi).toContain('InstallDir "$LOCALAPPDATA\\Programs\\${APP_NAME}"');
+    expect(nsi).not.toMatch(/\$APPDATA|SetShellVarContext all|HKLM/);
+    expect(nsi).toContain('!define UNINSTALLER "Desinstalar Agzos Browser.exe"');
+    const build = fs.readFileSync(path.join(root, "scripts/build-all.sh"), "utf8");
+    expect(build).toContain("win-install.cjs");
+    expect(build).toContain("Agzos-Browser-win32-x64-setup.exe");
+  });
+});
+
+const updaterPins = require(path.join(root, "electron/updater.cjs")) as {
+  MAC_CERT_SHA1: string;
+  verifyMacBundle(
+    app: string,
+    options: { certificateOf: (app: string) => Promise<string> },
+  ): Promise<void>;
+};
+
+describe("4.8.4: assinatura do Mac com o certificado fixado", () => {
+  const PIN = "D0582BBAA268109351724BA351903BC911344EC4";
+
+  it("o mesmo SHA-1 no build, no updater e nos clones dos PWAs", () => {
+    expect(updaterPins.MAC_CERT_SHA1).toBe(PIN);
+    const build = fs.readFileSync(path.join(root, "scripts/build-all.sh"), "utf8");
+    expect(build).toContain(`MAC_CERT_SHA1="${PIN}"`);
+    expect(build).toContain(
+      'scripts/sign-mac.sh "$APP" "$MAC_P12" "$MAC_P12_PASS" "$MAC_CERT_SHA1"',
+    );
+    expect(build).toContain("scripts/verify-mac-signature.sh");
+    // Nunca volta a assinar ad-hoc no build.
+    expect(build).not.toMatch(/rcodesign sign "\$APP"/);
+    expect(main).toContain("hasSigningIdentity(String(out), MAC_CERT_SHA1)");
+  });
+
+  it("updater recusa app sem assinatura ou de outro certificado", async () => {
+    await expect(
+      updaterPins.verifyMacBundle("/x.app", { certificateOf: async () => PIN }),
+    ).resolves.toBeUndefined();
+    await expect(
+      updaterPins.verifyMacBundle("/x.app", { certificateOf: async () => "A".repeat(40) }),
+    ).rejects.toThrow("outro certificado");
+    await expect(
+      updaterPins.verifyMacBundle("/x.app", {
+        certificateOf: async () => {
+          throw new Error("code object is not signed at all");
+        },
+      }),
+    ).rejects.toThrow("Assinatura do app novo inválida (code object is not signed at all)");
+  });
+
+  it("clone do PWA: certificado do Agzos se estiver nas Chaves, senão ad-hoc", () => {
+    const output = [
+      '  1) D0582BBAA268109351724BA351903BC911344EC4 "Rodrigo Dev Local"',
+      '  2) 1111111111111111111111111111111111111111 "Outro"',
+      "     2 valid identities found",
+    ].join("\n");
+    expect(pwaMac.hasSigningIdentity(output, PIN)).toBe(true);
+    expect(pwaMac.hasSigningIdentity(output, "2".repeat(40))).toBe(false);
+    expect(pwaMac.hasSigningIdentity("     0 valid identities found", PIN)).toBe(false);
+    expect(pwaMac.hasSigningIdentity(output, "x")).toBe(false);
+    expect(pwaMac.cloneSignArgs("/A.app", PIN).slice(0, 3)).toEqual(["--force", "--sign", PIN]);
+    expect(pwaMac.cloneSignArgs("/A.app", null)[2]).toBe("-");
+    expect(pwaMac.cloneSignArgs("/A.app", null)).not.toContain("--deep");
+  });
+
+  it("entitlements: JIT, memória executável, library validation e nada de com.apple.developer", () => {
+    const plist = fs.readFileSync(path.join(root, "scripts/entitlements.mac.plist"), "utf8");
+    for (const key of [
+      "com.apple.security.cs.allow-jit",
+      "com.apple.security.cs.allow-unsigned-executable-memory",
+      "com.apple.security.cs.disable-library-validation",
+    ]) {
+      expect(plist).toContain(`<key>${key}</key>`);
+    }
+    expect(plist).not.toContain("com.apple.developer");
+    const sign = fs.readFileSync(path.join(root, "scripts/sign-mac.sh"), "utf8");
+    expect(sign).toContain("set +x");
+    expect(sign).toContain("--timestamp-url none");
+    expect(sign).not.toContain("--deep");
   });
 });
