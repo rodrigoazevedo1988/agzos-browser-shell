@@ -27,6 +27,10 @@ const chrome = require(path.join(root, "electron/pwa-chrome.cjs")) as {
   permissionAction(action: string): { type: string; value: string } | null;
   webOrigin(url: string): string | null;
   zoomPercent(level: number): number;
+  windowFrame(
+    platform: string,
+    colors?: { background: string; foreground: string },
+  ): { options: Record<string, unknown>; insetLeft: number };
 };
 
 const picker = require(path.join(root, "electron/display-picker.cjs")) as {
@@ -129,6 +133,25 @@ describe("4.8.5: barra do app nos PWAs (pwa-chrome.cjs)", () => {
     expect(chrome.permissionAction("perm:camera:always")).toBeNull();
   });
 
+  it("a barra do app é a barra de título: sem a faixa nativa repetindo o título", () => {
+    const mac = chrome.windowFrame("darwin");
+    expect(mac.options).toMatchObject({ titleBarStyle: "hidden" });
+    expect(mac.options).not.toHaveProperty("titleBarOverlay");
+    expect(mac.insetLeft).toBeGreaterThan(60);
+    const win = chrome.windowFrame("win32", { background: "#cc0000", foreground: "#ffffff" });
+    expect(win.options).toEqual({
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#cc0000", symbolColor: "#ffffff", height: chrome.BAR_HEIGHT },
+    });
+    expect(win.insetLeft).toBe(0);
+    const html = chrome.barHtml();
+    expect(html).toContain("-webkit-app-region:drag");
+    expect(html).toContain("button,input{-webkit-app-region:no-drag}");
+    expect(html).toContain("env(titlebar-area-width");
+    expect(main).toContain("...frame.options,");
+    expect(main).toContain("win.setTitleBarOverlay(");
+  });
+
   it("host, origem e zoom", () => {
     expect(chrome.hostLabel("https://www.youtube.com/watch?v=1")).toBe("youtube.com");
     expect(chrome.hostLabel("about:blank")).toBe("");
@@ -216,5 +239,17 @@ describe("4.8.5: compartilhar tela e câmera (display-picker.cjs)", () => {
     expect(main).toContain("systemPreferences.askForMediaAccess(type)");
     expect(build).toContain('data["NSCameraUsageDescription"]');
     expect(build).toMatch(/ELECTRON_FILES=\([^)]*\bdisplay-picker\.cjs\b/);
+  });
+});
+
+describe("4.8.6: PWA do Mac sem clone se recupera sozinho", () => {
+  it("monta o clone que falta ao abrir o app e a cada início; falha vira aviso", () => {
+    expect(main).toContain("function ensureMacPwaApp(record)");
+    expect(main).toMatch(/if \(!target\) \{[\s\S]{0,200}ensureMacPwaApp\(record\)/);
+    expect(main).toMatch(
+      /function openPwaWindow\(id, url = null\) \{[\s\S]{0,500}ensureMacPwaApp\(record\)\.then/,
+    );
+    expect(main).toMatch(/catch \(error\) \{\s*warnMacPwa\(record, error\);/);
+    expect(main).toContain("pwaStore?.update(record.id, { shortcuts: { bundle: built.bundle } })");
   });
 });

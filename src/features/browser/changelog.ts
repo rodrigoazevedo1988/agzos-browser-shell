@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.6",
+    date: "2026-10-12",
+    items: [
+      "Uma barra só nos apps instalados: a barra do app agora é a própria barra de título, sem a faixa repetindo o nome da página em cima. No Mac os botões de fechar, minimizar e maximizar ficam nela, à esquerda; no Windows e no Linux ficam à direita, com a cor do app.",
+      "Mac: um app instalado que tinha voltado a abrir como janela do navegador volta a ser um app próprio, com ícone no Dock. O Agzos monta o app que estiver faltando ao abrir e, se não conseguir, mostra o motivo em vez de abrir no navegador sem avisar.",
+    ],
+  },
+  {
     version: "4.8.5",
     date: "2026-10-12",
     items: [

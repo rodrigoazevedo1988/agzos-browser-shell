@@ -6572,7 +6572,7 @@ async function installPwa(ctx, tabId) {
       record.shortcuts = { bundle: built.bundle };
       unsigned = built.unsigned;
     } catch (error) {
-      console.error("Agzos: app próprio do PWA não montado.", error?.message);
+      warnMacPwa(record, error);
     }
   }
   if (!record.shortcuts.bundle) {
@@ -6788,6 +6788,28 @@ function openPwaWindow(id, url = null) {
     launchMacPwa(bundle);
     return true;
   }
+  // Mac sem o clone (montagem falhou ou o .app foi apagado): monta agora e abre como app;
+  // só se não der, abre aqui no navegador e avisa o motivo.
+  if (macPwaAppsOn() && !macPwaFallback.has(id)) {
+    void ensureMacPwaApp(record).then(
+      (built) => (built ? launchMacPwa(built) : openPwaWindowHere(id, url)),
+      (error) => {
+        warnMacPwa(record, error);
+        macPwaFallback.add(id);
+        openPwaWindowHere(id, url);
+      },
+    );
+    return true;
+  }
+  return openPwaWindowHere(id, url);
+}
+
+// Apps cuja montagem falhou nesta sessão: abrem no navegador sem tentar de novo a cada clique.
+const macPwaFallback = new Set();
+
+function openPwaWindowHere(id, url = null) {
+  const record = pwaStore?.get(id);
+  if (!record) return false;
   const current = pwaWindows.get(id);
   if (current && !current.isDestroyed()) {
     if (url)
@@ -6812,8 +6834,13 @@ function openPwaWindow(id, url = null) {
   const icon = path.join(pwaDir(id), "icon.png");
   // 4.8.5: o webContents da janela é a barra do app (funções do navegador, como no Chrome);
   // o site fica num WebContentsView logo abaixo, na partição do app.
+  const frame = pwaChrome.windowFrame(
+    process.platform,
+    pwaChrome.barColors(record.themeColor, nativeTheme.shouldUseDarkColors),
+  );
   const win = new BrowserWindow({
     title: record.name,
+    ...frame.options,
     width: 1100,
     height: 760,
     ...(bounds ?? {}),
@@ -6892,15 +6919,29 @@ function openPwaWindow(id, url = null) {
       zoom: pwaChrome.zoomPercent(contents.getZoomLevel()),
       pip: pipActive,
       colors: pwaChrome.barColors(pageThemeColor ?? live.themeColor, dark),
+      insetLeft: frame.insetLeft,
+      fullScreen: win.isFullScreen(),
       find: { open: find.open, matches: find.matches, active: find.active },
     };
   };
   let pushTimer = null;
+  let overlayColors = "";
   const push = () => {
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
       if (win.isDestroyed() || barContents.isDestroyed() || contents.isDestroyed()) return;
-      barContents.send("pwa-bar:state", barState());
+      const state = barState();
+      barContents.send("pwa-bar:state", state);
+      // Windows/Linux: os botões nativos por cima da barra acompanham a cor dela.
+      const overlayKey = `${state.colors.background}${state.colors.foreground}`;
+      if (frame.options.titleBarOverlay && overlayKey !== overlayColors) {
+        overlayColors = overlayKey;
+        try {
+          win.setTitleBarOverlay(pwaChrome.titleBarOverlay(state.colors));
+        } catch {
+          // Sistema sem overlay: os botões ficam com a cor padrão.
+        }
+      }
     }, 16);
   };
 
@@ -7354,6 +7395,45 @@ function macPwaBundle(record) {
   return bundle && readMarker(markerPathOf(bundle), fs)?.id === record.id ? bundle : null;
 }
 
+const macPwaBuilds = new Map();
+const macPwaWarned = new Set();
+
+/**
+ * 4.8.6: garante o .app próprio do PWA. Antes, se a montagem falhava na instalação, o erro
+ * ia só para o console e o app ficava sem clone para sempre (o refresh pulava quem não
+ * tinha bundle): abria como janela do navegador sem ninguém saber por quê.
+ */
+function ensureMacPwaApp(record) {
+  if (!macPwaAppsOn()) return Promise.resolve(null);
+  const current = macPwaBundle(record);
+  if (current) return Promise.resolve(current);
+  const pending = macPwaBuilds.get(record.id);
+  if (pending) return pending;
+  const work = (async () => {
+    const image = nativeImage.createFromPath(path.join(pwaDir(record.id), "icon.png"));
+    if (image.isEmpty()) throw new Error("o ícone do app sumiu; reinstale o app");
+    const built = await writeMacPwaApp(record, image, record.shortcuts?.bundle ?? null);
+    pwaStore?.update(record.id, { shortcuts: { bundle: built.bundle } });
+    return built.bundle;
+  })().finally(() => macPwaBuilds.delete(record.id));
+  macPwaBuilds.set(record.id, work);
+  return work;
+}
+
+/** Montagem do clone falhou: diz o motivo uma vez por sessão (o app abre no navegador). */
+function warnMacPwa(record, error) {
+  console.error(`Agzos: app próprio do PWA ${record.id} não montado.`, error?.message);
+  if (macPwaWarned.has(record.id)) return;
+  macPwaWarned.add(record.id);
+  void dialog.showMessageBox({
+    type: "warning",
+    message: `Não deu para criar o app próprio de ${record.name}.`,
+    detail:
+      `${String(error?.message ?? error).slice(0, 400)}\n\nPor enquanto ele abre numa janela ` +
+      "do Agzos. O Agzos tenta de novo na próxima vez que você abrir o app.",
+  });
+}
+
 /** Abre (ou traz para a frente, se já aberto) o app do PWA pelo LaunchServices. */
 function launchMacPwa(bundle) {
   require("node:child_process").execFile("/usr/bin/open", ["-a", bundle], (error) => {
@@ -7422,7 +7502,13 @@ async function refreshMacPwaApps() {
   for (const record of pwaStore?.list() ?? []) {
     if (!macPwaAppsOn()) return;
     const target = record.shortcuts?.bundle;
-    if (!target) continue;
+    if (!target) {
+      // Instalado sem clone (montagem falhou antes): tenta de novo a cada abertura.
+      await ensureMacPwaApp(record).catch((error) =>
+        console.error(`Agzos: app do PWA ${record.id} ainda sem clone.`, error?.message),
+      );
+      continue;
+    }
     const marker = readMarker(markerPathOf(target), fs);
     if (
       !needsRebuild(marker, {

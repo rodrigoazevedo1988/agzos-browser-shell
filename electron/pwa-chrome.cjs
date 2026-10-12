@@ -56,6 +56,33 @@ function barColors(themeColor, dark = false) {
     : { background, foreground: "#202124", hover: "rgba(0,0,0,0.10)" };
 }
 
+/**
+ * A barra do app é a barra de título (como no PWA do Chrome): sem a faixa nativa com o
+ * mesmo título em cima. No macOS os semáforos entram na barra, à esquerda; no Windows e
+ * no Linux os botões nativos ficam por cima dela, à direita (titleBarOverlay), e a página
+ * da barra reserva o espaço pelo env(titlebar-area-*).
+ */
+function windowFrame(platform, colors = barColors(null)) {
+  if (platform === "darwin") {
+    return {
+      options: {
+        titleBarStyle: "hidden",
+        trafficLightPosition: { x: 12, y: Math.round((BAR_HEIGHT - 16) / 2) },
+      },
+      insetLeft: 78,
+    };
+  }
+  return {
+    options: { titleBarStyle: "hidden", titleBarOverlay: titleBarOverlay(colors) },
+    insetLeft: 0,
+  };
+}
+
+/** Cores dos botões nativos (Windows/Linux) iguais às da barra. */
+function titleBarOverlay(colors) {
+  return { color: colors.background, symbolColor: colors.foreground, height: BAR_HEIGHT };
+}
+
 /** Host para mostrar (sem "www."), ou "" se não for web. */
 function hostLabel(url) {
   try {
@@ -219,7 +246,9 @@ function barHtml() {
 *{box-sizing:border-box}
 html,body{margin:0;height:${BAR_HEIGHT}px;overflow:hidden;background:var(--bg);color:var(--fg);
 font:13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none}
-#bar{display:flex;align-items:center;gap:2px;height:${BAR_HEIGHT}px;padding:0 4px}
+#bar{display:flex;align-items:center;gap:2px;height:${BAR_HEIGHT}px;padding:0 4px 0 calc(4px + var(--inset-left,0px));
+width:env(titlebar-area-width,100%);-webkit-app-region:drag}
+button,input{-webkit-app-region:no-drag}
 button{all:unset;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
 border-radius:6px;color:inherit;cursor:default;flex:none}
 button:hover:not(:disabled){background:var(--hover)}
@@ -289,6 +318,7 @@ padding:0 8px;background:rgba(255,255,255,.9);color:#202124;font:inherit;outline
     root.setProperty("--bg", state.colors && state.colors.background || "#f1f3f4");
     root.setProperty("--fg", state.colors && state.colors.foreground || "#202124");
     root.setProperty("--hover", state.colors && state.colors.hover || "rgba(0,0,0,.08)");
+    root.setProperty("--inset-left", (state.fullScreen ? 0 : Number(state.insetLeft) || 0) + "px");
     $("back").disabled = !state.canGoBack;
     $("forward").disabled = !state.canGoForward;
     $("reloadIcon").hidden = Boolean(state.loading);
@@ -319,6 +349,8 @@ padding:0 8px;background:rgba(255,255,255,.9);color:#202124;font:inherit;outline
 
 module.exports = {
   BAR_HEIGHT,
+  titleBarOverlay,
+  windowFrame,
   PERMISSION_TYPES,
   appMenuSpec,
   barAction,

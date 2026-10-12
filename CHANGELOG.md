@@ -45,6 +45,11 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
+**4.8.6** (2026-10-12)
+
+- Barra do app como barra de título (`windowFrame` em `electron/pwa-chrome.cjs`): `titleBarStyle: "hidden"`; semáforos na barra no macOS (`trafficLightPosition`, recuo de 78 px), `titleBarOverlay` com a cor da barra no Windows/Linux (`setTitleBarOverlay` quando a cor muda). Área vazia arrastável (`-webkit-app-region`).
+- macOS: PWA sem clone se recupera (`ensureMacPwaApp`). `refreshMacPwaApps` monta o que falta a cada início (antes pulava registros sem `shortcuts.bundle`), `openPwaWindow` monta e abre o clone na hora, e a falha vira aviso (`warnMacPwa`) em vez de só console. A janela no navegador ficou em `openPwaWindowHere`.
+
 **4.8.5** (2026-10-12)
 
 - PWA com barra do app (`electron/pwa-chrome.cjs`, `electron/pwa-bar-preload.cjs`): o `webContents` da janela é a barra (partição em memória `agzos-pwa-bar`, página `data:` sem dado do site) e o site vira um `WebContentsView` abaixo, na `persist:pwa-<id>`. Menu ⋮ como dados (`appMenuSpec`): copiar URL, abrir no navegador, PiP (e PiP ao minimizar, `autoPip` no registro), zoom, localizar (`findInPage`), imprimir, tela cheia, DevTools e permissões do app por origem (`pwa:<id>:permission:<tipo>`).
