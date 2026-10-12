@@ -155,7 +155,6 @@ const {
 const {
   appBundleOf,
   buildMacPwaApp,
-  hasSigningIdentity,
   hostUserData,
   markerPathOf,
   needsRebuild,
@@ -6565,12 +6564,10 @@ async function installPwa(ctx, tabId) {
     zoom: 0,
   };
   // Mac (4.8.3): app próprio (clone do Agzos); se a montagem falhar, o lançador de antes.
-  let unsigned = false;
   if (macPwaAppsOn()) {
     try {
       const built = await writeMacPwaApp(record, image);
       record.shortcuts = { bundle: built.bundle };
-      unsigned = built.unsigned;
     } catch (error) {
       warnMacPwa(record, error);
     }
@@ -6586,8 +6583,7 @@ async function installPwa(ctx, tabId) {
   broadcast("agzos:pwa-changed", {});
   emitPwa(contents);
   openPwaWindow(record.id);
-  // 4.8.4: sem o certificado do Agzos nas Chaves, o clone sai ad-hoc (a casca avisa).
-  return unsigned ? { ok: true, id: record.id, unsigned: true } : { ok: true, id: record.id };
+  return { ok: true, id: record.id };
 }
 
 async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
@@ -7424,6 +7420,8 @@ function ensureMacPwaApp(record) {
     if (image.isEmpty()) throw new Error("o ícone do app sumiu; reinstale o app");
     const built = await writeMacPwaApp(record, image, record.shortcuts?.bundle ?? null);
     pwaStore?.update(record.id, { shortcuts: { bundle: built.bundle } });
+    // Montou depois de uma falha: os próximos cliques já abrem o app próprio.
+    macPwaFallback.delete(record.id);
     return built.bundle;
   })().finally(() => macPwaBuilds.delete(record.id));
   macPwaBuilds.set(record.id, work);
@@ -7451,23 +7449,6 @@ function launchMacPwa(bundle) {
   });
 }
 
-/**
- * 4.8.4: o certificado do Agzos está nas Chaves deste Mac? Então o clone sai assinado por
- * ele (o "Permitir sempre" das Chaves vale entre versões); senão, ad-hoc.
- */
-let macIdentity;
-async function macSigningIdentity() {
-  if (macIdentity === undefined) {
-    try {
-      const out = await runFile("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
-      macIdentity = hasSigningIdentity(String(out), MAC_CERT_SHA1) ? MAC_CERT_SHA1 : null;
-    } catch {
-      macIdentity = null;
-    }
-  }
-  return macIdentity;
-}
-
 /** Monta o .app do PWA (clone do Agzos) e devolve os atalhos gravados. */
 async function writeMacPwaApp(record, image, target = null) {
   const dir = pwaDir(record.id);
@@ -7482,7 +7463,6 @@ async function writeMacPwaApp(record, image, target = null) {
       name: record.name,
       id: record.id,
     }).bundle;
-  const identity = await macSigningIdentity();
   await buildMacPwaApp({
     source: agzosAppBundle,
     target: bundle,
@@ -7494,14 +7474,11 @@ async function writeMacPwaApp(record, image, target = null) {
     icns: icnsFromPngs([32, 64, 128, 256, 512].map((size) => ({ size, png: pngOf(image, size) }))),
     run: runFile,
     fs,
-    identity,
+    // 4.8.7: sempre ad-hoc. Com o certificado do Agzos, o codesign do Mac pedia a senha do
+    // chaveiro onde ele estivesse (um chaveiro trancado travava a montagem do app).
+    identity: null,
   });
-  if (!identity) {
-    console.warn(
-      `Agzos: app do PWA ${record.id} assinado ad-hoc (certificado do Agzos fora das Chaves); as Chaves vão pedir permissão para ele.`,
-    );
-  }
-  return { bundle, unsigned: !identity };
+  return { bundle };
 }
 
 /**

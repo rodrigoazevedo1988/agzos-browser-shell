@@ -246,9 +246,12 @@ function barHtml() {
 *{box-sizing:border-box}
 html,body{margin:0;height:${BAR_HEIGHT}px;overflow:hidden;background:var(--bg);color:var(--fg);
 font:13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none}
-#bar{display:flex;align-items:center;gap:2px;height:${BAR_HEIGHT}px;padding:0 4px 0 calc(4px + var(--inset-left,0px));
-width:env(titlebar-area-width,100%);-webkit-app-region:drag}
-button,input{-webkit-app-region:no-drag}
+#bar{display:flex;align-items:center;gap:2px;height:${BAR_HEIGHT}px;padding:0 4px;
+width:env(titlebar-area-width,100%)}
+/* Só o espaço dos semáforos e o do título arrastam a janela; os botões ficam fora de
+   qualquer área de arrasto (no macOS um no-drag dentro de drag engolia o clique). */
+#lights{flex:none;width:var(--inset-left,0px);align-self:stretch;-webkit-app-region:drag}
+#info{-webkit-app-region:drag}
 button{all:unset;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
 border-radius:6px;color:inherit;cursor:default;flex:none}
 button:hover:not(:disabled){background:var(--hover)}
@@ -270,10 +273,12 @@ padding:0 8px;background:rgba(255,255,255,.9);color:#202124;font:inherit;outline
 .on{background:var(--hover)}
 </style></head><body>
 <div id="bar" role="toolbar" aria-label="Barra do app">
+<div id="lights"></div>
 <button id="back" title="Voltar" aria-label="Voltar">${icon("back")}</button>
 <button id="forward" title="Avançar" aria-label="Avançar">${icon("forward")}</button>
 <button id="reload" title="Recarregar" aria-label="Recarregar"><span id="reloadIcon">${icon("reload")}</span><span id="stopIcon" hidden>${icon("stop")}</span></button>
-<div id="info"><span id="title"></span><span id="host" hidden title="Fora do app: clique para abrir no navegador"></span></div>
+<div id="info"><span id="title"></span></div>
+<span id="host" hidden title="Fora do app: clique para abrir no navegador"></span>
 <div id="find" hidden role="search">
 <input id="query" type="text" placeholder="Localizar na página" aria-label="Localizar na página" spellcheck="false">
 <span id="count" aria-live="polite"></span>

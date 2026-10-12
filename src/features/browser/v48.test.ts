@@ -765,7 +765,9 @@ describe("4.8.4: assinatura do Mac com o certificado fixado", () => {
     expect(build).toContain("scripts/verify-mac-signature.sh");
     // Nunca volta a assinar ad-hoc no build.
     expect(build).not.toMatch(/rcodesign sign "\$APP"/);
-    expect(main).toContain("hasSigningIdentity(String(out), MAC_CERT_SHA1)");
+    // 4.8.7: o app do PWA sai ad-hoc (o codesign com certificado pedia senha de chaveiro).
+    expect(main).toContain("identity: null,");
+    expect(main).not.toContain("macSigningIdentity");
   });
 
   it("updater recusa app sem assinatura ou de outro certificado", async () => {

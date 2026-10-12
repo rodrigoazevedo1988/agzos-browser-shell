@@ -45,6 +45,12 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
+**4.8.7** (2026-10-12)
+
+- Barra do PWA: só `#lights` e `#info` têm `-webkit-app-region: drag`; antes a barra toda arrastava com `no-drag` nos botões, e no macOS (`titleBarStyle: hidden` + `WebContentsView`) o clique sumia. e2e com clique real no botão recarregar.
+- Clones de PWA no macOS sempre ad-hoc (`identity: null`; sai `macSigningIdentity`): com o certificado, o `codesign` pedia a senha do chaveiro onde ele estivesse. O navegador segue assinado no servidor e o updater segue exigindo o certificado.
+- `ensureMacPwaApp` limpa `macPwaFallback` quando monta depois de uma falha.
+
 **4.8.6** (2026-10-12)
 
 - Barra do app como barra de título (`windowFrame` em `electron/pwa-chrome.cjs`): `titleBarStyle: "hidden"`; semáforos na barra no macOS (`trafficLightPosition`, recuo de 78 px), `titleBarOverlay` com a cor da barra no Windows/Linux (`setTitleBarOverlay` quando a cor muda). Área vazia arrastável (`-webkit-app-region`).

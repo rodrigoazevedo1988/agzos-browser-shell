@@ -3563,6 +3563,34 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
     await bar('document.getElementById("query").value = "PWA"');
     await bar('window.agzosPwaBar.run({ action: "find", text: "PWA" })');
     await expect.poll(() => bar('document.getElementById("count").textContent')).toBe("1/1");
+    // Clique de verdade num botão da barra (não pela API): recarregar chega ao site.
+    const page = (code: string) =>
+      direct.evaluate(
+        ({ webContents }, [url, source]) =>
+          webContents
+            .getAllWebContents()
+            .find((item) => item.getURL() === url)!
+            .executeJavaScript(source!),
+        [`${origin}/pwa/`, code],
+      );
+    await bar('window.agzosPwaBar.run({ action: "find-close" })');
+    await page("window.agzosMarca = 1");
+    const box = (await bar(
+      'JSON.stringify(document.getElementById("reload").getBoundingClientRect())',
+    )) as string;
+    const { x, y, width, height } = JSON.parse(box) as Record<string, number>;
+    await direct.evaluate(
+      ({ BrowserWindow }, point) => {
+        const contents = BrowserWindow.getAllWindows().find((item) =>
+          item.webContents.getURL().startsWith("data:text/html"),
+        )!.webContents;
+        for (const type of ["mouseDown", "mouseUp"] as const) {
+          contents.sendInputEvent({ type, ...point, button: "left", clickCount: 1 });
+        }
+      },
+      { x: Math.round(x! + width! / 2), y: Math.round(y! + height! / 2) },
+    );
+    await expect.poll(() => page("typeof window.agzosMarca")).toBe("undefined");
   } finally {
     await direct.close();
   }

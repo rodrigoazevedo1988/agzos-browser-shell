@@ -145,8 +145,12 @@ describe("4.8.5: barra do app nos PWAs (pwa-chrome.cjs)", () => {
     });
     expect(win.insetLeft).toBe(0);
     const html = chrome.barHtml();
-    expect(html).toContain("-webkit-app-region:drag");
-    expect(html).toContain("button,input{-webkit-app-region:no-drag}");
+    // Arrastam só o espaço dos semáforos e o título; nenhum botão fica dentro de área de
+    // arrasto (no macOS o clique sumia).
+    expect(html).toContain("#lights{flex:none;width:var(--inset-left,0px)");
+    expect(html).toContain("#info{-webkit-app-region:drag}");
+    expect(html).not.toMatch(/#bar\{[^}]*app-region/);
+    expect(html).toMatch(/<div id="info"><span id="title"><\/span><\/div>/);
     expect(html).toContain("env(titlebar-area-width");
     expect(main).toContain("...frame.options,");
     expect(main).toContain("win.setTitleBarOverlay(");

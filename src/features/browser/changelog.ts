@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.7",
+    date: "2026-10-12",
+    items: [
+      "Mac: os botões da barra dos apps instalados (Picture-in-Picture, menu ⋮, voltar, recarregar) voltaram a responder ao clique.",
+      "Mac: criar o app próprio de um PWA não pede mais senha de chaveiro. Depois de uma atualização, o macOS pode perguntar uma vez se o app pode acessar as Chaves; é só clicar em Permitir.",
+      "Quando o app próprio fica pronto depois de uma falha, o Agzos já passa a abri-lo sem precisar reiniciar o navegador.",
+    ],
+  },
+  {
     version: "4.8.6",
     date: "2026-10-12",
     items: [
