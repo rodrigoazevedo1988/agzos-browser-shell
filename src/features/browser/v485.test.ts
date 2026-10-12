@@ -30,7 +30,7 @@ const chrome = require(path.join(root, "electron/pwa-chrome.cjs")) as {
   windowFrame(
     platform: string,
     colors?: { background: string; foreground: string },
-  ): { options: Record<string, unknown>; insetLeft: number };
+  ): { options: Record<string, unknown>; insetLeft: number; insetRight: number };
 };
 
 const picker = require(path.join(root, "electron/display-picker.cjs")) as {
@@ -138,12 +138,17 @@ describe("4.8.5: barra do app nos PWAs (pwa-chrome.cjs)", () => {
     expect(mac.options).toMatchObject({ titleBarStyle: "hidden" });
     expect(mac.options).not.toHaveProperty("titleBarOverlay");
     expect(mac.insetLeft).toBeGreaterThan(60);
+    expect(mac.insetRight).toBe(0);
     const win = chrome.windowFrame("win32", { background: "#cc0000", foreground: "#ffffff" });
     expect(win.options).toEqual({
       titleBarStyle: "hidden",
       titleBarOverlay: { color: "#cc0000", symbolColor: "#ffffff", height: chrome.BAR_HEIGHT },
     });
     expect(win.insetLeft).toBe(0);
+    // Sem env(titlebar-area-*) (o Windows não entrega sempre), a barra deixa livre o espaço dos
+    // botões nativos; senão o ⋮ e o PiP ficam por baixo deles.
+    expect(win.insetRight).toBeGreaterThan(100);
+    expect(chrome.barHtml()).toContain("calc(100% - var(--inset-right,0px))");
     const html = chrome.barHtml();
     // Arrastam só o espaço dos semáforos e o título; nenhum botão fica dentro de área de
     // arrasto (no macOS o clique sumia).

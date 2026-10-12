@@ -130,6 +130,7 @@ const pwa = require(path.join(electronDir, "pwa.cjs")) as {
   iconSize: (sizes: unknown) => number;
   icoFromPngs: (images: { size: number; png: Buffer }[]) => Buffer;
   icnsFromPngs: (images: { size: number; png: Buffer }[]) => Buffer;
+  pwaIconFile: (platform: string, dir: string, exists?: (file: string) => boolean) => string | null;
   pwaArgOf: (argv: string[]) => string | null;
   scopeContains: (scope: string, url: string) => boolean;
   shortcutPaths: (options: {
@@ -682,6 +683,17 @@ describe("PWA instalável", () => {
     expect(icns.toString("ascii", 0, 4)).toBe("icns");
     expect(icns.readUInt32BE(4)).toBe(icns.length);
     expect(icns.toString("ascii", 8, 12)).toBe("ic07");
+  });
+
+  it("ícone da janela do PWA: no Windows o .ico, com o .png como reserva", () => {
+    const dir = path.join("pasta", "pwa");
+    const both = (file: string) => file.endsWith(".ico") || file.endsWith(".png");
+    const onlyPng = (file: string) => file.endsWith(".png");
+    expect(pwa.pwaIconFile("win32", dir, both)).toBe(path.join(dir, "icon.ico"));
+    expect(pwa.pwaIconFile("win32", dir, onlyPng)).toBe(path.join(dir, "icon.png"));
+    expect(pwa.pwaIconFile("win32", dir, () => false)).toBeNull();
+    expect(pwa.pwaIconFile("linux", dir, both)).toBe(path.join(dir, "icon.png"));
+    expect(pwa.pwaIconFile("linux", dir, () => false)).toBeNull();
   });
 
   it("atalhos do sistema por plataforma", () => {

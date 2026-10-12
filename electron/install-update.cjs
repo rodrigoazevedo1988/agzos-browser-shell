@@ -81,7 +81,7 @@ async function main() {
   const deadline = Date.now() + WAIT_EXIT_MS;
   while (alive(config.pid)) {
     if (Date.now() > deadline) {
-      finish("failed o app não fechou em 2 minutos");
+      finish(`failed ${config.version} o app não fechou em 2 minutos`);
       return;
     }
     await sleep(200);
@@ -103,7 +103,8 @@ async function main() {
       await sleep(1000);
     }
   }
-  if (lastError) finish(`failed ${lastError.code ?? ""} ${lastError.message}`.trim());
+  if (lastError)
+    finish(`failed ${config.version} ${lastError.code ?? ""} ${lastError.message}`.trim());
   else finish(`ok ${config.version}`);
 
   if (config.reopen) {
@@ -127,7 +128,7 @@ async function main() {
 main().catch((error) => {
   try {
     const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-    fs.writeFileSync(config.result, `failed ${error.message}\n`);
+    fs.writeFileSync(config.result, `failed ${config.version} ${error.message}\n`);
     fs.appendFileSync(config.log, `${new Date().toISOString()} erro: ${error.stack}\n`);
   } catch {
     // Nada a fazer.

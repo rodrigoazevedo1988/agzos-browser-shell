@@ -173,6 +173,18 @@ function icoFromPngs(images) {
   return Buffer.concat([header, ...list.map((image) => image.png)]);
 }
 
+/**
+ * Arquivo do ícone da janela de um PWA. No Windows é o .ico (a barra de tarefas lê o ícone
+ * do AppUserModelID do app); sem ele, o .png. null se a pasta não tem ícone nenhum.
+ */
+function pwaIconFile(platform, dir, exists = fs.existsSync) {
+  const png = path.join(dir, "icon.png");
+  if (platform !== "win32") return exists(png) ? png : null;
+  const ico = path.join(dir, "icon.ico");
+  if (exists(ico)) return ico;
+  return exists(png) ? png : null;
+}
+
 const ICNS_TYPES = { 32: "ic11", 64: "ic12", 128: "ic07", 256: "ic08", 512: "ic09", 1024: "ic10" };
 
 /** .icns com PNGs dentro (macOS 10.7+). */
@@ -380,6 +392,7 @@ module.exports = {
   parseApps,
   parseManifest,
   pwaArgOf,
+  pwaIconFile,
   scopeContains,
   shortcutPaths,
   writeMacBundle,

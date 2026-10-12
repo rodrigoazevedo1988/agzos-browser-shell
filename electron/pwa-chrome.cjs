@@ -70,13 +70,18 @@ function windowFrame(platform, colors = barColors(null)) {
         trafficLightPosition: { x: 12, y: Math.round((BAR_HEIGHT - 16) / 2) },
       },
       insetLeft: 78,
+      insetRight: 0,
     };
   }
   return {
     options: { titleBarStyle: "hidden", titleBarOverlay: titleBarOverlay(colors) },
     insetLeft: 0,
+    insetRight: OVERLAY_BUTTONS_WIDTH,
   };
 }
+
+/** Largura dos botões nativos (minimizar, maximizar, fechar) à direita, no Windows/Linux. */
+const OVERLAY_BUTTONS_WIDTH = 138;
 
 /** Cores dos botões nativos (Windows/Linux) iguais às da barra. */
 function titleBarOverlay(colors) {
@@ -247,7 +252,7 @@ function barHtml() {
 html,body{margin:0;height:${BAR_HEIGHT}px;overflow:hidden;background:var(--bg);color:var(--fg);
 font:13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none}
 #bar{display:flex;align-items:center;gap:2px;height:${BAR_HEIGHT}px;padding:0 4px;
-width:env(titlebar-area-width,100%)}
+width:env(titlebar-area-width,calc(100% - var(--inset-right,0px)))}
 /* Só o espaço dos semáforos e o do título arrastam a janela; os botões ficam fora de
    qualquer área de arrasto (no macOS um no-drag dentro de drag engolia o clique). */
 #lights{flex:none;width:var(--inset-left,0px);align-self:stretch;-webkit-app-region:drag}
@@ -324,6 +329,7 @@ padding:0 8px;background:rgba(255,255,255,.9);color:#202124;font:inherit;outline
     root.setProperty("--fg", state.colors && state.colors.foreground || "#202124");
     root.setProperty("--hover", state.colors && state.colors.hover || "rgba(0,0,0,.08)");
     root.setProperty("--inset-left", (state.fullScreen ? 0 : Number(state.insetLeft) || 0) + "px");
+    root.setProperty("--inset-right", (state.fullScreen ? 0 : Number(state.insetRight) || 0) + "px");
     $("back").disabled = !state.canGoBack;
     $("forward").disabled = !state.canGoForward;
     $("reloadIcon").hidden = Boolean(state.loading);

@@ -312,6 +312,37 @@ describe("atualização automática", () => {
     });
   });
 
+  it("falha de uma versão que o app já roda não aparece como erro", async () => {
+    const workDir = tempDir("agzos-falha-versao-");
+    fs.writeFileSync(path.join(workDir, "resultado.txt"), "failed 1.4.0 EBUSY arquivo em uso\n");
+    const updater = updaterModule.createUpdater({
+      feedUrl: "https://agzosagency.com.br/browser/latest.json",
+      currentVersion: "1.4.0",
+      platform: "win32",
+      arch: "x64",
+      execPath: "C:/nao/existe/agzos-browser.exe",
+      workDir,
+      fetchImpl: async () => new Response(JSON.stringify({ version: "1.4.0" })),
+    });
+    expect(updater.state()).toMatchObject({ installError: null });
+    expect(await updater.check()).toMatchObject({ status: "up-to-date", installError: null });
+  });
+
+  it("falha de uma versão mais nova que a instalada continua visível", async () => {
+    const workDir = tempDir("agzos-falha-nova-");
+    fs.writeFileSync(path.join(workDir, "resultado.txt"), "failed 1.4.1 EBUSY arquivo em uso\n");
+    const updater = updaterModule.createUpdater({
+      feedUrl: "https://agzosagency.com.br/browser/latest.json",
+      currentVersion: "1.4.0",
+      platform: "win32",
+      arch: "x64",
+      execPath: "C:/nao/existe/agzos-browser.exe",
+      workDir,
+      fetchImpl: async () => new Response(JSON.stringify({ version: "1.4.0" })),
+    });
+    expect(updater.state()).toMatchObject({ installError: expect.stringContaining("EBUSY") });
+  });
+
   it("de ponta a ponta no Linux: verifica, baixa, confere, extrai e instala por cima ao fechar", async () => {
     // Instalação "antiga" e pacote "novo" (tar.gz como o do build-all.sh).
     const root = tempDir("agzos-upd-");

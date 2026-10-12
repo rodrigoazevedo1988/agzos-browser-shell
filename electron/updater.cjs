@@ -249,8 +249,11 @@ function createUpdater({
   try {
     const previous = fs.readFileSync(resultFile, "utf8").trim();
     fs.rmSync(resultFile, { force: true });
-    if (previous.startsWith("failed")) {
-      const reason = previous.slice("failed".length).trim() || "erro desconhecido";
+    // "failed <versão> <motivo>": se o app já roda essa versão ou uma mais nova, a falha
+    // não importa mais (a atualização entrou por outro caminho) e não é mostrada.
+    const failed = /^failed\s*(?:(\d+\.\d+\.\d+)\s+)?(.*)$/s.exec(previous);
+    if (failed && (!failed[1] || compareVersions(failed[1], currentVersion) > 0)) {
+      const reason = failed[2].trim() || "erro desconhecido";
       state.installError = `A última atualização não foi instalada (${reason}).`;
       log(`update: instalação anterior falhou (${previous})`);
     }

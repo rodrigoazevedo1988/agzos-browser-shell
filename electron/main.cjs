@@ -149,6 +149,7 @@ const {
   parseManifest,
   pwaArgOf,
   scopeContains,
+  pwaIconFile,
   shortcutPaths,
   writeMacBundle,
 } = require("./pwa.cjs");
@@ -6803,6 +6804,27 @@ function openPwaWindow(id, url = null) {
 // Apps cuja montagem falhou nesta sessão: abrem no navegador sem tentar de novo a cada clique.
 const macPwaFallback = new Set();
 
+/**
+ * Windows: PWA instalado antes de existir o .ico (ou com a instalação incompleta) ganha o
+ * arquivo ao abrir, a partir do .png que ficou na pasta do app.
+ */
+function ensurePwaIco(id) {
+  if (process.platform !== "win32") return;
+  const dir = pwaDir(id);
+  const ico = path.join(dir, "icon.ico");
+  if (fs.existsSync(ico) || !fs.existsSync(path.join(dir, "icon.png"))) return;
+  try {
+    const image = nativeImage.createFromPath(path.join(dir, "icon.png"));
+    if (image.isEmpty()) return;
+    fs.writeFileSync(
+      ico,
+      icoFromPngs([16, 24, 32, 48, 64, 256].map((size) => ({ size, png: pngOf(image, size) }))),
+    );
+  } catch (error) {
+    console.error(`Agzos: ícone .ico do PWA ${id} não gerado.`, error?.message);
+  }
+}
+
 function openPwaWindowHere(id, url = null) {
   const record = pwaStore?.get(id);
   if (!record) return false;
@@ -6827,7 +6849,8 @@ function openPwaWindowHere(id, url = null) {
   } catch {
     bounds = null;
   }
-  const icon = path.join(pwaDir(id), "icon.png");
+  ensurePwaIco(id);
+  const icon = pwaIconFile(process.platform, pwaDir(id));
   // 4.8.5: o webContents da janela é a barra do app (funções do navegador, como no Chrome);
   // o site fica num WebContentsView logo abaixo, na partição do app.
   const frame = pwaChrome.windowFrame(
@@ -6845,7 +6868,7 @@ function openPwaWindowHere(id, url = null) {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: record.backgroundColor ?? "#FFFFFF",
-    ...(process.platform !== "darwin" && fs.existsSync(icon) ? { icon } : {}),
+    ...(process.platform !== "darwin" && icon ? { icon } : {}),
     webPreferences: {
       partition: "agzos-pwa-bar",
       preload: path.join(__dirname, "pwa-bar-preload.cjs"),
@@ -6860,7 +6883,7 @@ function openPwaWindowHere(id, url = null) {
     try {
       win.setAppDetails({
         appId: `br.agzos.browser.pwa.${id}`,
-        appIconPath: path.join(pwaDir(id), "icon.ico"),
+        ...(icon?.endsWith(".ico") ? { appIconPath: icon } : {}),
         relaunchCommand: [process.execPath, ...pwaLaunchArgs(id)]
           .map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg))
           .join(" "),
@@ -6916,6 +6939,7 @@ function openPwaWindowHere(id, url = null) {
       pip: pipActive,
       colors: pwaChrome.barColors(pageThemeColor ?? live.themeColor, dark),
       insetLeft: frame.insetLeft,
+      insetRight: frame.insetRight,
       fullScreen: win.isFullScreen(),
       find: { open: find.open, matches: find.matches, active: find.active },
     };
@@ -7806,7 +7830,19 @@ function startServices() {
       // Testes: o pacote falso não tem Electron; o instalador roda no Electron atual.
       runner: process.env.AGZOS_UPDATE_INSTALL_DIR ? process.execPath : null,
       workDir: path.join(app.getPath("userData"), "atualizacoes"),
-      fetchImpl: (url, init) => net.fetch(url, init),
+      // Num Windows sem proxy, com as guias navegando, o net.fetch do processo principal
+      // devolvia net::ERR_FAILED no latest.json. O fetch do Node é a segunda tentativa; o
+      // SHA-256 do manifesto continua conferindo o pacote.
+      fetchImpl: async (url, init) => {
+        try {
+          return await net.fetch(url, init);
+        } catch (error) {
+          console.log(
+            `Agzos: update: net.fetch falhou (${error?.message}); usando o fetch do Node.`,
+          );
+          return fetch(url, init);
+        }
+      },
       emit: (state) => broadcast("agzos:update", state),
       quit: () => app.quit(),
       log: (message) => console.log(`Agzos: ${message}`),

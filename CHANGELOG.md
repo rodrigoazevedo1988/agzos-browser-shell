@@ -45,6 +45,13 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
+**4.8.8** (2026-10-12)
+
+- Updater: `fetchImpl` tenta `net.fetch` e, se ele lançar, o `fetch` do Node. Num Windows 4.8.7 sem proxy, com as guias navegando, o `net.fetch` do main dava `net::ERR_FAILED` no `latest.json`; a causa exata não foi reproduzida (no Linux o mesmo Electron baixa). O SHA-256 do manifesto segue conferindo o pacote.
+- `install-update.cjs` grava `failed <versão> <motivo>`; o updater ignora a falha quando a versão em execução já é essa ou mais nova (o formato antigo, sem versão, segue aparecendo).
+- PWA no Windows: janela e `setAppDetails` usam `icon.ico` (`pwaIconFile` em `electron/pwa.cjs`), gerado na abertura a partir do `icon.png` quando falta (`ensurePwaIco`).
+- Barra do PWA: sem `env(titlebar-area-width)` a largura cai para `100% - --inset-right` (138 px no Windows/Linux, `insetRight` de `windowFrame`), e não mais para 100% por baixo dos botões nativos. Relato no Windows de barra inteira ausente segue em investigação (pedido o net-log).
+
 **4.8.7** (2026-10-12)
 
 - Barra do PWA: só `#lights` e `#info` têm `-webkit-app-region: drag`; antes a barra toda arrastava com `no-drag` nos botões, e no macOS (`titleBarStyle: hidden` + `WebContentsView`) o clique sumia. e2e com clique real no botão recarregar.

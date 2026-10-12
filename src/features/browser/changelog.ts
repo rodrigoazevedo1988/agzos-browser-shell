@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.8",
+    date: "2026-10-12",
+    items: [
+      "Windows: a busca por atualizações não falha mais com net::ERR_FAILED. Se o caminho normal falhar, o Agzos tenta de novo por outro e o pacote continua conferido.",
+      "Windows: os apps instalados usam o ícone do site na janela e na barra de tarefas, também os que foram instalados antes desta versão.",
+      "Windows e Linux: a barra dos apps instalados deixa livre o espaço dos botões de minimizar, maximizar e fechar, então o menu ⋮ e o Picture-in-Picture não ficam mais por baixo deles.",
+      "O aviso de atualização que não foi instalada some quando o Agzos já está nessa versão ou numa mais nova.",
+    ],
+  },
+  {
     version: "4.8.7",
     date: "2026-10-12",
     items: [
