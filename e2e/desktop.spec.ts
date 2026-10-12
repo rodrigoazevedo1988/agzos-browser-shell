@@ -137,6 +137,20 @@ const PAGES: Record<string, string> = {
     </script>`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
+  // 4.9: vídeo de arquivo (gravado na hora com o MediaRecorder): ao contrário de um
+  // MediaStream ao vivo, aceita velocidade e posição.
+  "/player-arquivo": `<!doctype html><title>Player arquivo</title>
+    <canvas id="c" width="320" height="180" hidden></canvas>
+    <video id="v" muted loop playsinline width="320" height="180"></video>
+    <script>const c = document.getElementById("c"), x = c.getContext("2d"); let t = 0;
+    setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 40);
+    const r = new MediaRecorder(c.captureStream(25), { mimeType: "video/webm" }), parts = [];
+    r.ondataavailable = (e) => parts.push(e.data);
+    r.onstop = () => { const v = document.getElementById("v");
+      v.src = URL.createObjectURL(new Blob(parts, { type: "video/webm" })); v.play(); };
+    r.start(); setTimeout(() => r.stop(), 1500);</script>`,
+  "/com-video-arquivo": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
+    <iframe src="/player-arquivo" width="400" height="240"></iframe>`,
   // 4.5: artigo com menu, barra lateral e rodapé (o modo leitura tira tudo isso).
   "/artigo": `<!doctype html><html lang="pt-BR"><title>Artigo de teste</title>
     <meta name="author" content="Ana Autora">
@@ -1787,6 +1801,11 @@ test("1.5.1: depois de atualizar, aviso com a versão, as novidades e confetes (
 test("1.5.1: picture-in-picture pega o vídeo de qualquer player (até em iframe)", async () => {
   const { app, window } = await launch(tempProfile());
   try {
+    // 4.9: o PiP simples do Chromium vira opção (o padrão é a janela de vídeo).
+    await go(window, "agzos://configuracoes");
+    const simple = window.getByRole("switch", { name: "Picture-in-Picture com controles" });
+    await simple.click();
+    await expect(simple).toHaveAttribute("aria-checked", "false");
     await go(window, `${origin}/com-video`);
     await expect(tabs(window).first()).toContainText("Com vídeo");
     const pipOn = () =>
@@ -1943,6 +1962,90 @@ test("1.5.3: Ctrl+Tab com o foco na página: a página fica à vista e com o foc
     await key("keyDown", "Enter", ["control"]);
     await expect(active).toContainText(chosen);
     expect(await inTab(app, `${origin}/${current}`, "window.enters")).toBe(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.9: janela de vídeo com controles: só o vídeo, volume, velocidade, voltar e fechar", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/com-video-arquivo`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Com vídeo");
+    // Estado do <video> dentro do iframe do player.
+    const video = () =>
+      app.evaluate(async ({ webContents }, target) => {
+        const contents = webContents.getAllWebContents().find((item) => item.getURL() === target);
+        for (const frame of contents?.mainFrame.framesInSubtree ?? []) {
+          const state = await frame.executeJavaScript(`(() => {
+            const v = document.getElementById("v");
+            if (!v) return null;
+            return { position: getComputedStyle(v).position, volume: v.volume,
+              rate: v.playbackRate, paused: v.paused };
+          })()`);
+          if (state) return state;
+        }
+        return null;
+      }, url);
+    const floating = () =>
+      app.evaluate(
+        ({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().filter((w) => w.isAlwaysOnTop() && w.isVisible()).length,
+      );
+    const controls = async () => {
+      let found: Page | undefined;
+      await expect
+        .poll(async () => {
+          for (const page of app.windows()) {
+            if (!page.url().startsWith("data:text/html")) continue;
+            if (
+              await page
+                .locator("#seek")
+                .count()
+                .catch(() => 0)
+            )
+              found = page;
+          }
+          return Boolean(found);
+        })
+        .toBe(true);
+      return found!;
+    };
+
+    const button = window.getByRole("button", { name: "Picture-in-picture" });
+    await expect(button).toBeVisible({ timeout: 10_000 });
+    await button.click();
+    await expect.poll(floating).toBe(1);
+    // A página foi para a janela: só o vídeo (fixo, ocupando tudo); a guia mostra o aviso.
+    await expect.poll(async () => (await video())?.position).toBe("fixed");
+    await expect(window.getByText("Vídeo na janela flutuante")).toBeVisible();
+    await expect(window.getByRole("button", { name: "Sair do picture-in-picture" })).toBeVisible();
+
+    const layer = await controls();
+    await layer.locator("#volume").evaluate((input: HTMLInputElement) => {
+      input.value = "0.3";
+      input.dispatchEvent(new Event("input"));
+    });
+    await expect.poll(async () => (await video())?.volume).toBeCloseTo(0.3, 2);
+    await layer.locator("#rate").selectOption("1.5");
+    await expect.poll(async () => (await video())?.rate).toBe(1.5);
+
+    // Voltar para a guia: a página volta igual, tocando, sem o estilo da janela.
+    await layer.getByRole("button", { name: "Voltar para a guia" }).click();
+    await expect.poll(floating).toBe(0);
+    await expect.poll(async () => (await video())?.position).not.toBe("fixed");
+    await expect(window.getByText("Vídeo na janela flutuante")).toHaveCount(0);
+    expect((await video())?.paused).toBe(false);
+
+    // De novo, e o × fecha pausando.
+    await window.getByRole("button", { name: "Picture-in-picture" }).click();
+    await expect.poll(floating).toBe(1);
+    const again = await controls();
+    await again.getByRole("button", { name: "Fechar e pausar" }).click();
+    await expect.poll(floating).toBe(0);
+    await expect.poll(async () => (await video())?.paused).toBe(true);
+    await expect.poll(async () => (await video())?.position).not.toBe("fixed");
   } finally {
     await app.close();
   }

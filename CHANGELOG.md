@@ -43,6 +43,17 @@
 
 Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
+### 4.9.x — Janela de vídeo (PiP com controles)
+
+**4.9.0** (2026-10-12)
+
+- PRD: `docs/prd/v4.9-janela-de-video.md`. O Electron 44 não tem Document Picture-in-Picture (`documentPictureInPicture` é `undefined`), e o PiP do Chromium não aceita controles novos.
+- `electron/video-window.cjs` (regras puras, scripts do mundo da página, HTML da camada) e `electron/video-window-preload.cjs`. O `WebContentsView` da guia sai da janela do navegador e entra numa janela sem moldura, `alwaysOnTop("floating")`, com uma camada de controles (`createLayerView`) por cima; a guia fica em `ctx.covered` e a casca mostra o aviso (`state.videoWindow`, evento `video-window`).
+- Só o vídeo à vista: estilos por CSSOM com `!important` no `<video>` e nos `<iframe>` acima dele (players embutidos), com os valores anteriores guardados numa propriedade não enumerável da `window` do quadro (chave sorteada por janela). Ancestrais perdem `transform`/`filter`/`contain`, que prenderiam o `position: fixed`.
+- Comandos validados em `videoCommand` (velocidades fixas, níveis de qualidade conhecidos); rodam no quadro do vídeo com gesto do usuário (`play()`). Qualidade só no YouTube (`movie_player`). Estado a cada 500 ms; sem vídeo por 2 s, volta à guia.
+- Volta à guia ao navegar para outro documento, travar, mover a guia para outra janela; fecha junto com a guia (`dropView`). `applyLayout` pula a view que está na janela de vídeo; a guia não hiberna (`pipContents`).
+- Preferência `pipMode` (`agzos` padrão, `nativo`) em Configurações → Aparência; PWAs seguem no PiP nativo.
+
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
 **4.8.8** (2026-10-12)

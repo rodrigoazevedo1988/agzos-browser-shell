@@ -90,7 +90,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   newWindow: (options) => ipcRenderer.invoke("window:new", options ?? {}),
   moveTabToWindow: (id, tab) => ipcRenderer.invoke("tab:move-to-window", { id, tab }),
   syncTabs: (ids) => ipcRenderer.invoke("tabs:known", { ids }),
-  pictureInPicture: (id) => ipcRenderer.invoke("tab:pip", { id }),
+  pictureInPicture: (id, mode) => ipcRenderer.invoke("tab:pip", { id, mode }),
   hibernateTab: (id) => ipcRenderer.invoke("tab:hibernate", { id }),
   killTab: (id) => ipcRenderer.invoke("tab:kill", { id }),
   gxStats: () => ipcRenderer.invoke("gx:stats"),

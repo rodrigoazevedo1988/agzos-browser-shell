@@ -131,6 +131,7 @@ export type BrowserAction =
   | { type: "view/hibernated"; id: number }
   | { type: "view/unresponsive"; id: number; value: boolean }
   | { type: "view/pip"; id: number; active: boolean }
+  | { type: "view/video-window"; id: number; active: boolean }
   | { type: "view/recovered"; id: number }
   | { type: "view/login-rejected"; id: number; continueUrl: string | null }
   | { type: "fullscreen/set"; active: boolean }
@@ -403,6 +404,7 @@ function removeTabs(
     hibernated: state.hibernated.filter((id) => !ids.has(id)),
     unresponsive: state.unresponsive.filter((id) => !ids.has(id)),
     pip: state.pip.filter((id) => !ids.has(id)),
+    videoWindow: state.videoWindow.filter((id) => !ids.has(id)),
     blocked: withoutKeys(state.blocked, ids),
     zoom: withoutKeys(state.zoom, ids),
     thumbnails: withoutKeys(state.thumbnails, ids),
@@ -704,6 +706,7 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         hibernated: [],
         unresponsive: [],
         pip: [],
+        videoWindow: [],
         audioPlaying: [],
         loginRejected: {},
         requestedUrl: null,
@@ -930,6 +933,12 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
       const without = withoutId(state.pip, action.id);
       if (action.active && !state.tabs.some((tab) => tab.id === action.id)) return state;
       return { ...state, pip: action.active ? [...without, action.id] : without };
+    }
+
+    case "view/video-window": {
+      const without = withoutId(state.videoWindow, action.id);
+      if (action.active && !state.tabs.some((tab) => tab.id === action.id)) return state;
+      return { ...state, videoWindow: action.active ? [...without, action.id] : without };
     }
 
     case "view/unresponsive": {

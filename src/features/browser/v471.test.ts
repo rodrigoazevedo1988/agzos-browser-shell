@@ -53,7 +53,10 @@ describe("4.7.1: terminal solto é uma janela normal", () => {
     const pip = mainCode.slice(mainCode.indexOf("const pip = new BrowserWindow("));
     const window = pip.slice(0, pip.indexOf("});") + 3);
     expect(window).not.toContain("alwaysOnTop");
-    expect(mainCode).not.toContain("setAlwaysOnTop");
+    const start = mainCode.indexOf("function openTerminalPip(");
+    const body = mainCode.slice(start, mainCode.indexOf("\n}\n", start));
+    expect(start).toBeGreaterThan(0);
+    expect(body).not.toContain("setAlwaysOnTop");
   });
 });
 

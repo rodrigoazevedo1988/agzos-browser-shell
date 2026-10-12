@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.0",
+    date: "2026-10-12",
+    items: [
+      "Picture-in-Picture com controles: o vídeo vai para uma janela flutuante do Agzos, sempre por cima, com play e pausa, voltar e avançar 10 segundos, barra de tempo, volume, velocidade (0,5× a 2×) e qualidade (no YouTube).",
+      "Os controles aparecem ao passar o mouse e somem sozinhos. Também dá pelo teclado: Espaço pausa, ← e → andam 10 segundos, ↑ e ↓ mudam o volume, M tira o som e Esc devolve o vídeo à guia.",
+      'O vídeo não recarrega ao ir para a janela nem ao voltar. Enquanto ele está fora, a guia mostra o aviso com "Trazer de volta"; o × fecha pausando.',
+      'Prefere o Picture-in-Picture simples do Chromium? Desligue "Picture-in-Picture com controles" em Configurações → Aparência. Os apps instalados continuam com o simples nesta versão.',
+    ],
+  },
+  {
     version: "4.8.8",
     date: "2026-10-12",
     items: [

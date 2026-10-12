@@ -59,6 +59,7 @@ export type DesktopTabEvent =
   | { type: "hibernated"; id: number }
   | { type: "unresponsive"; id: number; value: boolean }
   | { type: "pip"; id: number; active: boolean }
+  | { type: "video-window"; id: number; active: boolean }
   | { type: "blocked"; id: number; count: number; trackers: BlockedTracker[] }
   | { type: "find"; id: number; active: number; total: number }
   | { type: "zoom"; id: number; factor: number }
@@ -587,7 +588,10 @@ export type DesktopBridge = DesktopExtras & {
   syncTabs(ids: number[]): Promise<void>;
   hibernateTab(id: number): Promise<{ ok: boolean }>;
   /** Liga/desliga o picture-in-picture do vídeo da guia (qualquer player). */
-  pictureInPicture(id: number): Promise<{ ok: boolean; active: boolean; reason?: string }>;
+  pictureInPicture(
+    id: number,
+    mode?: "agzos" | "nativo",
+  ): Promise<{ ok: boolean; active: boolean; reason?: string }>;
   /** Encerra a página que não responde. */
   killTab(id: number): Promise<void>;
   /** GX Control (3.0): uso do app e das guias desta janela. */

@@ -260,6 +260,7 @@ export function parsePrefs(value: unknown): Prefs {
       typeof raw["readerFontSize"] === "number" && Number.isFinite(raw["readerFontSize"])
         ? Math.round(Math.min(26, Math.max(15, raw["readerFontSize"])))
         : defaultPrefs.readerFontSize,
+    pipMode: raw["pipMode"] === "nativo" ? "nativo" : "agzos",
     railCollapsed: bool("railCollapsed"),
     bookmarksBar: bool("bookmarksBar"),
     searchSuggestions: bool("searchSuggestions"),

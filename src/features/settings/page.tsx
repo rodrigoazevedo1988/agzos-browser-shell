@@ -253,6 +253,19 @@ export function SettingsPage(props: SettingsPageProps) {
             ),
           },
           {
+            id: "janela-de-video",
+            label: "Picture-in-Picture com controles",
+            keywords: "pip picture in picture video flutuante janela volume velocidade qualidade",
+            node: (
+              <Toggle
+                label="Picture-in-Picture com controles"
+                hint="Janela de vídeo do Agzos: volume, velocidade, ±10 s e qualidade. Desligado, usa o PiP simples do Chromium"
+                checked={prefs.pipMode === "agzos"}
+                onChange={(on) => setPrefs({ pipMode: on ? "agzos" : "nativo" })}
+              />
+            ),
+          },
+          {
             id: "sidebar",
             label: "Barra lateral",
             keywords: "painéis whatsapp telegram gx control atalhos lateral ocultar",

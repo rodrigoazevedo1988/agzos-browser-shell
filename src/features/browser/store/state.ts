@@ -78,6 +78,8 @@ export type Prefs = {
   notesOpen: boolean;
   /** Tamanho da letra do modo leitura (4.5), em px. */
   readerFontSize: number;
+  /** Picture-in-Picture (4.9): janela de vídeo do Agzos (com controles) ou a do Chromium. */
+  pipMode: PipMode;
   orientation: TabOrientation;
   railCollapsed: boolean;
   pausedHosts: string[];
@@ -145,12 +147,15 @@ export type Prefs = {
 };
 
 /** Mesma lista de electron/hibernate.cjs (o primeiro é o padrão). */
+export type PipMode = "agzos" | "nativo";
+
 export const HIBERNATE_MINUTES = [30, 15, 60, 120] as const;
 
 export const defaultPrefs: Prefs = {
   dark: true,
   notesOpen: false,
   readerFontSize: 19,
+  pipMode: "agzos",
   engine: "duckduckgo",
   shield: true,
   aiOpen: true,
@@ -234,6 +239,8 @@ export type BrowserState = {
   unresponsive: number[];
   /** Guias com vídeo em picture-in-picture. */
   pip: number[];
+  /** Guias cuja página está na janela de vídeo (4.9): a casca mostra o aviso no lugar. */
+  videoWindow: number[];
   loginRejected: Record<number, string>;
   requestedUrl: { id: number; url: string } | null;
   fullscreen: boolean;
@@ -280,6 +287,7 @@ export const initialState: BrowserState = {
   hibernated: [],
   unresponsive: [],
   pip: [],
+  videoWindow: [],
   loginRejected: {},
   requestedUrl: null,
   fullscreen: false,

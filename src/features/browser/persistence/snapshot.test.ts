@@ -195,6 +195,7 @@ describe("migração da 1.3", () => {
         aiSidebar: true,
         notesOpen: false,
         readerFontSize: 19,
+        pipMode: "agzos",
         orientation: "vertical",
         railCollapsed: true,
         pausedHosts: ["x.com"],

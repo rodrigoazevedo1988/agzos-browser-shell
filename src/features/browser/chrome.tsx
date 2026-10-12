@@ -962,11 +962,11 @@ export function AgzosBrowser() {
   const pictureInPicture = useCallback(
     (tabId: number) => {
       if (!desktop) return;
-      void desktop.pictureInPicture(tabId).then(({ ok, active }) => {
+      void desktop.pictureInPicture(tabId, prefs.pipMode).then(({ ok, active }) => {
         if (ok) dispatch({ type: "view/pip", id: tabId, active });
       });
     },
-    [desktop],
+    [desktop, prefs.pipMode],
   );
 
   const openUrl = useCallback(
@@ -2910,6 +2910,15 @@ export function AgzosBrowser() {
                     flash();
                   }}
                 />
+                {state.videoWindow.includes(activeTab.id) && (
+                  <div className="video-window-placeholder" role="status">
+                    <strong>Vídeo na janela flutuante</strong>
+                    <span>Os controles ficam na própria janela de vídeo.</span>
+                    <Button size="sm" onClick={() => pictureInPicture(activeTab.id)}>
+                      Trazer de volta
+                    </Button>
+                  </div>
+                )}
                 {activeReader && (
                   <div className="reader-layer">
                     <ReaderView

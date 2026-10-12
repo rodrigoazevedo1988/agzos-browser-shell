@@ -99,6 +99,9 @@ export function useDesktopSync({
           case "pip":
             dispatch({ type: "view/pip", id: event.id, active: event.active });
             return;
+          case "video-window":
+            dispatch({ type: "view/video-window", id: event.id, active: event.active });
+            return;
           case "unresponsive":
             dispatch({ type: "view/unresponsive", id: event.id, value: event.value });
             return;
