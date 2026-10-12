@@ -2,6 +2,10 @@
 set -e
 
 VERSION="4.8.4"
+# Quantos browser-artifacts-v* manter. Cada um tem ~1,2 GB dos 6 instaladores;
+# o release-browser.sh copia pra browser/vX.Y.Z (que o nginx serve) mas o
+# diretório de build nunca era removido — 44 builds chegaram a ocupar 47 GB.
+KEEP_ARTIFACTS="${KEEP_ARTIFACTS:-2}"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
@@ -221,3 +225,22 @@ cd /var/www/agzos-browser
 # publicada não tiver entrada no CHANGELOG, em vez de publicar notas de outra release.
 NOTES="$(bun run scripts/release-notes.ts "$VERSION")"
 bash scripts/release-browser.sh --version $VERSION --artifacts "$ARTIFACTS" --yes --notes "$NOTES"
+
+# Só limpa depois do release: se o build falhar antes daqui, os artefatos ficam
+# para depurar em vez de sumirem junto com a causa.
+prune_artifacts() {
+  local parent="$1"
+  local keep="$2"
+  local old
+  old="$(ls -dt "$parent"/browser-artifacts-v* 2>/dev/null | tail -n +$((keep + 1)))"
+  [[ -z "$old" ]] && { echo "Nada a limpar (mantendo $keep)."; return 0; }
+  local count=0
+  while IFS= read -r dir; do
+    # não confia no nome: confirma que é mesmo um diretório de artefatos
+    [[ -d "$dir" && "$dir" == */browser-artifacts-v[0-9]* ]] || continue
+    rm -rf "$dir" && count=$((count + 1))
+  done <<< "$old"
+  echo "Limpeza: $count browser-artifacts antigo(s) removido(s) (mantendo $keep)."
+}
+
+prune_artifacts "$(dirname "$ARTIFACTS")" "$KEEP_ARTIFACTS"
