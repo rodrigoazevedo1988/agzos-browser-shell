@@ -45,6 +45,12 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.8.x — Base do v4.8, DevTools encaixado e PWA como app no Mac
 
+**4.8.5** (2026-10-12)
+
+- PWA com barra do app (`electron/pwa-chrome.cjs`, `electron/pwa-bar-preload.cjs`): o `webContents` da janela é a barra (partição em memória `agzos-pwa-bar`, página `data:` sem dado do site) e o site vira um `WebContentsView` abaixo, na `persist:pwa-<id>`. Menu ⋮ como dados (`appMenuSpec`): copiar URL, abrir no navegador, PiP (e PiP ao minimizar, `autoPip` no registro), zoom, localizar (`findInPage`), imprimir, tela cheia, DevTools e permissões do app por origem (`pwa:<id>:permission:<tipo>`).
+- Compartilhar tela (`electron/display-picker.cjs`): `setDisplayMediaRequestHandler` em toda sessão de guia e de PWA; `useSystemPicker` no macOS, senão o seletor do Agzos (página `data:` que responde pelo título); áudio `loopback` só no Windows.
+- macOS: `NSCameraUsageDescription` e `NSAudioCaptureUsageDescription` no `Info.plist`; câmera/microfone liberados pelo site passam por `systemPreferences.askForMediaAccess` (`osMediaAccess`), com aviso e atalho para os Ajustes quando o sistema nega.
+
 **4.8.4** (2026-10-09)
 
 - Instalador do Windows (`scripts/windows-installer.nsi`, NSIS gerado no Linux pelo `build-all.sh`, em paralelo com Linux e Mac): por usuário em `%LOCALAPPDATA%\Programs\Agzos Browser`, sem administrador; atalhos na Área de trabalho e no menu Iniciar; entrada em "Programas e Recursos" (HKCU). Nunca toca no perfil (`%APPDATA%`) nem em cópias portáteis; o desinstalador também mantém o perfil.

@@ -14,6 +14,7 @@ const {
   webContents,
   systemPreferences,
   dialog,
+  desktopCapturer,
   nativeImage,
   nativeTheme,
 } = require("electron");
@@ -163,6 +164,8 @@ const {
   readMarker,
 } = require("./pwa-mac.cjs");
 const winInstall = require("./win-install.cjs");
+const pwaChrome = require("./pwa-chrome.cjs");
+const displayPicker = require("./display-picker.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -1227,11 +1230,205 @@ function noteMediaGrant(contents, types, allowed) {
   }
 }
 
+const AV_TYPES = ["camera", "microphone"];
+const osMediaDeniedShown = new Set();
+
+/**
+ * 4.8.5: no macOS o site liberado ainda precisa da câmera/microfone do sistema (TCC). Sem
+ * pedir aqui, o Meet e afins ficavam sem vídeo. Negado no sistema: explica uma vez e
+ * oferece abrir os Ajustes (o app não pode perguntar de novo).
+ */
+async function osMediaAccess(types, parent = null) {
+  if (process.platform !== "darwin") return true;
+  for (const type of AV_TYPES) {
+    if (!types.includes(type)) continue;
+    let status = "unknown";
+    try {
+      status = systemPreferences.getMediaAccessStatus(type);
+      if (status === "granted") continue;
+      if (status === "not-determined" && (await systemPreferences.askForMediaAccess(type))) {
+        continue;
+      }
+    } catch {
+      return false;
+    }
+    if (!osMediaDeniedShown.has(type)) {
+      osMediaDeniedShown.add(type);
+      const label = type === "camera" ? "câmera" : "microfone";
+      const pane = type === "camera" ? "Privacy_Camera" : "Privacy_Microphone";
+      const options = {
+        type: "warning",
+        buttons: ["Abrir Ajustes", "Agora não"],
+        defaultId: 0,
+        cancelId: 1,
+        message: `O macOS bloqueou a ${label} para o Agzos.`,
+        detail: `Libere em Ajustes do Sistema → Privacidade e Segurança → ${label === "câmera" ? "Câmera" : "Microfone"} e abra o app de novo.`,
+      };
+      const usable = parent && !parent.isDestroyed() ? parent : null;
+      void (usable ? dialog.showMessageBox(usable, options) : dialog.showMessageBox(options)).then(
+        ({ response }) => {
+          if (response === 0) {
+            void shell.openExternal(
+              `x-apple.systempreferences:com.apple.preference.security?${pane}`,
+            );
+          }
+        },
+      );
+    }
+    return false;
+  }
+  return true;
+}
+
+/** Responde um pedido de permissão; câmera/microfone liberados passam pelo sistema antes. */
+function answerPermission(contents, types, allow, callback, parent = null) {
+  if (!allow || !types.some((type) => AV_TYPES.includes(type))) {
+    noteMediaGrant(contents, types, Boolean(allow));
+    callback(Boolean(allow));
+    return;
+  }
+  void osMediaAccess(types, parent).then(
+    (ok) => {
+      noteMediaGrant(contents, types, ok);
+      callback(ok);
+    },
+    () => callback(false),
+  );
+}
+
+// --- 4.8.5: compartilhar tela (getDisplayMedia; ver display-picker.cjs) ---
+
+const wiredDisplaySessions = new WeakSet();
+
+/** Janela dona de um conteúdo: a do PWA, a da guia ou a que está em foco. */
+function windowOfContents(contents) {
+  if (contents && !contents.isDestroyed()) {
+    const pwa = pwaWindowOfPage.get(contents);
+    if (pwa && !pwa.isDestroyed()) return pwa;
+    const ctx = tabOfContents.get(contents.id)?.ctx ?? null;
+    if (ctx?.window && !ctx.window.isDestroyed()) return ctx.window;
+    const owner = BrowserWindow.fromWebContents(contents);
+    if (owner && !owner.isDestroyed()) return owner;
+  }
+  return BrowserWindow.getFocusedWindow();
+}
+
+/** Abre o seletor de telas e janelas; resolve com a fonte escolhida ou null. */
+async function pickDisplaySource(parent) {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen", "window"],
+    thumbnailSize: { width: 320, height: 180 },
+    fetchWindowIcons: false,
+  });
+  const ordered = displayPicker.orderSources(sources, "Compartilhar tela");
+  if (!ordered.length) return null;
+  const audio = process.platform === "win32";
+  const payload = displayPicker.pickerPayload(
+    ordered.map((source) => ({
+      id: source.id,
+      name: source.name,
+      thumb: source.thumbnail?.isEmpty() ? "" : (source.thumbnail?.toDataURL() ?? ""),
+    })),
+    { audio },
+  );
+  const usable = parent && !parent.isDestroyed() ? parent : null;
+  const picker = new BrowserWindow({
+    width: 760,
+    height: 540,
+    minWidth: 420,
+    minHeight: 320,
+    title: "Compartilhar tela",
+    ...(usable ? { parent: usable, modal: process.platform !== "darwin" } : {}),
+    show: false,
+    autoHideMenuBar: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      partition: "agzos-display-picker",
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  picker.setMenuBarVisibility(false);
+  const contents = picker.webContents;
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-navigate", (event) => event.preventDefault());
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      resolve(value);
+      if (!picker.isDestroyed()) picker.destroy();
+    };
+    contents.on("page-title-updated", (event, title) => {
+      event.preventDefault();
+      const answer = displayPicker.parsePick(title, ordered.length);
+      if (answer === "cancel") finish(null);
+      else if (answer) finish({ source: ordered[answer.index], audio: audio && answer.audio });
+    });
+    picker.on("closed", () => finish(null));
+    contents.once("did-finish-load", () => {
+      void contents
+        .executeJavaScript(`window.render(${JSON.stringify(payload)})`)
+        .then(() => !picker.isDestroyed() && picker.show())
+        .catch(() => finish(null));
+    });
+    void contents
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(displayPicker.pickerHtml())}`)
+      .catch(() => finish(null));
+  });
+}
+
+/**
+ * getDisplayMedia nas guias e nos PWAs. No macOS 15+ vale o seletor do sistema (que também
+ * dá o áudio); nos outros, o seletor do Agzos. No Windows o áudio do sistema vai junto
+ * (loopback) quando o site pede e o usuário deixa marcado.
+ */
+function wireDisplayCapture(ses) {
+  if (wiredDisplaySessions.has(ses)) return;
+  wiredDisplaySessions.add(ses);
+  ses.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      let contents = null;
+      try {
+        contents = request.frame ? webContents.fromFrame(request.frame) : null;
+      } catch {
+        contents = null;
+      }
+      if (!request.videoRequested) {
+        callback({});
+        return;
+      }
+      void pickDisplaySource(windowOfContents(contents)).then(
+        (chosen) => {
+          if (!chosen) {
+            callback({});
+            return;
+          }
+          callback({
+            video: chosen.source,
+            ...(chosen.audio && request.audioRequested ? { audio: "loopback" } : {}),
+          });
+        },
+        (error) => {
+          console.error("Agzos: compartilhar tela falhou.", error);
+          callback({});
+        },
+      );
+    },
+    { useSystemPicker: process.platform === "darwin" },
+  );
+}
+
 // Permissões por site (electron/permissions.cjs): decisão salva responde sozinha; sem
 // decisão, a casca pergunta (barra de permissão) e "Lembrar" grava no SQLite.
 function wirePermissions(ses) {
   if (wiredPermissionSessions.has(ses)) return;
   wiredPermissionSessions.add(ses);
+  wireDisplayCapture(ses);
   const isPrivate = () => ses === privateSession();
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
     // Modo voz do terminal (4.1): o microfone para a própria interface do Agzos (casca ou
@@ -1254,8 +1451,7 @@ function wirePermissions(ses) {
     const origin = requestOrigin(details);
     const decision = permissions ? permissions.decide(origin, types, isPrivate()) : null;
     if (decision !== null || !origin) {
-      noteMediaGrant(contents, types, Boolean(decision));
-      callback(Boolean(decision));
+      answerPermission(contents, types, Boolean(decision), callback, windowOfContents(contents));
       return;
     }
     const id = `perm-${++permissionSeq}`;
@@ -5646,8 +5842,13 @@ function registerIpc() {
     if (remember) {
       permissions?.remember(pending.origin, pending.types, Boolean(allow), pending.isPrivate);
     }
-    noteMediaGrant(pending.contents, pending.types, Boolean(allow));
-    pending.callback(Boolean(allow));
+    answerPermission(
+      pending.contents,
+      pending.types,
+      Boolean(allow),
+      pending.callback,
+      windowOfContents(pending.contents),
+    );
   });
 
   ipcMain.handle("permissions:list", () => permissions?.list() ?? []);
@@ -6073,6 +6274,11 @@ const pwaDetected = new Map();
 /** id do app → janela aberta. */
 const pwaWindows = new Map();
 const pwaSessions = new WeakSet();
+// 4.8.5: a página do app é um WebContentsView sob a barra (pwa-chrome.cjs); estes mapas
+// ligam janela, página e barra.
+const pwaPageOfWindow = new WeakMap();
+const pwaWindowOfPage = new WeakMap();
+const pwaBars = new Map();
 /** Mundo isolado da consulta do "Tentar instalar" (fora do 0 da página e do 999 do Electron). */
 const PWA_PROBE_WORLD = 4131;
 
@@ -6442,6 +6648,7 @@ async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
 function wirePwaSession(ses, id) {
   if (pwaSessions.has(ses)) return;
   pwaSessions.add(ses);
+  wireDisplayCapture(ses);
   const keyOf = (type) => `pwa:${id}:permission:${type}`;
   const saved = (origin, type) => {
     try {
@@ -6462,9 +6669,12 @@ function wirePwaSession(ses, id) {
       return;
     }
     const values = types.map((type) => saved(origin, type));
+    const parent = windowOfContents(contents);
     if (values.includes("block")) return callback(false);
-    if (values.every((value) => value === "allow")) return callback(true);
-    const parent = BrowserWindow.fromWebContents(contents);
+    if (values.every((value) => value === "allow")) {
+      answerPermission(contents, types, true, callback, parent);
+      return;
+    }
     const labels = {
       camera: "câmera",
       microphone: "microfone",
@@ -6495,7 +6705,7 @@ function wirePwaSession(ses, id) {
           }
         }
       }
-      callback(allow);
+      answerPermission(contents, types, allow, callback, parent);
     });
   });
   ses.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
@@ -6539,6 +6749,37 @@ function bringPwaForward(win) {
   win.focus();
 }
 
+/** Página (WebContents do site) da janela de um PWA. */
+function pwaPageOf(win) {
+  const page = win && !win.isDestroyed() ? pwaPageOfWindow.get(win) : null;
+  return page && !page.isDestroyed() ? page : null;
+}
+
+/** Valores salvos das permissões do app para uma origem (ask quando não há decisão). */
+function pwaPermissionValues(id, origin) {
+  const values = {};
+  for (const [type] of pwaChrome.PERMISSION_TYPES) {
+    let value = null;
+    try {
+      value = origin
+        ? (database?.getSiteSetting(origin, `pwa:${id}:permission:${type}`) ?? null)
+        : null;
+    } catch {
+      value = null;
+    }
+    values[type] = value === "allow" || value === "block" ? value : "ask";
+  }
+  return values;
+}
+
+// Barra do app → main. Só aceita a barra de uma janela de PWA aberta.
+ipcMain.on("pwa-bar:ready", (event) => pwaBars.get(event.sender.id)?.push());
+ipcMain.on("pwa-bar:action", (event, payload) => {
+  const bar = pwaBars.get(event.sender.id);
+  const action = pwaChrome.barAction(payload);
+  if (bar && action) bar.run(action);
+});
+
 function openPwaWindow(id, url = null) {
   const record = pwaStore?.get(id);
   if (!record) return false;
@@ -6549,7 +6790,10 @@ function openPwaWindow(id, url = null) {
   }
   const current = pwaWindows.get(id);
   if (current && !current.isDestroyed()) {
-    if (url) void current.webContents.loadURL(url).catch(() => {});
+    if (url)
+      void pwaPageOf(current)
+        ?.loadURL(url)
+        .catch(() => {});
     if (current.isMinimized()) current.restore();
     bringPwaForward(current);
     return true;
@@ -6566,6 +6810,8 @@ function openPwaWindow(id, url = null) {
     bounds = null;
   }
   const icon = path.join(pwaDir(id), "icon.png");
+  // 4.8.5: o webContents da janela é a barra do app (funções do navegador, como no Chrome);
+  // o site fica num WebContentsView logo abaixo, na partição do app.
   const win = new BrowserWindow({
     title: record.name,
     width: 1100,
@@ -6578,10 +6824,12 @@ function openPwaWindow(id, url = null) {
     backgroundColor: record.backgroundColor ?? "#FFFFFF",
     ...(process.platform !== "darwin" && fs.existsSync(icon) ? { icon } : {}),
     webPreferences: {
-      session: ses,
+      partition: "agzos-pwa-bar",
+      preload: path.join(__dirname, "pwa-bar-preload.cjs"),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: false,
     },
   });
   win.setMenuBarVisibility(false);
@@ -6599,9 +6847,306 @@ function openPwaWindow(id, url = null) {
       // Versões sem a API.
     }
   }
+  const view = new WebContentsView({
+    webPreferences: {
+      session: ses,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      plugins: true,
+    },
+  });
+  if (record.backgroundColor) view.setBackgroundColor(record.backgroundColor);
+  win.contentView.addChildView(view);
+  const contents = view.webContents;
+  const barContents = win.webContents;
   pwaWindows.set(id, win);
-  const contents = win.webContents;
+  pwaPageOfWindow.set(win, contents);
+  pwaWindowOfPage.set(contents, win);
   applyChromeIdentity(contents);
+
+  // --- Estado da barra ---
+  let pageThemeColor = null;
+  let pipActive = false;
+  const find = { open: false, text: "", matches: 0, active: 0 };
+  const layout = () => {
+    if (win.isDestroyed()) return;
+    const [width, height] = win.getContentSize();
+    const top = win.isFullScreen() ? 0 : pwaChrome.BAR_HEIGHT;
+    view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
+  };
+  const pageOrigin = () =>
+    pwaChrome.webOrigin(contents.getURL()) ?? pwaChrome.webOrigin(record.startUrl);
+  const barState = () => {
+    const pageUrl = contents.getURL();
+    const live = pwaStore?.get(id) ?? record;
+    const dark = nativeTheme.shouldUseDarkColors;
+    return {
+      name: live.name,
+      title: contents.getTitle() || live.name,
+      host: pwaChrome.hostLabel(pageUrl),
+      offScope: Boolean(pwaChrome.webOrigin(pageUrl)) && !scopeContains(live.scope, pageUrl),
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
+      loading: contents.isLoading(),
+      zoom: pwaChrome.zoomPercent(contents.getZoomLevel()),
+      pip: pipActive,
+      colors: pwaChrome.barColors(pageThemeColor ?? live.themeColor, dark),
+      find: { open: find.open, matches: find.matches, active: find.active },
+    };
+  };
+  let pushTimer = null;
+  const push = () => {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      if (win.isDestroyed() || barContents.isDestroyed() || contents.isDestroyed()) return;
+      barContents.send("pwa-bar:state", barState());
+    }, 16);
+  };
+
+  // --- Ações (barra, menu ⋮, atalhos) ---
+  const setZoom = (level) => {
+    contents.setZoomLevel(level);
+    pwaStore?.update(id, { zoom: level });
+    push();
+  };
+  const togglePip = async () => {
+    const result = await togglePictureInPicture(contents);
+    pipActive = Boolean(result?.active);
+    push();
+    return result;
+  };
+  const openFind = () => {
+    find.open = true;
+    push();
+    barContents.focus();
+  };
+  const closeFind = () => {
+    find.open = false;
+    find.text = "";
+    find.matches = 0;
+    find.active = 0;
+    if (!contents.isDestroyed()) contents.stopFindInPage("keepSelection");
+    push();
+    contents.focus();
+  };
+  const toggleDevTools = () => {
+    if (!featureFlags().devtools) return;
+    if (contents.isDevToolsOpened()) contents.closeDevTools();
+    else contents.openDevTools({ mode: "detach" });
+  };
+  const setPermission = (type, value) => {
+    const origin = pageOrigin();
+    if (!origin || !database) return;
+    try {
+      database.setSiteSetting(
+        origin,
+        `pwa:${id}:permission:${type}`,
+        value === "ask" ? null : value,
+      );
+    } catch {
+      // Sem banco: nada a gravar.
+    }
+  };
+  const menuAction = (action) => {
+    const permission = pwaChrome.permissionAction(action);
+    if (permission) return setPermission(permission.type, permission.value);
+    switch (action) {
+      case "copy-url":
+        clipboard.writeText(contents.getURL());
+        break;
+      case "open-browser":
+        openInBrowser(contents.getURL());
+        break;
+      case "pip":
+        void togglePip();
+        break;
+      case "auto-pip":
+        pwaStore?.update(id, { autoPip: pwaStore?.get(id)?.autoPip === false });
+        break;
+      case "zoom-in":
+        setZoom(Math.min(8, contents.getZoomLevel() + 0.5));
+        break;
+      case "zoom-out":
+        setZoom(Math.max(-8, contents.getZoomLevel() - 0.5));
+        break;
+      case "zoom-reset":
+        setZoom(0);
+        break;
+      case "find":
+        openFind();
+        break;
+      case "print":
+        contents.print({}, () => {});
+        break;
+      case "fullscreen":
+        win.setFullScreen(!win.isFullScreen());
+        break;
+      case "devtools":
+        toggleDevTools();
+        break;
+      case "uninstall":
+        void uninstallPwa(id, { parent: win });
+        break;
+      default:
+        break;
+    }
+    return undefined;
+  };
+  const toTemplate = (items) =>
+    items.map((item) => {
+      if (item.type === "separator") return { type: "separator" };
+      const entry = { label: item.label };
+      if (item.type) entry.type = item.type;
+      if (item.type === "checkbox" || item.type === "radio") entry.checked = Boolean(item.checked);
+      if (item.accelerator) {
+        entry.accelerator = item.accelerator;
+        entry.registerAccelerator = false;
+      }
+      if (item.submenu) entry.submenu = toTemplate(item.submenu);
+      if (item.action) entry.click = () => menuAction(item.action);
+      return entry;
+    });
+  const showAppMenu = (x, y) => {
+    const live = pwaStore?.get(id) ?? record;
+    const origin = pageOrigin();
+    const spec = pwaChrome.appMenuSpec({
+      name: live.name,
+      pip: pipActive,
+      autoPip: live.autoPip,
+      zoom: contents.getZoomLevel(),
+      fullScreen: win.isFullScreen(),
+      origin,
+      permissions: pwaPermissionValues(id, origin),
+      devtools: featureFlags().devtools,
+      // No modo app quem desinstala é o navegador (ele tem o registro e o atalho).
+      canUninstall: !pwaHost,
+    });
+    Menu.buildFromTemplate(toTemplate(spec)).popup({ window: win, x, y });
+  };
+  const barRun = (action) => {
+    switch (action.action) {
+      case "back":
+        contents.navigationHistory.goBack();
+        break;
+      case "forward":
+        contents.navigationHistory.goForward();
+        break;
+      case "reload":
+        contents.reload();
+        break;
+      case "stop":
+        contents.stop();
+        break;
+      case "menu":
+        showAppMenu(action.x, action.y);
+        break;
+      case "pip":
+        void togglePip();
+        break;
+      case "zoom-reset":
+        setZoom(0);
+        break;
+      case "open-browser":
+        openInBrowser(contents.getURL());
+        break;
+      case "find": {
+        if (!action.text) {
+          find.text = "";
+          find.matches = 0;
+          find.active = 0;
+          contents.stopFindInPage("clearSelection");
+          push();
+          break;
+        }
+        const next = action.next && action.text === find.text;
+        find.text = action.text;
+        contents.findInPage(action.text, { forward: action.forward, findNext: !next });
+        break;
+      }
+      case "find-close":
+        closeFind();
+        break;
+      default:
+        break;
+    }
+  };
+  const barId = barContents.id;
+  pwaBars.set(barId, { push, run: barRun });
+
+  // A barra tem título próprio ("Agzos"): a janela mostra o da página, como antes.
+  barContents.on("page-title-updated", (event) => event.preventDefault());
+  barContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  barContents.on("will-navigate", (event) => event.preventDefault());
+  barContents.on("context-menu", (event) => event.preventDefault());
+  contents.on("page-title-updated", (_event, title) => {
+    if (!win.isDestroyed()) win.setTitle(title || record.name);
+    push();
+  });
+  contents.on("did-change-theme-color", (_event, color) => {
+    pageThemeColor = typeof color === "string" ? color : null;
+    push();
+  });
+  for (const name of [
+    "did-navigate",
+    "did-navigate-in-page",
+    "did-start-loading",
+    "did-stop-loading",
+  ]) {
+    contents.on(name, push);
+  }
+  contents.on("found-in-page", (_event, result) => {
+    find.matches = result.matches ?? 0;
+    find.active = result.activeMatchOrdinal ?? 0;
+    push();
+  });
+  contents.on("enter-html-full-screen", () => layout());
+  contents.on("leave-html-full-screen", () => layout());
+  win.on("enter-full-screen", () => {
+    layout();
+    push();
+  });
+  win.on("leave-full-screen", () => {
+    layout();
+    push();
+  });
+  win.on("focus", () => {
+    if (!find.open && !contents.isDestroyed()) contents.focus();
+  });
+  nativeTheme.on("updated", push);
+  // Picture-in-Picture ao minimizar (ligado por padrão; ⋮ desliga): só com vídeo tocando.
+  win.on("minimize", () => {
+    if ((pwaStore?.get(id)?.autoPip ?? true) === false || pipActive) return;
+    void (async () => {
+      const playing = await Promise.all(
+        liveFrames(contents).map((frame) =>
+          frame
+            .executeJavaScript(
+              "[...document.querySelectorAll('video')].some((v) => !v.paused && !v.ended && v.readyState > 2)",
+            )
+            .catch(() => false),
+        ),
+      );
+      if (playing.some(Boolean)) await togglePip();
+    })();
+  });
+  win.on("restore", () => {
+    if (!pipActive) return;
+    void (async () => {
+      const inPip = await Promise.all(
+        liveFrames(contents).map((frame) =>
+          frame.executeJavaScript("Boolean(document.pictureInPictureElement)").catch(() => false),
+        ),
+      );
+      // O usuário pode ter fechado a janela flutuante: só sai se ainda estiver em PiP.
+      if (inPip.some(Boolean)) await togglePip();
+      else {
+        pipActive = false;
+        push();
+      }
+    })();
+  });
+
   win.once("ready-to-show", () => bringPwaForward(win));
   // Sem tela em branco se a página demorar.
   setTimeout(() => !win.isDestroyed() && !win.isVisible() && bringPwaForward(win), 3000).unref?.();
@@ -6614,19 +7159,25 @@ function openPwaWindow(id, url = null) {
       }
     }, 400);
   };
-  win.on("resize", saveBounds);
+  win.on("resize", () => {
+    layout();
+    saveBounds();
+  });
   win.on("move", saveBounds);
   win.on("closed", () => {
     clearTimeout(timer);
+    clearTimeout(pushTimer);
+    nativeTheme.removeListener("updated", push);
+    pwaBars.delete(barId);
     if (pwaWindows.get(id) === win) pwaWindows.delete(id);
+    if (!contents.isDestroyed()) contents.close();
   });
   // Zoom do app (isolado das guias do mesmo site).
-  const setZoom = (level) => {
-    contents.setZoomLevel(level);
-    pwaStore?.update(id, { zoom: level });
-  };
-  contents.on("did-navigate", () => contents.setZoomLevel(pwaStore?.get(id)?.zoom ?? 0));
-  contents.on("before-input-event", (event, input) => {
+  contents.on("did-navigate", () => {
+    contents.setZoomLevel(pwaStore?.get(id)?.zoom ?? 0);
+    pipActive = false;
+  });
+  const onKey = (event, input) => {
     if (input.type !== "keyDown") return;
     const mod = process.platform === "darwin" ? input.meta : input.control;
     const key = input.key.toLowerCase();
@@ -6642,6 +7193,20 @@ function openPwaWindow(id, url = null) {
     else if (mod && key === "-") run(() => setZoom(Math.max(-8, contents.getZoomLevel() - 0.5)));
     else if (mod && key === "0") run(() => setZoom(0));
     else if (key === "f11") run(() => win.setFullScreen(!win.isFullScreen()));
+    else if (mod && input.shift && key === "p") run(() => void togglePip());
+    else if (mod && !input.shift && key === "f") run(openFind);
+    else if (mod && !input.shift && key === "p") run(() => contents.print({}, () => {}));
+    else if (key === "escape" && find.open) run(closeFind);
+    else if (input.alt && !mod && key === "f")
+      run(() => showAppMenu(win.getContentSize()[0] - 8, pwaChrome.BAR_HEIGHT));
+    else if (key === "f12" || (mod && input.shift && key === "i")) run(toggleDevTools);
+  };
+  contents.on("before-input-event", onKey);
+  barContents.on("before-input-event", (event, input) => {
+    // Na busca, letras e Enter/Esc são da barra; os atalhos do app continuam valendo.
+    const mod = process.platform === "darwin" ? input.meta : input.control;
+    if (find.open && !mod && !input.alt && !/^f\d+$/i.test(input.key)) return;
+    onKey(event, input);
   });
   // Links para fora do app vão para o navegador; popups (login OAuth) abrem como popup.
   contents.setWindowOpenHandler(({ url, features, disposition }) => {
@@ -6675,6 +7240,17 @@ function openPwaWindow(id, url = null) {
     } else if (params.selectionText) {
       items.push({ role: "copy", label: "Copiar" }, { type: "separator" });
     }
+    if (params.mediaType === "video") {
+      items.push(
+        {
+          label: pipActive ? "Sair do Picture-in-Picture" : "Picture-in-Picture",
+          accelerator: "CmdOrCtrl+Shift+P",
+          registerAccelerator: false,
+          click: () => void togglePip(),
+        },
+        { type: "separator" },
+      );
+    }
     items.push(
       {
         label: "Voltar",
@@ -6690,6 +7266,11 @@ function openPwaWindow(id, url = null) {
       { type: "separator" },
       { label: "Copiar endereço da página", click: () => clipboard.writeText(contents.getURL()) },
       { label: "Abrir no Agzos Browser", click: () => openInBrowser(contents.getURL()) },
+      { type: "separator" },
+      {
+        label: "Funções do navegador…",
+        click: () => showAppMenu(params.x, params.y + pwaChrome.BAR_HEIGHT),
+      },
     );
     // No modo app quem desinstala é o navegador (ele tem o registro e o atalho).
     if (!pwaHost) {
@@ -6703,6 +7284,10 @@ function openPwaWindow(id, url = null) {
     }
     Menu.buildFromTemplate(items).popup({ window: win });
   });
+  layout();
+  void barContents
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pwaChrome.barHtml())}`)
+    .catch(() => {});
   void contents.loadURL(url ?? record.startUrl).catch(() => {});
   return true;
 }

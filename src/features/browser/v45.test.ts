@@ -860,7 +860,14 @@ describe("4.5: captura de tela e imagem já carregada", () => {
     expect(mainSource).toContain('"Page.getResourceContent"');
     expect(mainSource).toContain('label: "Salvar imagem já carregada…"');
     expect(mainSource).toContain('ipcMain.handle("capture:take"');
-    expect(mainSource).not.toContain("desktopCapturer");
+    // A captura do Agzos é só da janela do app. O único desktopCapturer (4.8.5) é o
+    // seletor do getDisplayMedia, em que o usuário escolhe a tela ou a janela.
+    const capture = mainSource.slice(mainSource.indexOf('ipcMain.handle("capture:take"'));
+    expect(capture.slice(0, capture.indexOf("ipcMain.handle(", 10))).not.toContain(
+      "desktopCapturer",
+    );
+    expect(mainSource.match(/desktopCapturer\.\w+/g)).toEqual(["desktopCapturer.getSources"]);
+    expect(mainSource).toMatch(/async function pickDisplaySource[^]*?desktopCapturer\.getSources/);
   });
 });
 

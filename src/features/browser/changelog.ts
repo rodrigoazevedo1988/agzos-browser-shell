@@ -7,6 +7,17 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.5",
+    date: "2026-10-12",
+    items: [
+      "Apps instalados (PWA) com as funções do navegador: uma barra fina no topo traz voltar, avançar, recarregar, Picture-in-Picture e o menu ⋮ com copiar URL, abrir no Agzos, zoom, localizar na página (Ctrl+F), imprimir, tela cheia, ferramentas do desenvolvedor e as permissões do app. A barra usa a cor do app e some em tela cheia.",
+      "Picture-in-Picture nos apps: pelo botão da barra, por Ctrl+Shift+P ou pelo clique direito no vídeo. Ao minimizar um app com vídeo tocando (YouTube, por exemplo), o vídeo continua numa janela flutuante; dá para desligar no menu ⋮.",
+      "Chamadas de vídeo funcionando: no Mac, câmera e microfone agora pedem a permissão do sistema (antes o Meet ficava sem câmera). Se o macOS tiver bloqueado, o Agzos avisa e abre o Ajuste certo.",
+      "Compartilhar tela no Meet, Teams, Zoom, Discord e afins, nas guias e nos apps: escolha a tela inteira ou uma janela. No Windows o áudio do sistema pode ir junto; no Mac 15 ou mais novo aparece o seletor do próprio sistema.",
+      "Permissão bloqueada por engano num app? O menu ⋮ → Permissões mostra câmera, microfone, notificações, localização e área de transferência, cada uma com Perguntar, Permitir ou Bloquear.",
+    ],
+  },
+  {
     version: "4.8.4",
     date: "2026-10-09",
     items: [

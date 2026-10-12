@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="4.8.4"
+VERSION="4.8.5"
 # Quantos browser-artifacts-v* manter. Cada um tem ~1,2 GB dos 6 instaladores;
 # o release-browser.sh copia pra browser/vX.Y.Z (que o nginx serve) mas o
 # diretório de build nunca era removido — 44 builds chegaram a ocupar 47 GB.
@@ -9,7 +9,7 @@ KEEP_ARTIFACTS="${KEEP_ARTIFACTS:-2}"
 # Arquivos do processo principal que vão para resources/app/electron.
 # adblocker.vendor.cjs e argon2.vendor.cjs são gerados pelo `bun run desktop:build`
 # (bundles do @ghostery/adblocker e do @noble/hashes, sem node_modules).
-ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs pwa-mac.cjs win-install.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs tooltip.cjs download-rules.cjs page-theme.cjs color-tools.cjs pdf-tools.cjs capabilities.cjs feature-flags.cjs devtools-dock.cjs)
+ELECTRON_FILES=(main.cjs preload.cjs page-preload.cjs db.cjs adblock.cjs adblock-worker.cjs argon2-worker.cjs adblocker.vendor.cjs argon2.vendor.cjs downloads.cjs zoom.cjs permissions.cjs suggest.cjs updater.cjs install-update.cjs windows.cjs hibernate.cjs hover-card.cjs switcher-layer.cjs chrome-overlay.cjs overlay-preload.cjs agzos-key.cjs gx-control.cjs panel-session.cjs gpu-flags.cjs ai.cjs ai-library.cjs terminal.cjs terminal-launch.cjs terminal-secrets.cjs ssh-keys.cjs cli-install.cjs files.cjs pwa.cjs pwa-mac.cjs win-install.cjs session-tabs.cjs ports.cjs ports-service.cjs tunnel.cjs inspector.cjs reader.cjs scratchpad.cjs crx.cjs extensions.cjs capture.cjs tooltip.cjs download-rules.cjs page-theme.cjs color-tools.cjs pdf-tools.cjs capabilities.cjs feature-flags.cjs devtools-dock.cjs pwa-chrome.cjs pwa-bar-preload.cjs display-picker.cjs)
 
 command -v rcodesign >/dev/null || { echo "rcodesign ausente (github.com/indygreg/apple-platform-rs, apple-codesign)" >&2; exit 1; }
 
@@ -168,6 +168,10 @@ data["CFBundleDisplayName"] = "Agzos Browser"
 data["CFBundleIdentifier"] = "br.agzos.browser"
 # Modo voz do terminal (4.1) e páginas que usam o microfone.
 data["NSMicrophoneUsageDescription"] = "O Agzos usa o microfone no modo voz do terminal e nos sites que você permitir."
+# 4.8.5: sem esta chave o macOS nega a câmera a qualquer site (Meet, Teams, Zoom) e aos PWAs,
+# que herdam este Info.plist. O áudio do sistema entra no compartilhamento de tela.
+data["NSCameraUsageDescription"] = "O Agzos usa a câmera nos sites e apps que você permitir, como chamadas de vídeo."
+data["NSAudioCaptureUsageDescription"] = "O Agzos captura o áudio do sistema quando você compartilha a tela com som."
 # 4.1.1 fix: aparece no "Abrir com" do Finder para qualquer arquivo (evento open-file).
 data["CFBundleDocumentTypes"] = [{
     "CFBundleTypeName": "Arquivo",

@@ -3531,6 +3531,38 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
           .filter((contents) => /index\.html|--dev-url/.test(contents.getURL())).length,
     );
     expect(shells).toBe(0);
+
+    // 4.8.5: barra do app em cima (funções do navegador) e o site logo abaixo.
+    const layout = await direct.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((item) =>
+        item.webContents.getURL().startsWith("data:text/html"),
+      )!;
+      const page = win.contentView.children[0] as Electron.WebContentsView;
+      return { top: page.getBounds().y, page: page.webContents.getURL() };
+    });
+    expect(layout).toEqual({ top: 34, page: `${origin}/pwa/` });
+    const bar = (source: string) =>
+      direct.evaluate(async ({ BrowserWindow }, code) => {
+        const win = BrowserWindow.getAllWindows().find((item) =>
+          item.webContents.getURL().startsWith("data:text/html"),
+        )!;
+        return win.webContents.executeJavaScript(code);
+      }, source);
+    await expect.poll(() => bar('document.getElementById("title").textContent')).toBe("App PWA");
+    expect(await bar('document.getElementById("more").getAttribute("aria-label")')).toBe(
+      "Funções do navegador",
+    );
+    // Localizar (Ctrl+F) vai da barra ao site e volta com a contagem.
+    await direct.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((item) =>
+        item.webContents.getURL().startsWith("data:text/html"),
+      )!;
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "f", modifiers: ["control"] });
+    });
+    await expect.poll(() => bar('document.getElementById("find").hidden')).toBe(false);
+    await bar('document.getElementById("query").value = "PWA"');
+    await bar('window.agzosPwaBar.run({ action: "find", text: "PWA" })');
+    await expect.poll(() => bar('document.getElementById("count").textContent')).toBe("1/1");
   } finally {
     await direct.close();
   }
@@ -5432,9 +5464,17 @@ test("4.8.3: modo app do PWA abre só a janela do app, com perfil próprio, e sa
     env: { ...process.env, AGZOS_USER_DATA: profile, AGZOS_TEST_PWA_HOST: marker },
   });
   const closed = new Promise<void>((resolve) => app.on("close", () => resolve()));
-  const window = await app.firstWindow();
-  await expect.poll(() => window.url()).toBe(`${origin}/pwa/`);
-  await expect(window).toHaveTitle("App PWA");
+  await app.firstWindow();
+  // 4.8.5: a janela é a barra do app; o site fica no WebContentsView logo abaixo.
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        const page = win?.contentView.children[0] as Electron.WebContentsView | undefined;
+        return { url: page?.webContents.getURL(), title: win?.getTitle() };
+      }),
+    )
+    .toEqual({ url: `${origin}/pwa/`, title: "App PWA" });
   const state = await app.evaluate(({ app: electronApp, BrowserWindow, webContents }) => ({
     userData: electronApp.getPath("userData"),
     windows: BrowserWindow.getAllWindows().length,
