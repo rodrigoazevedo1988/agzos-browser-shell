@@ -7116,7 +7116,17 @@ function openPwaWindowHere(id, url = null) {
   pwaBars.set(barId, { push, run: barRun });
 
   // A barra tem título próprio ("Agzos"): a janela mostra o da página, como antes.
-  barContents.on("page-title-updated", (event) => event.preventDefault());
+  const keepPageTitle = () => {
+    if (win.isDestroyed()) return;
+    // Sem <title> o Chromium devolve a URL: aí vale o nome do app.
+    const title = contents.getTitle();
+    win.setTitle(title && title !== contents.getURL() ? title : record.name);
+  };
+  barContents.on("page-title-updated", (event) => {
+    event.preventDefault();
+    keepPageTitle();
+  });
+  barContents.on("did-finish-load", keepPageTitle);
   barContents.setWindowOpenHandler(() => ({ action: "deny" }));
   barContents.on("will-navigate", (event) => event.preventDefault());
   barContents.on("context-menu", (event) => event.preventDefault());
