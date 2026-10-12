@@ -134,9 +134,15 @@ describe("4.9: janela de vídeo", () => {
     expect(source).toContain('{"key":"k","childUrl":"https://a/\\"x"}');
   });
 
-  it("main: guia sai da janela e volta; PWA segue no PiP nativo; arquivos no build", () => {
+  it("main: guia e app saem da janela e voltam; arquivos no build", () => {
     expect(main).toContain("if (videoWindow?.view === entry.view) continue;");
-    expect(main).toContain('if (pipMode === "agzos" && where) return openVideoWindow');
+    // 4.9.1: apps instalados também (dono próprio, mesmo caminho).
+    expect(main).toContain('if (pipMode === "agzos" && owner) return openVideoWindow');
+    expect(main).toContain("pwaVideoOwners.set(contents, {");
+    expect(main).toContain("if (win.isDestroyed() || videoWindow?.view === view) return;");
+    expect(main).toMatch(
+      /win\.on\("restore", \(\) => \{\s+\/\/[^\n]*\n\s+if \(videoWindow\?\.contents === contents\)/,
+    );
     expect(main).toMatch(/function dropView[^]*?closeVideoWindow\(\{ restore: false \}\)/);
     expect(build).toContain("video-window.cjs video-window-preload.cjs");
   });

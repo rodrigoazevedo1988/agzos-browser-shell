@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.1",
+    date: "2026-10-12",
+    items: [
+      "Picture-in-Picture com controles também nos apps instalados (YouTube, por exemplo): o botão da barra do app, Ctrl+Shift+P e o minimizar com vídeo tocando abrem a janela de vídeo com volume, velocidade, ±10 s e qualidade.",
+      "Ao voltar para o app (ou restaurar a janela dele), o vídeo volta junto, sem recarregar.",
+      "A escolha entre o Picture-in-Picture com controles e o simples, em Configurações → Aparência, agora vale também para os apps.",
+    ],
+  },
+  {
     version: "4.9.0",
     date: "2026-10-12",
     items: [

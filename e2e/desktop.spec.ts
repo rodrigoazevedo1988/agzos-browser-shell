@@ -3694,6 +3694,48 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
       { x: Math.round(x! + width! / 2), y: Math.round(y! + height! / 2) },
     );
     await expect.poll(() => page("typeof window.agzosMarca")).toBe("undefined");
+
+    // 4.9.1: o PiP do app é a janela de vídeo com controles, como nas guias.
+    await page(`(() => {
+      const c = document.createElement("canvas"); c.width = 320; c.height = 180;
+      const x = c.getContext("2d"); let t = 0;
+      setInterval(() => { x.fillStyle = "hsl(" + (t++ % 360) + ",80%,50%)"; x.fillRect(0, 0, 320, 180); }, 40);
+      const v = document.createElement("video"); v.id = "pv"; v.muted = true; v.width = 320; v.height = 180;
+      document.body.append(v); v.srcObject = c.captureStream(25); v.play(); window.agzosFica = 1; return true;
+    })()`);
+    await expect.poll(() => page('document.getElementById("pv").videoWidth')).toBeGreaterThan(0);
+    const appWindow = () =>
+      direct.evaluate(({ BrowserWindow }) => {
+        const all = BrowserWindow.getAllWindows();
+        const app = all.find((item) => item.webContents.getURL().startsWith("data:text/html"))!;
+        return {
+          floating: all.filter((item) => item.isAlwaysOnTop() && item.isVisible()).length,
+          pageInApp: app.contentView.children.length,
+        };
+      });
+    await bar('window.agzosPwaBar.run({ action: "pip" })');
+    await expect.poll(appWindow).toEqual({ floating: 1, pageInApp: 0 });
+    await expect
+      .poll(() => page('getComputedStyle(document.getElementById("pv")).position'))
+      .toBe("fixed");
+    await expect
+      .poll(() => bar('document.getElementById("pip").classList.contains("on")'))
+      .toBe(true);
+    // O botão da barra de novo devolve a página ao app, sem recarregar.
+    await bar('window.agzosPwaBar.run({ action: "pip" })');
+    await expect.poll(appWindow).toEqual({ floating: 0, pageInApp: 1 });
+    expect(await page('getComputedStyle(document.getElementById("pv")).position')).not.toBe(
+      "fixed",
+    );
+    expect(await page("window.agzosFica")).toBe(1);
+    expect(
+      await direct.evaluate(({ BrowserWindow }) => {
+        const app = BrowserWindow.getAllWindows().find((item) =>
+          item.webContents.getURL().startsWith("data:text/html"),
+        )!;
+        return (app.contentView.children[0] as Electron.WebContentsView).getBounds().y;
+      }),
+    ).toBe(34);
   } finally {
     await direct.close();
   }

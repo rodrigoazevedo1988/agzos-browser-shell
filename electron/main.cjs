@@ -3215,30 +3215,85 @@ async function toggleNativePip(contents) {
 // --- 4.9: janela de vídeo (electron/video-window.cjs). ---
 
 // "agzos" (janela de vídeo com controles) ou "nativo" (PiP do Chromium). A casca manda a
-// preferência a cada pedido; o menu de contexto da página usa a última recebida.
-let pipMode = "agzos";
-// Uma janela de vídeo por vez: { win, overlay, view, contents, frame, frames, key, ... }.
+// preferência a cada pedido e ela fica em meta:pipMode, que vale também para os apps
+// instalados e para o menu de contexto da página.
+function currentPipMode(mode = null) {
+  if (mode === "agzos" || mode === "nativo") {
+    try {
+      if (database?.getMeta("pipMode") !== mode) database?.setMeta("pipMode", mode);
+    } catch {
+      // Sem banco: vale só agora.
+    }
+    return mode;
+  }
+  try {
+    return database?.getMeta("pipMode") === "nativo" ? "nativo" : "agzos";
+  } catch {
+    return "agzos";
+  }
+}
+// Uma janela de vídeo por vez: { win, overlay, owner, view, contents, frame, frames, key, ... }.
 let videoWindow = null;
+// 4.9.1: dono da página de cada app instalado (preenchido por openPwaWindowHere).
+const pwaVideoOwners = new WeakMap();
 
 /**
- * Liga ou desliga o PiP da guia. Guias usam a janela de vídeo (salvo preferência pelo
- * nativo); apps instalados (PWA) seguem no PiP do Chromium.
+ * Dono da página de uma guia: tirar da janela do navegador, devolver e avisar a casca.
+ * Os apps instalados têm o deles (pwaVideoOwners). `view` é a WebContentsView da página.
+ */
+function tabVideoOwner(contents, { ctx, id }) {
+  const entry = ctx.views.get(id);
+  if (!entry) return null;
+  return {
+    view: entry.view,
+    window: ctx.window,
+    alive: () => !ctx.window.isDestroyed() && ctx.views.get(id) === entry,
+    detach: () => {
+      closePanelLayer(ctx, { notify: true });
+      ctx.window.contentView.removeChildView(entry.view);
+      ctx.covered.add(id);
+      applyLayout(ctx);
+    },
+    active: (on) => {
+      if (contents.isDestroyed() || !tabOfContents.has(contents.id)) return;
+      emitTab(contents, { type: "pip", active: on });
+      emitTab(contents, { type: "video-window", active: on });
+    },
+    restore: ({ focus }) => {
+      ctx.covered.delete(id);
+      if (ctx.window.isDestroyed()) return;
+      if (ctx.views.get(id) === entry) {
+        ctx.window.contentView.addChildView(entry.view);
+        raisePanelLayer(ctx);
+      }
+      applyLayout(ctx);
+      if (focus) {
+        if (ctx.window.isMinimized()) ctx.window.restore();
+        ctx.window.focus();
+      }
+    },
+  };
+}
+
+/**
+ * Liga ou desliga o PiP de uma página (guia ou app instalado): a janela de vídeo, salvo
+ * preferência pelo PiP do Chromium.
  */
 async function togglePictureInPicture(contents, mode = null) {
-  if (mode === "agzos" || mode === "nativo") pipMode = mode;
+  const pipMode = currentPipMode(mode);
   if (!contents || contents.isDestroyed()) return { ok: false, active: false };
   if (videoWindow?.contents === contents) {
     closeVideoWindow();
     return { ok: true, active: false };
   }
   const where = tabOfContents.get(contents.id);
-  if (pipMode === "agzos" && where) return openVideoWindow(contents, where);
+  const owner = where ? tabVideoOwner(contents, where) : (pwaVideoOwners.get(contents) ?? null);
+  if (pipMode === "agzos" && owner) return openVideoWindow(contents, owner);
   return toggleNativePip(contents);
 }
 
-async function openVideoWindow(contents, { ctx, id }) {
-  const entry = ctx.views.get(id);
-  if (!entry || ctx.window.isDestroyed()) return { ok: false, active: false };
+async function openVideoWindow(contents, owner) {
+  if (!owner.alive()) return { ok: false, active: false };
   if (videoWindow) closeVideoWindow();
   let best = null;
   let bestScore = -1;
@@ -3264,13 +3319,12 @@ async function openVideoWindow(contents, { ctx, id }) {
     frames.push(frame.parent);
   }
   const restoreScript = videoWin.pageScript(videoWin.restoreInPage, { key });
-  if (ctx.window.isDestroyed() || ctx.views.get(id) !== entry || contents.isDestroyed()) {
+  if (!owner.alive() || contents.isDestroyed() || videoWindow) {
     for (const frame of frames) {
       if (!frame.detached) frame.executeJavaScript(restoreScript).catch(() => {});
     }
     return { ok: false, active: false };
   }
-  closePanelLayer(ctx, { notify: true });
   let saved = null;
   try {
     saved = database?.getMeta("videoWindowBounds") ?? null;
@@ -3280,7 +3334,7 @@ async function openVideoWindow(contents, { ctx, id }) {
   const bounds = videoWin.initialBounds({
     videoWidth: marked.width,
     videoHeight: marked.height,
-    workArea: screen.getDisplayMatching(ctx.window.getBounds()).workArea,
+    workArea: screen.getDisplayMatching(owner.window.getBounds()).workArea,
     saved,
   });
   const win = new BrowserWindow({
@@ -3309,13 +3363,15 @@ async function openVideoWindow(contents, { ctx, id }) {
   const overlay = createLayerView(WebContentsView, {
     preload: path.join(__dirname, "video-window-preload.cjs"),
   });
-  ctx.window.contentView.removeChildView(entry.view);
-  win.contentView.addChildView(entry.view);
+  const { view } = owner;
+  owner.detach();
+  win.contentView.addChildView(view);
   win.contentView.addChildView(overlay);
   const current = {
     win,
     overlay,
-    view: entry.view,
+    owner,
+    view,
     contents,
     frame: best,
     frames,
@@ -3330,7 +3386,7 @@ async function openVideoWindow(contents, { ctx, id }) {
   const layout = () => {
     if (win.isDestroyed()) return;
     const [width, height] = win.getContentSize();
-    entry.view.setBounds({ x: 0, y: 0, width, height });
+    view.setBounds({ x: 0, y: 0, width, height });
     overlay.setBounds({ x: 0, y: 0, width, height });
   };
   layout();
@@ -3347,7 +3403,7 @@ async function openVideoWindow(contents, { ctx, id }) {
   win.on("move", saveBounds);
   win.on("close", (event) => {
     if (current.closing || quitting) return;
-    // Fechar a janela (Alt+F4, ⌘W) é o mesmo que o ×: pausa e devolve à guia.
+    // Fechar a janela (Alt+F4, ⌘W) é o mesmo que o ×: pausa e devolve a página.
     event.preventDefault();
     closeVideoWindow({ pause: true });
   });
@@ -3372,12 +3428,9 @@ async function openVideoWindow(contents, { ctx, id }) {
   void overlay.webContents
     .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(videoWin.controlsHtml())}`)
     .catch(() => {});
-  ctx.covered.add(id);
-  applyLayout(ctx);
   pipContents.add(contents);
   gxControl.visible(contents.id);
-  emitTab(contents, { type: "pip", active: true });
-  emitTab(contents, { type: "video-window", active: true });
+  owner.active(true);
   current.timer = setInterval(() => void pushVideoState(), 500);
   return { ok: true, active: true };
 }
@@ -3437,23 +3490,8 @@ function closeVideoWindow({ restore = true, pause = false, focus = false } = {})
       }
     });
     pipContents.delete(contents);
-    const where = tabOfContents.get(contents.id);
-    if (where) {
-      emitTab(contents, { type: "pip", active: false });
-      emitTab(contents, { type: "video-window", active: false });
-    }
-    if (restore && where && !where.ctx.window.isDestroyed()) {
-      where.ctx.covered.delete(where.id);
-      if (where.ctx.views.get(where.id)?.view === view) {
-        where.ctx.window.contentView.addChildView(view);
-        raisePanelLayer(where.ctx);
-      }
-      applyLayout(where.ctx);
-      if (focus) {
-        if (where.ctx.window.isMinimized()) where.ctx.window.restore();
-        where.ctx.window.focus();
-      }
-    }
+    current.owner.active(false);
+    if (restore) current.owner.restore({ focus });
   }
   if (!win.isDestroyed()) win.destroy();
 }
@@ -7189,7 +7227,8 @@ function openPwaWindowHere(id, url = null) {
   let pipActive = false;
   const find = { open: false, text: "", matches: 0, active: 0 };
   const layout = () => {
-    if (win.isDestroyed()) return;
+    // 4.9.1: a página está na janela de vídeo; o tamanho dela é o daquela janela.
+    if (win.isDestroyed() || videoWindow?.view === view) return;
     const [width, height] = win.getContentSize();
     const top = win.isFullScreen() ? 0 : pwaChrome.BAR_HEIGHT;
     view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
@@ -7237,6 +7276,27 @@ function openPwaWindowHere(id, url = null) {
       }
     }, 16);
   };
+
+  // 4.9.1: a janela de vídeo também serve aos apps; a barra fica com o botão PiP ligado.
+  pwaVideoOwners.set(contents, {
+    view,
+    window: win,
+    alive: () => !win.isDestroyed() && !contents.isDestroyed(),
+    detach: () => win.contentView.removeChildView(view),
+    active: (on) => {
+      pipActive = on;
+      push();
+    },
+    restore: ({ focus }) => {
+      if (win.isDestroyed()) return;
+      win.contentView.addChildView(view);
+      layout();
+      if (focus) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
+    },
+  });
 
   // --- Ações (barra, menu ⋮, atalhos) ---
   const setZoom = (level) => {
@@ -7475,6 +7535,11 @@ function openPwaWindowHere(id, url = null) {
     })();
   });
   win.on("restore", () => {
+    // Janela de vídeo aberta ao minimizar: o app voltou, o vídeo volta com ele.
+    if (videoWindow?.contents === contents) {
+      closeVideoWindow();
+      return;
+    }
     if (!pipActive) return;
     void (async () => {
       const inPip = await Promise.all(
@@ -7514,6 +7579,7 @@ function openPwaWindowHere(id, url = null) {
     nativeTheme.removeListener("updated", push);
     pwaBars.delete(barId);
     if (pwaWindows.get(id) === win) pwaWindows.delete(id);
+    if (videoWindow?.contents === contents) closeVideoWindow({ restore: false });
     if (!contents.isDestroyed()) contents.close();
   });
   // Zoom do app (isolado das guias do mesmo site).

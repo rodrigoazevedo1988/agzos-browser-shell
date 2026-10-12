@@ -45,6 +45,11 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.9.x — Janela de vídeo (PiP com controles)
 
+**4.9.1** (2026-10-12)
+
+- Janela de vídeo nos PWAs: `openVideoWindow` recebe um dono (`tabVideoOwner` para guias, `pwaVideoOwners` preenchido por `openPwaWindowHere`) com `view`, `window`, `alive`, `detach`, `active` e `restore`. O layout do PWA pula a página enquanto ela está na janela de vídeo; `restore` da janela do app devolve o vídeo (par do PiP ao minimizar); fechar o app fecha a janela de vídeo sem devolver.
+- `pipMode` passa a morar em meta `pipMode` (a casca grava a cada pedido), para os apps e o menu de contexto seguirem a escolha. Clones do macOS (perfil próprio) ficam no padrão `agzos`.
+
 **4.9.0** (2026-10-12)
 
 - PRD: `docs/prd/v4.9-janela-de-video.md`. O Electron 44 não tem Document Picture-in-Picture (`documentPictureInPicture` é `undefined`), e o PiP do Chromium não aceita controles novos.
