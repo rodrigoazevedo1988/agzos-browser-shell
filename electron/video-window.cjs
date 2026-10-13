@@ -34,20 +34,21 @@ const QUALITY_LABELS = {
  */
 function initialBounds({ videoWidth, videoHeight, workArea, saved = null }) {
   const ratio = videoWidth > 0 && videoHeight > 0 ? videoWidth / videoHeight : 16 / 9;
-  const maxWidth = Math.max(MIN_WIDTH, Math.round(workArea.width * 0.9));
-  const width = Math.min(
-    maxWidth,
-    Math.max(MIN_WIDTH, Math.round(Number(saved?.width) || INITIAL_WIDTH)),
-  );
+  const maxAllowedWidth = Math.min(800, Math.max(MIN_WIDTH, Math.round(workArea.width * 0.6)));
+  const savedWidth = Number(saved?.width);
+  const width =
+    Number.isFinite(savedWidth) && savedWidth >= MIN_WIDTH && savedWidth <= maxAllowedWidth
+      ? Math.round(savedWidth)
+      : INITIAL_WIDTH;
   const height = Math.max(MIN_HEIGHT, Math.round(width / ratio));
   if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
     const x = Math.round(saved.x);
     const y = Math.round(saved.y);
     const inside =
-      x >= workArea.x - width / 2 &&
+      x >= workArea.x &&
       y >= workArea.y &&
-      x + width / 2 <= workArea.x + workArea.width &&
-      y + MIN_HEIGHT <= workArea.y + workArea.height;
+      x + width <= workArea.x + workArea.width &&
+      y + height <= workArea.y + workArea.height;
     if (inside) return { x, y, width, height, ratio };
   }
   return {

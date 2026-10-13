@@ -147,14 +147,24 @@ describe("4.9: janela de vídeo", () => {
     expect(build).toContain("video-window.cjs video-window-preload.cjs");
   });
 
-  it("4.9.2: isolamento protege o vídeo contra resize do site e trava proporção", () => {
+  it("4.9.3: redimensionamento suave sem loop de will-resize e sanitização de bounds", () => {
     expect(main).toContain("thickFrame: true");
-    expect(main).toContain('win.on("will-resize"');
+    expect(main).not.toContain('win.on("will-resize"');
+    expect(main).toContain("maxWidth: Math.round(display.workArea.width");
     const isoSource = video.isolateInPage.toString();
     expect(isoSource).toContain("MutationObserver");
     expect(isoSource).toContain("enforceTarget");
     expect(isoSource).toContain('window.addEventListener("resize"');
     expect(isoSource).toContain('"background-color": "#000"');
+
+    const bounds = video.initialBounds({
+      videoWidth: 1920,
+      videoHeight: 1080,
+      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      saved: { x: 100, y: 100, width: 1800, height: 1000 },
+    });
+    expect(bounds.width).toBe(480);
+    expect(bounds.height).toBe(270);
   });
 
   it("preferência e estado da casca", () => {

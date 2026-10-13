@@ -11,6 +11,7 @@ export default tseslint.config(
       "dist",
       ".output",
       ".vinxi",
+      ".claude",
       "electron/adblocker.vendor.cjs",
       "electron/argon2.vendor.cjs",
     ],

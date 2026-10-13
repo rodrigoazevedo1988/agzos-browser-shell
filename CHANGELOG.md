@@ -45,6 +45,12 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.9.x — Janela de vídeo (PiP com controles)
 
+**4.9.3** (2026-10-13)
+
+- Janela de vídeo (PiP): correção no redimensionamento manual. Remove o listener `will-resize` que causava descompasso com o Win32 `WM_SIZING` no Windows (expandindo descontroladamente e impedindo diminuir o tamanho) e evita forçar proporção via `setAspectRatio` no Windows/Linux, onde a API de janela sem moldura apresenta bugs de trava de redimensionamento.
+- A janela agora redimensiona suavemente e livremente em qualquer direção entre o tamanho mínimo (240×135) e o limite máximo (80% da área de trabalho), com `object-fit: contain` e fundo preto `#000` preservando a proporção nativa do vídeo sem distorções nem vazamento da página.
+- `initialBounds`: descarta e redefine para o tamanho padrão (480 px) quaisquer dimensões gigantes gravadas anteriormente em sessões anômalas.
+
 **4.9.2** (2026-10-13)
 
 - Janela de vídeo (PiP): proteção contra redimensionamento em qualquer proporção (Windows, Linux e Mac). O isolamento do `<video>` e de `<iframe>`s no DOM da página agora mantém `MutationObserver`, listeners de `resize` e `loadedmetadata` com re-aplicação de `100vw × 100vh !important`, impedindo scripts do site (como o layout do YouTube) de alterar `top`, `left`, `width` e `height` e de vazar elementos da página abaixo.

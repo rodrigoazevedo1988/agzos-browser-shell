@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.3",
+    date: "2026-10-13",
+    items: [
+      "Corrigido: na janela de vídeo flutuante (Picture-in-Picture), corrigido travamento no redimensionamento que fazia a janela expandir descontroladamente até quase cobrir a tela e impedia diminuir o tamanho.",
+      "Redimensionamento suave e livre: a janela agora diminui suavemente até o tamanho mínimo (240×135) ou expande sem travar nas bordas, e descarta dimensões gigantes salvas anteriormente.",
+    ],
+  },
+  {
     version: "4.9.2",
     date: "2026-10-13",
     items: [

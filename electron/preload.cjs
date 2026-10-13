@@ -160,7 +160,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   pwaOpen: (id) => ipcRenderer.invoke("pwa:open", { id }),
   pwaUninstall: (id) => ipcRenderer.invoke("pwa:uninstall", { id }),
   pwaList: () => ipcRenderer.invoke("pwa:list"),
-  pwaUpdateMeta: (id, name, iconUrl) => ipcRenderer.invoke("pwa:update-meta", { id, name, iconUrl }),
+  pwaUpdateMeta: (id, name, iconUrl) =>
+    ipcRenderer.invoke("pwa:update-meta", { id, name, iconUrl }),
   onPwaState: subscribe("agzos:pwa-state"),
   onPwaChanged: subscribe("agzos:pwa-changed"),
   gesturesConfig: (config) => ipcRenderer.invoke("gestures:config", config),

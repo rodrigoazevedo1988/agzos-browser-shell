@@ -3331,10 +3331,11 @@ async function openVideoWindow(contents, owner) {
   } catch {
     saved = null;
   }
+  const display = screen.getDisplayMatching(owner.window.getBounds());
   const bounds = videoWin.initialBounds({
     videoWidth: marked.width,
     videoHeight: marked.height,
-    workArea: screen.getDisplayMatching(owner.window.getBounds()).workArea,
+    workArea: display.workArea,
     saved,
   });
   const win = new BrowserWindow({
@@ -3345,6 +3346,8 @@ async function openVideoWindow(contents, owner) {
     height: bounds.height,
     minWidth: 240,
     minHeight: 135,
+    maxWidth: Math.round(display.workArea.width * 0.8),
+    maxHeight: Math.round(display.workArea.height * 0.8),
     frame: false,
     thickFrame: true,
     show: false,
@@ -3359,8 +3362,8 @@ async function openVideoWindow(contents, owner) {
   win.setAlwaysOnTop(true, "floating");
   if (process.platform === "darwin") {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (bounds.ratio > 0) win.setAspectRatio(bounds.ratio);
   }
-  win.setAspectRatio(bounds.ratio);
   const overlay = createLayerView(WebContentsView, {
     preload: path.join(__dirname, "video-window-preload.cjs"),
   });
@@ -3392,33 +3395,6 @@ async function openVideoWindow(contents, owner) {
     overlay.setBounds({ x: 0, y: 0, width, height });
   };
   layout();
-  let adjusting = false;
-  win.on("will-resize", (event, newBounds, details) => {
-    if (adjusting) return;
-    const ratio = current.ratio;
-    if (!ratio || ratio <= 0) return;
-    event.preventDefault();
-    adjusting = true;
-    try {
-      const edge = details?.edge;
-      let width = Math.max(240, Math.round(newBounds.width));
-      let height = Math.max(135, Math.round(newBounds.height));
-      let x = newBounds.x;
-      let y = newBounds.y;
-      if (edge === "top" || edge === "bottom") {
-        width = Math.max(240, Math.round(height * ratio));
-      } else {
-        height = Math.max(135, Math.round(width / ratio));
-        if (edge === "top-left" || edge === "top-right") {
-          const cur = win.getBounds();
-          y = cur.y + (cur.height - height);
-        }
-      }
-      win.setBounds({ x, y, width, height });
-    } finally {
-      adjusting = false;
-    }
-  });
   const saveBounds = () => {
     clearTimeout(current.saveTimer);
     current.saveTimer = setTimeout(() => {
@@ -3484,13 +3460,8 @@ async function pushVideoState() {
     const nextRatio = raw.videoWidth / raw.videoHeight;
     if (Math.abs(current.ratio - nextRatio) > 0.05) {
       current.ratio = nextRatio;
-      if (!current.win.isDestroyed()) {
+      if (process.platform === "darwin" && !current.win.isDestroyed()) {
         current.win.setAspectRatio(nextRatio);
-        const [w, h] = current.win.getContentSize();
-        const expectedH = Math.max(135, Math.round(w / nextRatio));
-        if (Math.abs(h - expectedH) > 4) {
-          current.win.setContentSize(w, expectedH);
-        }
       }
     }
   }
@@ -7090,7 +7061,12 @@ async function updatePwaMeta(id, { name, iconUrl } = {}) {
   // Atualiza o ícone e o título da janela aberta, se houver.
   const win = pwaWindows.get(id);
   if (win && !win.isDestroyed()) {
-    if (!image.isEmpty()) win.setIcon(pwaIconFile(process.platform, pwaDir(id)) ? nativeImage.createFromPath(pwaIconFile(process.platform, pwaDir(id))) : image);
+    if (!image.isEmpty())
+      win.setIcon(
+        pwaIconFile(process.platform, pwaDir(id))
+          ? nativeImage.createFromPath(pwaIconFile(process.platform, pwaDir(id)))
+          : image,
+      );
     if (patch.name) win.setTitle(patch.name);
   }
   broadcast("agzos:pwa-changed", {});
