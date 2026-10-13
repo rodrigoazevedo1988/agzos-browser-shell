@@ -45,6 +45,13 @@ Datas conforme `changelog.ts`. PRDs em `docs/prd/`.
 
 ### 4.9.x — Janela de vídeo (PiP com controles)
 
+**4.9.2** (2026-10-13)
+
+- Janela de vídeo (PiP): proteção contra redimensionamento em qualquer proporção (Windows, Linux e Mac). O isolamento do `<video>` e de `<iframe>`s no DOM da página agora mantém `MutationObserver`, listeners de `resize` e `loadedmetadata` com re-aplicação de `100vw × 100vh !important`, impedindo scripts do site (como o layout do YouTube) de alterar `top`, `left`, `width` e `height` e de vazar elementos da página abaixo.
+- Ancestrais ganham `container: "none"` e `container-type: "normal"`; `html` e `body` ganham fundo preto (`#000`).
+- No Windows, a janela ganha `thickFrame: true` para bordas nativas funcionarem com `frame: false`; o evento `will-resize` trava a proporção do vídeo durante o arrasto, e `pushVideoState` sincroniza e ajusta o `setAspectRatio` e a altura caso a resolução ou proporção do vídeo mude em execução (ex.: Shorts/vertical).
+- Ícone de PWAs no Windows: busca de ícones pelo Chromium nativo e suporte a edição de nome e ícone em Configurações → Apps instalados.
+
 **4.9.1** (2026-10-12)
 
 - Janela de vídeo nos PWAs: `openVideoWindow` recebe um dono (`tabVideoOwner` para guias, `pwaVideoOwners` preenchido por `openPwaWindowHere`) com `view`, `window`, `alive`, `detach`, `active` e `restore`. O layout do PWA pula a página enquanto ela está na janela de vídeo; `restore` da janela do app devolve o vídeo (par do PiP ao minimizar); fechar o app fecha a janela de vídeo sem devolver.

@@ -188,7 +188,7 @@ function isolateInPage({ key, childUrl }) {
     }
     saved.push([element, before]);
   };
-  set(target, {
+  const targetProps = {
     position: "fixed",
     top: "0",
     left: "0",
@@ -210,7 +210,34 @@ function isolateInPage({ key, childUrl }) {
     opacity: "1",
     "background-color": "#000",
     ...(childUrl === null ? { "object-fit": "contain" } : {}),
+  };
+  set(target, targetProps);
+
+  // Mantém o vídeo cobrindo 100vw × 100vh mesmo quando o site (YouTube, Twitch etc.)
+  // roda listeners de resize e tenta sobrescrever top, left, width ou height inline.
+  const enforceTarget = () => {
+    if (!target.isConnected) return;
+    for (const [name, value] of Object.entries(targetProps)) {
+      if (
+        target.style.getPropertyValue(name) !== value ||
+        target.style.getPropertyPriority(name) !== "important"
+      ) {
+        target.style.setProperty(name, value, "important");
+      }
+    }
+  };
+  let mutating = false;
+  const observer = new MutationObserver(() => {
+    if (mutating) return;
+    mutating = true;
+    enforceTarget();
+    mutating = false;
   });
+  observer.observe(target, { attributes: true, attributeFilter: ["style", "class"] });
+  window.addEventListener("resize", enforceTarget, { passive: true });
+  target.addEventListener("resize", enforceTarget, { passive: true });
+  target.addEventListener("loadedmetadata", enforceTarget, { passive: true });
+
   let element = target;
   for (;;) {
     let parent = element.parentNode;
@@ -223,6 +250,8 @@ function isolateInPage({ key, childUrl }) {
       "backdrop-filter": "none",
       perspective: "none",
       contain: "none",
+      container: "none",
+      "container-type": "normal",
       "will-change": "auto",
       "clip-path": "none",
       mask: "none",
@@ -231,10 +260,26 @@ function isolateInPage({ key, childUrl }) {
       opacity: "1",
     });
   }
-  set(document.documentElement, { overflow: "hidden" });
-  if (document.body) set(document.body, { overflow: "hidden" });
+  set(document.documentElement, {
+    overflow: "hidden",
+    background: "#000",
+    "background-color": "#000",
+  });
+  if (document.body) {
+    set(document.body, {
+      overflow: "hidden",
+      background: "#000",
+      "background-color": "#000",
+    });
+  }
+  const cleanup = () => {
+    observer.disconnect();
+    window.removeEventListener("resize", enforceTarget);
+    target.removeEventListener("resize", enforceTarget);
+    target.removeEventListener("loadedmetadata", enforceTarget);
+  };
   Object.defineProperty(window, key, {
-    value: { video: childUrl === null ? target : null, saved },
+    value: { video: childUrl === null ? target : null, saved, cleanup, enforce: enforceTarget },
     configurable: true,
   });
   return childUrl === null ? { width: target.videoWidth, height: target.videoHeight } : {};
@@ -244,6 +289,11 @@ function isolateInPage({ key, childUrl }) {
 function restoreInPage({ key }) {
   const store = window[key];
   if (!store) return false;
+  if (typeof store.cleanup === "function") {
+    try {
+      store.cleanup();
+    } catch {}
+  }
   for (const [element, before] of store.saved.reverse()) {
     for (const [name, [value, priority]] of Object.entries(before)) {
       if (value) element.style.setProperty(name, value, priority);
@@ -256,8 +306,28 @@ function restoreInPage({ key }) {
 
 /** Estado do vídeo (e dos níveis de qualidade, quando o player é o do YouTube). */
 function stateInPage({ key }) {
-  const video = window[key]?.video;
-  if (!video || !video.isConnected) return null;
+  let video = window[key]?.video;
+  if (!video || !video.isConnected) {
+    const deep = (root, selector, depth = 0, out = []) => {
+      out.push(...root.querySelectorAll(selector));
+      if (depth < 4) {
+        for (const el of root.querySelectorAll("*")) {
+          if (el.shadowRoot) deep(el.shadowRoot, selector, depth + 1, out);
+        }
+      }
+      return out;
+    };
+    const found = deep(document, "video").find(
+      (v) => v.readyState > 0 && v.videoWidth > 0 && !v.paused,
+    );
+    if (found && window[key]) {
+      window[key].video = found;
+      video = found;
+      window[key].enforce?.();
+    } else {
+      return null;
+    }
+  }
   let quality = null;
   const player = document.getElementById("movie_player");
   if (player && typeof player.getAvailableQualityLevels === "function") {
@@ -278,6 +348,8 @@ function stateInPage({ key }) {
     muted: video.muted,
     rate: video.playbackRate,
     quality,
+    videoWidth: video.videoWidth || 0,
+    videoHeight: video.videoHeight || 0,
   };
 }
 

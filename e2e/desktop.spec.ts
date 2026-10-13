@@ -2031,6 +2031,13 @@ test("4.9: janela de vídeo com controles: só o vídeo, volume, velocidade, vol
     await layer.locator("#rate").selectOption("1.5");
     await expect.poll(async () => (await video())?.rate).toBe(1.5);
 
+    // 4.9.2: redimensionar a janela mantém o vídeo fixo ocupando tudo.
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((w) => w.isAlwaysOnTop() && w.isVisible());
+      win?.setSize(640, 480);
+    });
+    await expect.poll(async () => (await video())?.position).toBe("fixed");
+
     // Voltar para a guia: a página volta igual, tocando, sem o estilo da janela.
     await layer.getByRole("button", { name: "Voltar para a guia" }).click();
     await expect.poll(floating).toBe(0);

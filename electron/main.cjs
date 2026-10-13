@@ -3346,6 +3346,7 @@ async function openVideoWindow(contents, owner) {
     minWidth: 240,
     minHeight: 135,
     frame: false,
+    thickFrame: true,
     show: false,
     alwaysOnTop: true,
     fullscreenable: false,
@@ -3376,6 +3377,7 @@ async function openVideoWindow(contents, owner) {
     frame: best,
     frames,
     key,
+    ratio: bounds.ratio,
     misses: 0,
     closing: false,
     timer: null,
@@ -3390,6 +3392,33 @@ async function openVideoWindow(contents, owner) {
     overlay.setBounds({ x: 0, y: 0, width, height });
   };
   layout();
+  let adjusting = false;
+  win.on("will-resize", (event, newBounds, details) => {
+    if (adjusting) return;
+    const ratio = current.ratio;
+    if (!ratio || ratio <= 0) return;
+    event.preventDefault();
+    adjusting = true;
+    try {
+      const edge = details?.edge;
+      let width = Math.max(240, Math.round(newBounds.width));
+      let height = Math.max(135, Math.round(newBounds.height));
+      let x = newBounds.x;
+      let y = newBounds.y;
+      if (edge === "top" || edge === "bottom") {
+        width = Math.max(240, Math.round(height * ratio));
+      } else {
+        height = Math.max(135, Math.round(width / ratio));
+        if (edge === "top-left" || edge === "top-right") {
+          const cur = win.getBounds();
+          y = cur.y + (cur.height - height);
+        }
+      }
+      win.setBounds({ x, y, width, height });
+    } finally {
+      adjusting = false;
+    }
+  });
   const saveBounds = () => {
     clearTimeout(current.saveTimer);
     current.saveTimer = setTimeout(() => {
@@ -3451,6 +3480,20 @@ async function pushVideoState() {
     return;
   }
   current.misses = 0;
+  if (raw.videoWidth > 0 && raw.videoHeight > 0) {
+    const nextRatio = raw.videoWidth / raw.videoHeight;
+    if (Math.abs(current.ratio - nextRatio) > 0.05) {
+      current.ratio = nextRatio;
+      if (!current.win.isDestroyed()) {
+        current.win.setAspectRatio(nextRatio);
+        const [w, h] = current.win.getContentSize();
+        const expectedH = Math.max(135, Math.round(w / nextRatio));
+        if (Math.abs(h - expectedH) > 4) {
+          current.win.setContentSize(w, expectedH);
+        }
+      }
+    }
+  }
   const title = current.contents.isDestroyed() ? "" : current.contents.getTitle();
   if (!current.win.isDestroyed()) current.win.setTitle(title || "Janela de vídeo");
   current.overlay.webContents.send("video-window:state", videoWin.overlayState(raw, title));
