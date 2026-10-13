@@ -167,6 +167,15 @@ describe("4.9: janela de vídeo", () => {
     expect(bounds.height).toBe(270);
   });
 
+  it("4.9.4: irmãos do vídeo (título e canal do YouTube) somem, inclusive os inseridos depois", () => {
+    const isoSource = video.isolateInPage.toString();
+    expect(isoSource).toContain('const hideProps = { opacity: "0", visibility: "hidden"');
+    expect(isoSource).toContain("observer.observe(container, { childList: true })");
+    expect(isoSource).toContain(
+      'observer?.observe(child, { attributes: true, attributeFilter: ["style"] })',
+    );
+  });
+
   it("preferência e estado da casca", () => {
     expect(parsePrefs({}).pipMode).toBe("agzos");
     expect(parsePrefs({ pipMode: "nativo" }).pipMode).toBe("nativo");

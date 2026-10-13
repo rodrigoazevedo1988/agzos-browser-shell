@@ -214,30 +214,62 @@ function isolateInPage({ key, childUrl }) {
   };
   set(target, targetProps);
 
-  // Mantém o vídeo cobrindo 100vw × 100vh mesmo quando o site (YouTube, Twitch etc.)
-  // roda listeners de resize e tenta sobrescrever top, left, width ou height inline.
-  const enforceTarget = () => {
-    if (!target.isConnected) return;
-    for (const [name, value] of Object.entries(targetProps)) {
-      if (
-        target.style.getPropertyValue(name) !== value ||
-        target.style.getPropertyPriority(name) !== "important"
-      ) {
-        target.style.setProperty(name, value, "important");
+  // Ancestrais do alvo (atravessando shadow roots) e o nó que contém os filhos de cada um.
+  const chain = new Set([target]);
+  const containers = [];
+  for (let node = target; ;) {
+    let parent = node.parentNode;
+    if (!parent) break;
+    if (parent.nodeType === 11) {
+      containers.push(parent);
+      parent = parent.host;
+    } else if (parent.nodeType === 1) {
+      containers.push(parent);
+    } else {
+      break;
+    }
+    if (!parent || parent.nodeType !== 1) break;
+    chain.add(parent);
+    node = parent;
+  }
+
+  // Tudo o que não é o alvo nem ancestral dele some: só z-index não basta, porque os sites
+  // (o YouTube com título, canal e botões por cima do player) põem irmãos com z-index alto,
+  // inserem camadas depois e trocam o style inline. opacity 0 esconde também descendentes
+  // que forçam visibility: visible.
+  const hideProps = { opacity: "0", visibility: "hidden", "pointer-events": "none" };
+  const hidden = new Set();
+  let observer = null;
+  const hideSiblings = () => {
+    for (const container of containers) {
+      for (const child of container.children) {
+        if (chain.has(child) || hidden.has(child)) continue;
+        const tag = child.localName;
+        if (tag === "script" || tag === "style" || tag === "link" || tag === "head") continue;
+        hidden.add(child);
+        set(child, hideProps);
+        observer?.observe(child, { attributes: true, attributeFilter: ["style"] });
       }
     }
   };
-  let mutating = false;
-  const observer = new MutationObserver(() => {
-    if (mutating) return;
-    mutating = true;
-    enforceTarget();
-    mutating = false;
-  });
-  observer.observe(target, { attributes: true, attributeFilter: ["style", "class"] });
-  window.addEventListener("resize", enforceTarget, { passive: true });
-  target.addEventListener("resize", enforceTarget, { passive: true });
-  target.addEventListener("loadedmetadata", enforceTarget, { passive: true });
+  const enforce = (element, props) => {
+    if (!element.isConnected) return;
+    for (const [name, value] of Object.entries(props)) {
+      if (
+        element.style.getPropertyValue(name) !== value ||
+        element.style.getPropertyPriority(name) !== "important"
+      ) {
+        element.style.setProperty(name, value, "important");
+      }
+    }
+  };
+  // Mantém o vídeo cobrindo 100vw × 100vh mesmo quando o site (YouTube, Twitch etc.)
+  // roda listeners de resize e tenta sobrescrever top, left, width ou height inline.
+  const enforceTarget = () => {
+    enforce(target, targetProps);
+    hideSiblings();
+    for (const element of hidden) enforce(element, hideProps);
+  };
 
   let element = target;
   for (;;) {
@@ -273,6 +305,24 @@ function isolateInPage({ key, childUrl }) {
       "background-color": "#000",
     });
   }
+  let mutating = false;
+  observer = new MutationObserver(() => {
+    if (mutating) return;
+    mutating = true;
+    try {
+      enforceTarget();
+    } finally {
+      mutating = false;
+    }
+  });
+  // Filhos novos dos contêineres (camadas que o site insere depois de a janela abrir) e o
+  // style inline dos irmãos escondidos (observados em hideSiblings).
+  for (const container of containers) observer.observe(container, { childList: true });
+  observer.observe(target, { attributes: true, attributeFilter: ["style", "class"] });
+  hideSiblings();
+  window.addEventListener("resize", enforceTarget, { passive: true });
+  target.addEventListener("resize", enforceTarget, { passive: true });
+  target.addEventListener("loadedmetadata", enforceTarget, { passive: true });
   const cleanup = () => {
     observer.disconnect();
     window.removeEventListener("resize", enforceTarget);

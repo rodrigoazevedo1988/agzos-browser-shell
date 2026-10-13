@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.4",
+    date: "2026-10-13",
+    items: [
+      "Corrigido: na janela de vídeo flutuante (Picture-in-Picture), o título do vídeo, o nome do canal e os botões do YouTube não aparecem mais por cima ou abaixo do vídeo ao redimensionar a janela; as sobras ficam em preto.",
+    ],
+  },
+  {
     version: "4.9.3",
     date: "2026-10-13",
     items: [
