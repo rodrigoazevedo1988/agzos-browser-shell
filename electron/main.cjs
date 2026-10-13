@@ -5433,8 +5433,25 @@ function registerIpc() {
     }
   });
   ipcMain.handle("terminal:clipboard-read", () => clipboard.readText());
-  ipcMain.handle("terminal:clipboard-image", async () => {
+  ipcMain.handle("terminal:clipboard-image", async (event, { id } = {}) => {
     try {
+      // 4.9.7: na sessão SSH o print vai para a máquina remota.
+      const ctx = terminalCtx(event);
+      const ssh = ctx && terminals && Number.isInteger(id) ? terminals.sshOf(ctx, id) : null;
+      if (ssh) {
+        return await clipboardImage.pasteClipboardImageRemote(
+          { clipboard, nativeImage },
+          {
+            args: ssh,
+            execFile: require("node:child_process").execFile,
+            sshFile: sshBinary({
+              platform: process.platform,
+              env: process.env,
+              exists: fs.existsSync,
+            }),
+          },
+        );
+      }
       return await clipboardImage.pasteClipboardImage({ clipboard, nativeImage });
     } catch (error) {
       console.error("[terminal] print colado:", error?.message ?? error);

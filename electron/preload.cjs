@@ -136,7 +136,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onTerminalConfig: subscribe("agzos:terminal-config"),
   onTerminalPip: subscribe("agzos:terminal-pip"),
   clipboardRead: () => ipcRenderer.invoke("terminal:clipboard-read"),
-  clipboardImage: () => ipcRenderer.invoke("terminal:clipboard-image"),
+  clipboardImage: (id) => ipcRenderer.invoke("terminal:clipboard-image", { id }),
   clipboardWrite: (text) => ipcRenderer.invoke("terminal:clipboard-write", { text }),
   onTerminalData: subscribe("agzos:terminal-data"),
   onTerminalExit: subscribe("agzos:terminal-exit"),

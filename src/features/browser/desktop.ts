@@ -688,8 +688,13 @@ export type DesktopBridge = DesktopExtras & {
     callback: (payload: { open?: boolean; dock?: "bottom" | "right" }) => void,
   ): () => void;
   clipboardRead(): Promise<string>;
-  /** 4.9.4: salva a imagem da área de transferência num PNG temporário; null sem imagem. */
-  clipboardImage(): Promise<string | null>;
+  /**
+   * 4.9.4: salva a imagem da área de transferência num PNG temporário; null sem imagem.
+   * 4.9.7: numa sessão SSH o PNG vai para a máquina remota (caminho remoto ou erro).
+   */
+  clipboardImage(
+    id: number,
+  ): Promise<{ file: string } | { error: "no-ssh" | "ssh-auth" | "ssh-upload" } | null>;
   clipboardWrite(text: string): Promise<void>;
   onTerminalData(callback: (payload: { id: number; data: string }) => void): () => void;
   onTerminalExit(

@@ -185,7 +185,9 @@ describe("4.9: janela de vídeo", () => {
       "'C:\\T\\a b.png'",
     );
     expect(pastedImageText({ shell: "program", ssh: false }, "/tmp/x.png")).toBe("/tmp/x.png");
-    expect(pastedImageText({ shell: "ssh", ssh: true }, "/tmp/x.png")).toBeNull();
+    expect(pastedImageText({ shell: "ssh", ssh: true }, "/home/u/.cache/agzos-prints/p.png")).toBe(
+      "/home/u/.cache/agzos-prints/p.png",
+    );
     expect(main).toContain('ipcMain.handle("terminal:clipboard-image"');
     expect(main).toContain("clipboardImage.pasteClipboardImage({ clipboard, nativeImage })");
     expect(build).toContain("clipboard-image.cjs");
@@ -234,6 +236,72 @@ describe("4.9: janela de vídeo", () => {
     expect(fs.existsSync(path.join(dir, "outro.txt"))).toBe(true);
     expect(shot.savePrint(Buffer.alloc(0), { dir, now })).toBeNull();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("4.9.7: print colado numa sessão SSH vai para o servidor", async () => {
+    const shot = require("../../../electron/clipboard-image.cjs") as {
+      remotePrintCommand: (name: string) => string;
+      uploadPrint: (png: Buffer, options: Record<string, unknown>) => Promise<unknown>;
+    };
+    const command = shot.remotePrintCommand("print-2026-10-13T20-00-00-000Z.png");
+    expect(command).not.toContain('"');
+    expect(command).toContain("cat > $d/print-2026-10-13T20-00-00-000Z.png");
+    expect(() => shot.remotePrintCommand("x;rm -rf ~.png")).toThrow();
+
+    const calls: { file: string; argv: string[]; stdin: Buffer }[] = [];
+    const fakeExec =
+      (stdout: string, stderr = "", fail = false) =>
+      (
+        file: string,
+        argv: string[],
+        _options: unknown,
+        done: (error: Error | null, out: string, err: string) => void,
+      ) => {
+        const call: { file: string; argv: string[]; stdin: Buffer } = {
+          file,
+          argv,
+          stdin: Buffer.alloc(0),
+        };
+        calls.push(call);
+        return {
+          stdin: {
+            on: () => {},
+            end: (data: Buffer) => {
+              call.stdin = data;
+              setTimeout(() => done(fail ? new Error("x") : null, stdout, stderr), 0);
+            },
+          },
+        };
+      };
+    const png = Buffer.from("png");
+    const now = Date.UTC(2026, 9, 13, 20);
+    const ok = await shot.uploadPrint(png, {
+      sshFile: "/usr/bin/ssh",
+      args: ["-p", "2222", "-i", "/k", "u@vps"],
+      now,
+      execFile: fakeExec("/home/u/.cache/agzos-prints/print-2026-10-13T20-00-00-000Z.png\n"),
+    });
+    expect(ok).toEqual({ file: "/home/u/.cache/agzos-prints/print-2026-10-13T20-00-00-000Z.png" });
+    expect(calls[0]!.argv.slice(0, 5)).toEqual([
+      "-T",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+    ]);
+    expect(calls[0]!.argv.slice(5, 10)).toEqual(["-p", "2222", "-i", "/k", "u@vps"]);
+    expect(calls[0]!.stdin.equals(png)).toBe(true);
+    const denied = await shot.uploadPrint(png, {
+      sshFile: "/usr/bin/ssh",
+      args: ["u@vps"],
+      now,
+      execFile: fakeExec("", "u@vps: Permission denied (publickey,password).", true),
+    });
+    expect(denied).toEqual({ error: "ssh-auth" });
+    expect(await shot.uploadPrint(png, { sshFile: null, args: [], now })).toEqual({
+      error: "no-ssh",
+    });
+    expect(main).toContain("terminals.sshOf(ctx, id)");
   });
 
   it("preferência e estado da casca", () => {

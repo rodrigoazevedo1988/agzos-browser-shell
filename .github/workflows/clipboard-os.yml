@@ -77,3 +77,26 @@ jobs:
           export DISPLAY=:99 && (Xvfb :99 -screen 0 1024x768x24 &) && sleep 2
           (xclip -selection clipboard -t image/png -i /tmp/print.png &) && sleep 1
           "$ELECTRON" --no-sandbox scripts/clipboard-image-smoke.cjs 37 21
+
+      # 4.9.7: print numa sessão SSH. sshd local com chave (no Windows o sshd do Git for
+      # Windows, com bash do outro lado como numa VPS; o cliente é o ssh.exe do System32).
+      - name: SSH — sshd local com chave
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/sshd" && mkdir -p "$d" && chmod 700 "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_key"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/user_key"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            sshd="/usr/bin/sshd"; key=$(cygpath -w "$d/user_key")
+            icacls "$key" /inheritance:r /grant:r "$USERNAME:F" >/dev/null
+          else
+            sshd="/usr/sbin/sshd"; key="$d/user_key"
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat "$d/user_key.pub" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          printf '%s\n' "Port 2299" "ListenAddress 127.0.0.1" "HostKey $d/host_key" \
+            "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" \
+            "KbdInteractiveAuthentication no" "StrictModes no" "PidFile $d/sshd.pid" > "$d/sshd_config"
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo mkdir -p /run/sshd; sudo "$sshd" -f "$d/sshd_config" -E "$d/log"; else "$sshd" -f "$d/sshd_config" -E "$d/log"; fi
+          sleep 2
+          user=$(whoami); user=${user##*\\}
+          node scripts/ssh-print-smoke.cjs 2299 "$user" "$key" || { cat "$d/log"; exit 1; }

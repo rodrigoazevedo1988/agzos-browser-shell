@@ -87,13 +87,22 @@ export function quotePath(shell: string, file: string) {
 /**
  * Texto colado quando a área de transferência tem só uma imagem (print): o caminho do PNG
  * que o main salvou. Agentes (Claude Code, Codex) anexam caminho de imagem colado; num
- * agente aberto direto (program) vai sem aspas, como ao arrastar o arquivo. SSH: null (o
- * arquivo é local, a sessão é remota).
+ * agente aberto direto (program) vai sem aspas, como ao arrastar o arquivo. SSH (4.9.7): o
+ * caminho remoto (~/.cache/agzos-prints/print-….png) vai sem aspas, porque não se sabe se
+ * do outro lado está um shell ou o Claude Code.
  */
 export function pastedImageText(session: { shell: string; ssh: boolean }, file: string) {
-  if (session.ssh || session.shell === "ssh") return null;
-  if (session.shell === "program") return file;
+  if (session.ssh || session.shell === "ssh" || session.shell === "program") return file;
   return quotePath(session.shell, file);
+}
+
+/** Aviso quando o print não chega à máquina da sessão SSH. */
+export function pasteErrorText(error: "no-ssh" | "ssh-auth" | "ssh-upload") {
+  if (error === "no-ssh") return "Não achei o ssh deste computador para enviar o print.";
+  if (error === "ssh-auth") {
+    return "O print não foi enviado: o servidor pediu senha. Use uma chave SSH na conexão (Configurações do terminal → SSH) para colar imagens.";
+  }
+  return "Não foi possível enviar o print para o servidor.";
 }
 
 /**

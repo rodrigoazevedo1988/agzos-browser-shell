@@ -37,7 +37,14 @@ import {
   type TerminalSettings,
 } from "./config";
 import { AgentCanvas } from "./agent-canvas";
-import { cdCommand, clipboardKey, pastedImageText, quotePath, sessionTitle } from "./model";
+import {
+  cdCommand,
+  clipboardKey,
+  pasteErrorText,
+  pastedImageText,
+  quotePath,
+  sessionTitle,
+} from "./model";
 import { CliSetup } from "./setup";
 import { TerminalSidePanel, type SideMode } from "./side-panel";
 import { useVoice } from "./voice";
@@ -104,6 +111,7 @@ export function TerminalView({
   onSettings: (patch: Partial<TerminalSettings>) => void;
 }) {
   const [shells, setShells] = useState<TerminalShell[] | null>(null);
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [active, setActive] = useState<number | null>(null);
@@ -500,10 +508,16 @@ export function TerminalView({
           void (async () => {
             const text = await desktop.clipboardRead();
             if (text) return term.paste(text);
-            // Só imagem (print): cola o caminho do PNG salvo pelo main.
-            if (session.ssh) return;
-            const file = await desktop.clipboardImage();
-            const pasted = file ? pastedImageText(session, file) : null;
+            // Só imagem (print): cola o caminho do PNG salvo pelo main (na sessão SSH, o
+            // caminho na máquina remota).
+            if (session.ssh) setPasteNotice("Enviando o print para o servidor…");
+            const result = await desktop.clipboardImage(session.id);
+            setPasteNotice(null);
+            if (result && "error" in result) {
+              setPasteNotice(pasteErrorText(result.error));
+              return;
+            }
+            const pasted = result ? pastedImageText(session, result.file) : null;
             if (pasted) term.paste(pasted);
           })();
           return false;
@@ -727,6 +741,14 @@ export function TerminalView({
         )}
         <div className="terminal-screens" ref={bodyRef}>
           {unavailable && <p className="terminal-message">{unavailable}</p>}
+          {pasteNotice && (
+            <p className="terminal-message" role="status">
+              {pasteNotice}{" "}
+              <button type="button" className="link-button" onClick={() => setPasteNotice(null)}>
+                Fechar
+              </button>
+            </p>
+          )}
           {voice.state.status === "error" && (
             <p className="terminal-message terminal-voice-error" role="alert">
               {voice.state.message}{" "}

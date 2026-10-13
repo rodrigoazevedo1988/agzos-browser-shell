@@ -50,15 +50,92 @@ function savePrint(png, { dir = printsDir(), now = Date.now() } = {}) {
       if (fs.statSync(file).mtimeMs < now - MAX_AGE_MS) fs.unlinkSync(file);
     } catch {}
   }
-  const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
-  let file = path.join(dir, `print-${stamp}.png`);
-  for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `print-${stamp}-${n}.png`);
+  const base = printName(now).slice(0, -4);
+  let file = path.join(dir, `${base}.png`);
+  for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `${base}-${n}.png`);
   fs.writeFileSync(file, png);
   return file;
 }
 
-async function pasteClipboardImage(electron, options) {
-  return savePrint(await readClipboardPng(electron), options);
+/** Nome do arquivo de um print (só letras, números e hífens). */
+function printName(now = Date.now()) {
+  return `print-${new Date(now).toISOString().replace(/[:.]/g, "-")}.png`;
 }
 
-module.exports = { imageTypeOf, pasteClipboardImage, printsDir, readClipboardPng, savePrint };
+/**
+ * Comando remoto que grava o PNG da entrada padrão em ~/.cache/agzos-prints, apaga os de
+ * mais de um dia e devolve o caminho absoluto. Só aspas simples: o ssh.exe do Windows
+ * remonta a linha de comando e aspas duplas podiam chegar trocadas.
+ */
+function remotePrintCommand(name) {
+  if (!/^print-[\w-]+\.png$/.test(name)) throw new Error("nome inválido");
+  return (
+    "sh -c 'd=$HOME/.cache/agzos-prints; umask 077; mkdir -p $d && " +
+    `find $d -name print-\\*.png -mtime +0 -exec rm -f {} + 2>/dev/null; ` +
+    `cat > $d/${name} && echo $d/${name}'`
+  );
+}
+
+/**
+ * 4.9.7: sessão SSH (VPS). O PNG vai por uma conexão ssh à parte, com os mesmos argumentos
+ * da sessão e BatchMode (sem pedir senha: precisa de chave ou agente). Devolve o caminho
+ * remoto ou { error }.
+ */
+function uploadPrint(png, { sshFile, args, execFile, now = Date.now(), timeoutMs = 30_000 }) {
+  if (!png || png.length === 0 || png.length > MAX_BYTES) return Promise.resolve(null);
+  if (!sshFile) return Promise.resolve({ error: "no-ssh" });
+  const name = printName(now);
+  const argv = [
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=10",
+    ...args,
+    remotePrintCommand(name),
+  ];
+  return new Promise((resolve) => {
+    const child = execFile(
+      sshFile,
+      argv,
+      { timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 },
+      (error, stdout, stderr) => {
+        const remote = String(stdout ?? "")
+          .trim()
+          .split(/\r?\n/)
+          .pop();
+        if (!error && remote && remote.endsWith(`/${name}`) && remote.startsWith("/")) {
+          return resolve({ file: remote });
+        }
+        const text = String(stderr ?? "");
+        const auth = /permission denied|publickey|password|host key verification/i.test(text);
+        resolve({ error: auth ? "ssh-auth" : "ssh-upload" });
+      },
+    );
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(png);
+  });
+}
+
+async function pasteClipboardImage(electron, options) {
+  const file = savePrint(await readClipboardPng(electron), options);
+  return file ? { file } : null;
+}
+
+/** Print da área de transferência enviado para a máquina da sessão SSH. */
+async function pasteClipboardImageRemote(electron, options) {
+  const png = await readClipboardPng(electron);
+  return png ? uploadPrint(png, options) : null;
+}
+
+module.exports = {
+  imageTypeOf,
+  pasteClipboardImage,
+  pasteClipboardImageRemote,
+  printName,
+  printsDir,
+  readClipboardPng,
+  remotePrintCommand,
+  savePrint,
+  uploadPrint,
+};

@@ -274,6 +274,7 @@ function createTerminals({
         id,
         owner,
         shell: chosen.id,
+        ssh: ssh ? [...ssh] : null,
         pty: child,
         cwd: dir,
         buffer: "",
@@ -380,6 +381,11 @@ function createTerminals({
         }));
     },
 
+    /** Argumentos SSH (já validados) de uma sessão SSH da janela; null nas outras. */
+    sshOf(owner, id) {
+      const session = sessions.get(id);
+      return session && session.owner === owner && session.ssh ? [...session.ssh] : null;
+    },
     sessionsOf(owner) {
       return [...sessions.values()]
         .filter((session) => session.owner === owner)
