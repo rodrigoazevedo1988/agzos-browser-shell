@@ -18,7 +18,7 @@ app.whenReady().then(async () => {
   try {
     const items = await clipboard.read();
     console.log("tipos:", JSON.stringify(items.map((item) => item.types)));
-    const file = await pasteClipboardImage({ clipboard, nativeImage });
+    const file = (await pasteClipboardImage({ clipboard, nativeImage }))?.file;
     if (!file) return fail("nenhuma imagem lida da área de transferência");
     const png = fs.readFileSync(file);
     if (png.subarray(1, 4).toString() !== "PNG") return fail(`${file} não é PNG`);
