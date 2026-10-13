@@ -78,25 +78,47 @@ jobs:
           (xclip -selection clipboard -t image/png -i /tmp/print.png &) && sleep 1
           "$ELECTRON" --no-sandbox scripts/clipboard-image-smoke.cjs 37 21
 
-      # 4.9.7: print numa sessão SSH. sshd local com chave (no Windows o sshd do Git for
-      # Windows, com bash do outro lado como numa VPS; o cliente é o ssh.exe do System32).
-      - name: SSH — sshd local com chave
-        shell: bash
+      # 4.9.7: print numa sessão SSH contra um sshd local com chave, com sh do outro lado como
+      # numa VPS. O cliente é o mesmo ssh que o app escolhe (ssh.exe do System32 no Windows).
+      - name: SSH — sshd local com chave (Linux e Mac)
+        if: runner.os != 'Windows'
         run: |
           d="$RUNNER_TEMP/sshd" && mkdir -p "$d" && chmod 700 "$d"
           ssh-keygen -q -t ed25519 -N "" -f "$d/host_key"
           ssh-keygen -q -t ed25519 -N "" -f "$d/user_key"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            sshd="/usr/bin/sshd"; key=$(cygpath -w "$d/user_key")
-            icacls "$key" /inheritance:r /grant:r "$USERNAME:F" >/dev/null
-          else
-            sshd="/usr/sbin/sshd"; key="$d/user_key"
-          fi
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat "$d/user_key.pub" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          cat "$d/user_key.pub" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
           printf '%s\n' "Port 2299" "ListenAddress 127.0.0.1" "HostKey $d/host_key" \
             "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" \
             "KbdInteractiveAuthentication no" "StrictModes no" "PidFile $d/sshd.pid" > "$d/sshd_config"
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo mkdir -p /run/sshd; sudo "$sshd" -f "$d/sshd_config" -E "$d/log"; else "$sshd" -f "$d/sshd_config" -E "$d/log"; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # A conta do runner vem bloqueada ("!"), e o sshd recusa conta bloqueada sem PAM.
+            sudo usermod -p '*' "$(whoami)"
+            sudo mkdir -p /run/sshd && sudo /usr/sbin/sshd -f "$d/sshd_config" -E "$d/log"
+          else
+            /usr/sbin/sshd -f "$d/sshd_config" -E "$d/log"
+          fi
           sleep 2
-          user=$(whoami); user=${user##*\\}
-          node scripts/ssh-print-smoke.cjs 2299 "$user" "$key" || { cat "$d/log"; exit 1; }
+          node scripts/ssh-print-smoke.cjs 2299 "$(whoami)" "$d/user_key" || { cat "$d/log"; exit 1; }
+
+      - name: SSH — OpenSSH Server do Windows com sh do Git (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+          }
+          New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\Git\bin\sh.exe" -PropertyType String -Force | Out-Null
+          $d = Join-Path $env:RUNNER_TEMP "sshkey"
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          & "C:\Program Files\Git\usr\bin\ssh-keygen.exe" -q -t ed25519 -N '""' -f "$d\user_key"
+          if (-not (Test-Path "$d\user_key")) { & "C:\Program Files\Git\usr\bin\ssh-keygen.exe" -q -t ed25519 -N "" -f "$d\user_key" }
+          icacls "$d\user_key" /inheritance:r /grant:r "$($env:USERNAME):F" | Out-Null
+          $keys = "C:\ProgramData\ssh\administrators_authorized_keys"
+          Start-Service sshd; Start-Sleep 2
+          Copy-Item "$d\user_key.pub" $keys -Force
+          icacls $keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+          Restart-Service sshd; Start-Sleep 2
+          node scripts/ssh-print-smoke.cjs 22 $env:USERNAME "$d\user_key"
+          if ($LASTEXITCODE -ne 0) { Get-Content C:\ProgramData\ssh\logs\sshd.log -ErrorAction SilentlyContinue | Select-Object -Last 30; exit 1 }
