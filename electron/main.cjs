@@ -5432,6 +5432,34 @@ function registerIpc() {
     }
   });
   ipcMain.handle("terminal:clipboard-read", () => clipboard.readText());
+  // 4.9.4: print colado no terminal vira um PNG em <tmp>/agzos-terminal-prints (os de mais
+  // de um dia são apagados a cada colagem); o shell recebe só o caminho.
+  ipcMain.handle("terminal:clipboard-image", () => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return null;
+    const png = image.toPNG();
+    if (png.length === 0 || png.length > 50 * 1024 * 1024) return null;
+    const dir = path.join(os.tmpdir(), "agzos-terminal-prints");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const old = Date.now() - 24 * 60 * 60 * 1000;
+      for (const name of fs.readdirSync(dir)) {
+        const file = path.join(dir, name);
+        try {
+          if (/^print-[\w-]+\.png$/.test(name) && fs.statSync(file).mtimeMs < old) {
+            fs.unlinkSync(file);
+          }
+        } catch {}
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `print-${stamp}.png`);
+      fs.writeFileSync(file, png);
+      return file;
+    } catch (error) {
+      console.error("[terminal] print colado:", error?.message ?? error);
+      return null;
+    }
+  });
   ipcMain.handle("terminal:clipboard-write", (_event, { text } = {}) => {
     if (typeof text === "string") clipboard.writeText(text);
   });

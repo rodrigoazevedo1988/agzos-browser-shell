@@ -188,6 +188,7 @@ function isolateInPage({ key, childUrl }) {
       element.style.setProperty(name, value, "important");
     }
     saved.push([element, before]);
+    return before;
   };
   const targetProps = {
     position: "fixed",
@@ -214,44 +215,31 @@ function isolateInPage({ key, childUrl }) {
   };
   set(target, targetProps);
 
-  // Ancestrais do alvo (atravessando shadow roots) e o nó que contém os filhos de cada um.
-  const chain = new Set([target]);
-  const containers = [];
-  for (let node = target; ;) {
-    let parent = node.parentNode;
-    if (!parent) break;
-    if (parent.nodeType === 11) {
-      containers.push(parent);
-      parent = parent.host;
-    } else if (parent.nodeType === 1) {
-      containers.push(parent);
-    } else {
-      break;
-    }
-    if (!parent || parent.nodeType !== 1) break;
-    chain.add(parent);
-    node = parent;
-  }
-
+  const ancestorProps = {
+    transform: "none",
+    filter: "none",
+    "backdrop-filter": "none",
+    perspective: "none",
+    contain: "none",
+    container: "none",
+    "container-type": "normal",
+    "will-change": "auto",
+    "clip-path": "none",
+    mask: "none",
+    "z-index": "2147483647",
+    visibility: "visible",
+    opacity: "1",
+  };
   // Tudo o que não é o alvo nem ancestral dele some: só z-index não basta, porque os sites
   // (o YouTube com título, canal e botões por cima do player) põem irmãos com z-index alto,
   // inserem camadas depois e trocam o style inline. opacity 0 esconde também descendentes
   // que forçam visibility: visible.
   const hideProps = { opacity: "0", visibility: "hidden", "pointer-events": "none" };
-  const hidden = new Set();
+  const hidden = new Map();
+  const raised = new Set();
+  let chain = new Set([target]);
+  let containers = [];
   let observer = null;
-  const hideSiblings = () => {
-    for (const container of containers) {
-      for (const child of container.children) {
-        if (chain.has(child) || hidden.has(child)) continue;
-        const tag = child.localName;
-        if (tag === "script" || tag === "style" || tag === "link" || tag === "head") continue;
-        hidden.add(child);
-        set(child, hideProps);
-        observer?.observe(child, { attributes: true, attributeFilter: ["style"] });
-      }
-    }
-  };
   const enforce = (element, props) => {
     if (!element.isConnected) return;
     for (const [name, value] of Object.entries(props)) {
@@ -263,36 +251,82 @@ function isolateInPage({ key, childUrl }) {
       }
     }
   };
+  // A cadeia é refeita a cada mudança: o YouTube muda o player de lugar conforme a largura
+  // (#columns ↔ #full-bleed-container), e o novo ancestral podia estar entre os escondidos,
+  // o que deixava a janela preta.
+  const rebuild = () => {
+    const nextChain = new Set([target]);
+    const nextContainers = [];
+    for (let node = target; ;) {
+      let parent = node.parentNode;
+      if (!parent) break;
+      if (parent.nodeType === 11) {
+        nextContainers.push(parent);
+        parent = parent.host;
+      } else if (parent.nodeType === 1) {
+        nextContainers.push(parent);
+      } else {
+        break;
+      }
+      if (!parent || parent.nodeType !== 1) break;
+      nextChain.add(parent);
+      node = parent;
+    }
+    for (const element of nextChain) {
+      const before = hidden.get(element);
+      if (before) {
+        hidden.delete(element);
+        for (const [name, [value, priority]] of Object.entries(before)) {
+          if (value) element.style.setProperty(name, value, priority);
+          else element.style.removeProperty(name);
+        }
+      }
+      if (element !== target && !raised.has(element)) {
+        raised.add(element);
+        set(element, ancestorProps);
+      }
+    }
+    for (const container of nextContainers) {
+      if (!containers.includes(container)) observer?.observe(container, { childList: true });
+    }
+    chain = nextChain;
+    containers = nextContainers;
+  };
+  const hideSiblings = () => {
+    for (const container of containers) {
+      for (const child of container.children) {
+        if (chain.has(child) || hidden.has(child)) continue;
+        const tag = child.localName;
+        if (tag === "script" || tag === "style" || tag === "link" || tag === "head") continue;
+        hidden.set(child, set(child, hideProps));
+        observer?.observe(child, { attributes: true, attributeFilter: ["style"] });
+      }
+    }
+  };
   // Mantém o vídeo cobrindo 100vw × 100vh mesmo quando o site (YouTube, Twitch etc.)
   // roda listeners de resize e tenta sobrescrever top, left, width ou height inline.
   const enforceTarget = () => {
+    if (!target.isConnected) return;
+    rebuild();
     enforce(target, targetProps);
     hideSiblings();
-    for (const element of hidden) enforce(element, hideProps);
+    for (const element of hidden.keys()) enforce(element, hideProps);
   };
 
-  let element = target;
-  for (;;) {
-    let parent = element.parentNode;
-    if (parent && parent.nodeType === 11) parent = parent.host;
-    if (!parent || parent.nodeType !== 1) break;
-    element = parent;
-    set(element, {
-      transform: "none",
-      filter: "none",
-      "backdrop-filter": "none",
-      perspective: "none",
-      contain: "none",
-      container: "none",
-      "container-type": "normal",
-      "will-change": "auto",
-      "clip-path": "none",
-      mask: "none",
-      "z-index": "2147483647",
-      visibility: "visible",
-      opacity: "1",
-    });
-  }
+  let mutating = false;
+  observer = new MutationObserver(() => {
+    if (mutating) return;
+    mutating = true;
+    try {
+      enforceTarget();
+    } finally {
+      mutating = false;
+    }
+  });
+  // Filhos novos ou removidos dos contêineres (camadas que o site insere depois, o player
+  // mudando de lugar) e o style inline dos irmãos escondidos (observados em hideSiblings).
+  observer.observe(target, { attributes: true, attributeFilter: ["style", "class"] });
+  rebuild();
   set(document.documentElement, {
     overflow: "hidden",
     background: "#000",
@@ -305,20 +339,6 @@ function isolateInPage({ key, childUrl }) {
       "background-color": "#000",
     });
   }
-  let mutating = false;
-  observer = new MutationObserver(() => {
-    if (mutating) return;
-    mutating = true;
-    try {
-      enforceTarget();
-    } finally {
-      mutating = false;
-    }
-  });
-  // Filhos novos dos contêineres (camadas que o site insere depois de a janela abrir) e o
-  // style inline dos irmãos escondidos (observados em hideSiblings).
-  for (const container of containers) observer.observe(container, { childList: true });
-  observer.observe(target, { attributes: true, attributeFilter: ["style", "class"] });
   hideSiblings();
   window.addEventListener("resize", enforceTarget, { passive: true });
   target.addEventListener("resize", enforceTarget, { passive: true });

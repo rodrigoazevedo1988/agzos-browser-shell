@@ -37,7 +37,7 @@ import {
   type TerminalSettings,
 } from "./config";
 import { AgentCanvas } from "./agent-canvas";
-import { cdCommand, clipboardKey, quotePath, sessionTitle } from "./model";
+import { cdCommand, clipboardKey, pastedImageText, quotePath, sessionTitle } from "./model";
 import { CliSetup } from "./setup";
 import { TerminalSidePanel, type SideMode } from "./side-panel";
 import { useVoice } from "./voice";
@@ -497,7 +497,15 @@ export function TerminalView({
         }
         if (clip === "paste") {
           event.preventDefault();
-          void desktop.clipboardRead().then((text) => text && term.paste(text));
+          void (async () => {
+            const text = await desktop.clipboardRead();
+            if (text) return term.paste(text);
+            // Só imagem (print): cola o caminho do PNG salvo pelo main.
+            if (session.ssh) return;
+            const file = await desktop.clipboardImage();
+            const pasted = file ? pastedImageText(session, file) : null;
+            if (pasted) term.paste(pasted);
+          })();
           return false;
         }
         return true;

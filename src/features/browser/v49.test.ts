@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { pastedImageText } from "@/features/terminal/model";
 import { parsePrefs } from "./persistence/snapshot";
 import { browserReducer } from "./store/reducer";
 import { initialState } from "./store/state";
@@ -170,10 +171,23 @@ describe("4.9: janela de vídeo", () => {
   it("4.9.4: irmãos do vídeo (título e canal do YouTube) somem, inclusive os inseridos depois", () => {
     const isoSource = video.isolateInPage.toString();
     expect(isoSource).toContain('const hideProps = { opacity: "0", visibility: "hidden"');
-    expect(isoSource).toContain("observer.observe(container, { childList: true })");
+    expect(isoSource).toContain("observer?.observe(container, { childList: true })");
     expect(isoSource).toContain(
       'observer?.observe(child, { attributes: true, attributeFilter: ["style"] })',
     );
+  });
+
+  it("4.9.4: print colado no terminal vira o caminho do PNG", () => {
+    expect(pastedImageText({ shell: "bash", ssh: false }, "/tmp/p/print-1.png")).toBe(
+      "'/tmp/p/print-1.png'",
+    );
+    expect(pastedImageText({ shell: "powershell", ssh: false }, "C:\\T\\a b.png")).toBe(
+      "'C:\\T\\a b.png'",
+    );
+    expect(pastedImageText({ shell: "program", ssh: false }, "/tmp/x.png")).toBe("/tmp/x.png");
+    expect(pastedImageText({ shell: "ssh", ssh: true }, "/tmp/x.png")).toBeNull();
+    expect(main).toContain('ipcMain.handle("terminal:clipboard-image"');
+    expect(main).toContain('path.join(os.tmpdir(), "agzos-terminal-prints")');
   });
 
   it("preferência e estado da casca", () => {

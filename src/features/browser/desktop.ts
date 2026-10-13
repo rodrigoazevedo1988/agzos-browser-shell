@@ -688,6 +688,8 @@ export type DesktopBridge = DesktopExtras & {
     callback: (payload: { open?: boolean; dock?: "bottom" | "right" }) => void,
   ): () => void;
   clipboardRead(): Promise<string>;
+  /** 4.9.4: salva a imagem da área de transferência num PNG temporário; null sem imagem. */
+  clipboardImage(): Promise<string | null>;
   clipboardWrite(text: string): Promise<void>;
   onTerminalData(callback: (payload: { id: number; data: string }) => void): () => void;
   onTerminalExit(

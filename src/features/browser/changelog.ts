@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.5",
+    date: "2026-10-13",
+    items: [
+      "Corrigido: a janela de vídeo flutuante ficava preta quando diminuída no YouTube (abaixo de certa largura o site muda o player de lugar na página).",
+      "Novo: cole prints no terminal (Ctrl+V no Windows, ⌘V no Mac, Ctrl+Shift+V no Linux). A imagem vira um PNG temporário e o caminho entra no terminal, pronto para o Claude Code ou o Codex anexarem.",
+    ],
+  },
+  {
     version: "4.9.4",
     date: "2026-10-13",
     items: [

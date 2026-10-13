@@ -85,6 +85,18 @@ export function quotePath(shell: string, file: string) {
 }
 
 /**
+ * Texto colado quando a área de transferência tem só uma imagem (print): o caminho do PNG
+ * que o main salvou. Agentes (Claude Code, Codex) anexam caminho de imagem colado; num
+ * agente aberto direto (program) vai sem aspas, como ao arrastar o arquivo. SSH: null (o
+ * arquivo é local, a sessão é remota).
+ */
+export function pastedImageText(session: { shell: string; ssh: boolean }, file: string) {
+  if (session.ssh || session.shell === "ssh") return null;
+  if (session.shell === "program") return file;
+  return quotePath(session.shell, file);
+}
+
+/**
  * Comando que entra na pasta (modo ls lateral). Nos shells POSIX o Ctrl+U antes limpa o
  * que estava digitado. SSH: null (a pasta é local, a sessão é remota).
  */
