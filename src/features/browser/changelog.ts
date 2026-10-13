@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.2",
+    date: "2026-10-13",
+    items: [
+      "Corrigido: ícone dos apps instalados (PWA) aparecia como o ícone do Agzos no Windows em vez do ícone real do site (YouTube, WhatsApp, etc.). A busca do ícone agora usa a pilha de rede do Chromium diretamente, que funciona de forma confiável no Windows.",
+      "Novo: em Configurações → Apps instalados, clique no lápis ao lado de qualquer app para editar o nome exibido e o ícone (por URL). Os atalhos do sistema são recriados automaticamente.",
+    ],
+  },
+  {
     version: "4.9.1",
     date: "2026-10-12",
     items: [

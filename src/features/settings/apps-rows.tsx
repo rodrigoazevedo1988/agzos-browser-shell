@@ -1,5 +1,15 @@
-import { AppWindow, ExternalLink, Loader2, MonitorDown, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  AppWindow,
+  Check,
+  ExternalLink,
+  ImagePlus,
+  Loader2,
+  MonitorDown,
+  Pencil,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { desktopBridge, type InstalledPwa, type PwaReason } from "@/features/browser/desktop";
@@ -117,6 +127,97 @@ function TryInstall({ siteTabs }: { siteTabs: SiteTab[] }) {
   );
 }
 
+/** Painel de edição inline de nome e ícone de um PWA instalado (4.9.1). */
+function PwaEditPanel({ app, onDone }: { app: InstalledPwa; onDone: () => void }) {
+  const desktop = desktopBridge();
+  const [name, setName] = useState(app.name);
+  const [iconUrl, setIconUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
+
+  async function save() {
+    if (!desktop) return;
+    setSaving(true);
+    setError(null);
+    const trimName = name.trim();
+    const trimIcon = iconUrl.trim();
+    const result = await desktop.pwaUpdateMeta(
+      app.id,
+      trimName && trimName !== app.name ? trimName : undefined,
+      trimIcon || undefined,
+    );
+    setSaving(false);
+    if (result.ok) {
+      onDone();
+    } else {
+      setError(
+        result.error === "icon-fetch"
+          ? "Não foi possível carregar o ícone na URL informada."
+          : result.error === "icon-invalid"
+            ? "O arquivo na URL não é uma imagem válida."
+            : "Não foi possível salvar.",
+      );
+    }
+  }
+
+  return (
+    <div className="pwa-edit-panel">
+      <label className="pwa-edit-label" htmlFor={`pwa-name-${app.id}`}>
+        Nome exibido
+      </label>
+      <input
+        id={`pwa-name-${app.id}`}
+        ref={nameRef}
+        className="pwa-edit-input"
+        type="text"
+        maxLength={80}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") onDone();
+        }}
+        disabled={saving}
+      />
+      <label className="pwa-edit-label" htmlFor={`pwa-icon-${app.id}`}>
+        <ImagePlus size={13} /> URL do novo ícone{" "}
+        <span className="pwa-edit-hint">(PNG, JPG ou WebP — deixe vazio para manter o atual)</span>
+      </label>
+      <input
+        id={`pwa-icon-${app.id}`}
+        className="pwa-edit-input"
+        type="url"
+        placeholder="https://exemplo.com/icon.png"
+        value={iconUrl}
+        onChange={(e) => setIconUrl(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") onDone();
+        }}
+        disabled={saving}
+      />
+      {error && (
+        <p className="ai-error pwa-edit-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="pwa-edit-actions">
+        <Button size="sm" onClick={() => void save()} disabled={saving || !name.trim()}>
+          {saving ? <Loader2 className="spin" /> : <Check size={14} />} Salvar
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDone} disabled={saving}>
+          <X size={14} /> Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Apps instalados (PWA, 4.1.1): abrir em janela própria ou desinstalar (atalho do
  * sistema e dados do app saem juntos). Instalar é pelo ícone na barra de endereço ou,
@@ -128,6 +229,8 @@ export function InstalledAppsSetting({ siteTabs = [] }: { siteTabs?: SiteTab[] }
   // 4.8.3: no Mac cada app vira um aplicativo próprio (flag pwa_mac_apps).
   const isMac = /mac/i.test(navigator.platform);
   const [flags, setFlags] = useState<FeatureFlags | null>(null);
+  // id do app sendo editado agora (null = nenhum)
+  const [editingId, setEditingId] = useState<string | null>(null);
   useEffect(() => {
     if (!desktop || !isMac) return;
     void desktop.featureFlags().then(setFlags);
@@ -162,32 +265,52 @@ export function InstalledAppsSetting({ siteTabs = [] }: { siteTabs?: SiteTab[] }
       <TryInstall siteTabs={siteTabs} />
       <ul className="terminal-list pwa-list" aria-label="Apps instalados">
         {apps?.map((app) => (
-          <li key={app.id}>
-            {app.icon ? (
-              <img src={app.icon} alt="" width={20} height={20} />
-            ) : (
-              <AppWindow className="terminal-list-icon" />
+          <li key={app.id} className="pwa-list-item">
+            <div className="pwa-list-row">
+              {app.icon ? (
+                <img src={app.icon} alt="" width={20} height={20} />
+              ) : (
+                <AppWindow className="terminal-list-icon" />
+              )}
+              <span>
+                {app.name}
+                <small>{app.origin}</small>
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Editar ${app.name}`}
+                title="Editar nome e ícone"
+                onClick={() => setEditingId(editingId === app.id ? null : app.id)}
+              >
+                <Pencil size={14} />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Abrir ${app.name}`}
+                onClick={() => void desktop.pwaOpen(app.id)}
+              >
+                <ExternalLink /> Abrir
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Desinstalar ${app.name}`}
+                onClick={() => void desktop.pwaUninstall(app.id).then(load)}
+              >
+                <Trash2 /> Desinstalar
+              </Button>
+            </div>
+            {editingId === app.id && (
+              <PwaEditPanel
+                app={app}
+                onDone={() => {
+                  setEditingId(null);
+                  load();
+                }}
+              />
             )}
-            <span>
-              {app.name}
-              <small>{app.origin}</small>
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label={`Abrir ${app.name}`}
-              onClick={() => void desktop.pwaOpen(app.id)}
-            >
-              <ExternalLink /> Abrir
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label={`Desinstalar ${app.name}`}
-              onClick={() => void desktop.pwaUninstall(app.id).then(load)}
-            >
-              <Trash2 /> Desinstalar
-            </Button>
           </li>
         ))}
         {apps !== null && !apps.length && <li className="empty">Nenhum app instalado ainda.</li>}

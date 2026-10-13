@@ -796,6 +796,12 @@ export type DesktopBridge = DesktopExtras & {
   pwaOpen(id: string): Promise<boolean>;
   pwaUninstall(id: string): Promise<{ ok: boolean; error?: string }>;
   pwaList(): Promise<InstalledPwa[]>;
+  /** Edita nome e/ou ícone de um PWA instalado (4.9.1). Recria atalhos do sistema. */
+  pwaUpdateMeta(
+    id: string,
+    name: string | undefined,
+    iconUrl: string | undefined,
+  ): Promise<{ ok: boolean; error?: string }>;
   onPwaState(callback: (payload: { tabId: number; pwa: PwaTabState }) => void): () => void;
   onPwaChanged(callback: () => void): () => void;
   /** Gestos (4.0): o que as páginas detectam (repassado a cada guia e painel). */

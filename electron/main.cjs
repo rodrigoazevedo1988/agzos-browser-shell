@@ -5371,6 +5371,10 @@ function registerIpc() {
       open: Boolean(pwaWindows.get(record.id) && !pwaWindows.get(record.id).isDestroyed()),
     })),
   );
+  ipcMain.handle("pwa:update-meta", (_event, { id, name, iconUrl } = {}) => {
+    if (typeof id !== "string" || !ID_RE.test(id)) return { ok: false, error: "id" };
+    return updatePwaMeta(id, { name, iconUrl });
+  });
   ipcMain.handle("terminal:secrets", () => ({
     names: terminalSecrets().names(),
     encryption: terminalSecrets().encryption(),
@@ -6737,17 +6741,40 @@ async function checkPwa(contents) {
   };
 }
 
-/** Primeiro ícone do manifesto que o nativeImage consegue abrir. */
+/**
+ * Primeiro ícone do manifesto que o nativeImage consegue abrir.
+ * Usa net.fetch como método primário (funciona de forma confiável no Windows, onde
+ * session.fetch pode falhar silenciosamente por SSL/pilha de rede não inicializada).
+ * Mantém ses.fetch como fallback para ícones que requerem cookies de autenticação.
+ */
 async function fetchPwaIcon(ses, icons) {
-  for (const icon of iconCandidates(icons).slice(0, 6)) {
+  for (const icon of iconCandidates(icons).slice(0, 10)) {
     try {
-      const response = await ses.fetch(icon.src);
-      if (!response.ok) continue;
-      const buffer = Buffer.from(await response.arrayBuffer());
+      let buffer = null;
+      // net.fetch: pilha Chromium, sem dependência de sessão — resolve o problema no Windows.
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 8000);
+        const response = await net.fetch(icon.src, { signal: ac.signal });
+        clearTimeout(timer);
+        if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+      } catch {
+        // Fallback: ses.fetch (necessário para ícones que requerem autenticação).
+        try {
+          const ac2 = new AbortController();
+          const timer2 = setTimeout(() => ac2.abort(), 8000);
+          const response2 = await ses.fetch(icon.src, { signal: ac2.signal });
+          clearTimeout(timer2);
+          if (response2.ok) buffer = Buffer.from(await response2.arrayBuffer());
+        } catch {
+          continue;
+        }
+      }
+      if (!buffer || !buffer.length) continue;
       const image = nativeImage.createFromBuffer(buffer);
       if (!image.isEmpty()) return image;
     } catch {
-      // Próximo.
+      // Próximo candidato.
     }
   }
   return nativeImage.createFromPath(path.join(__dirname, "icons", "icon.png"));
@@ -6949,6 +6976,81 @@ async function uninstallPwa(id, { confirm = true, parent = null } = {}) {
       }
     }
   }
+  return { ok: true };
+}
+
+/**
+ * Edita os metadados de um PWA instalado: nome exibido e/ou ícone (por URL).
+ * Recria os atalhos do sistema se algo mudar.
+ */
+async function updatePwaMeta(id, { name, iconUrl } = {}) {
+  const record = pwaStore?.get(id);
+  if (!record) return { ok: false, error: "missing" };
+  const patch = {};
+  if (typeof name === "string" && name.trim() && name.trim() !== record.name) {
+    patch.name = name.trim().slice(0, 80);
+  }
+  let newImage = null;
+  if (typeof iconUrl === "string" && iconUrl.trim()) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 8000);
+      const response = await net.fetch(iconUrl.trim(), { signal: ac.signal });
+      clearTimeout(timer);
+      if (response.ok) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const img = nativeImage.createFromBuffer(buffer);
+        if (!img.isEmpty()) newImage = img;
+      }
+    } catch {
+      return { ok: false, error: "icon-fetch" };
+    }
+    if (!newImage) return { ok: false, error: "icon-invalid" };
+  }
+  if (!Object.keys(patch).length && !newImage) return { ok: true }; // Nada mudou.
+  const updated = { ...record, ...patch };
+  // Se o nome mudou, remove os atalhos antigos antes de recriar.
+  if (patch.name && Object.keys(record.shortcuts ?? {}).length) {
+    removePwaShortcuts(record);
+    updated.shortcuts = {};
+  }
+  const image = newImage ?? nativeImage.createFromPath(path.join(pwaDir(id), "icon.png"));
+  if (!image.isEmpty()) {
+    const dir = pwaDir(id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "icon.png"), pngOf(image, 256));
+    if (process.platform === "win32") {
+      const ico = path.join(dir, "icon.ico");
+      fs.writeFileSync(
+        ico,
+        icoFromPngs([16, 24, 32, 48, 64, 256].map((size) => ({ size, png: pngOf(image, size) }))),
+      );
+    }
+  }
+  // Recria atalhos com nome/ícone novo.
+  if (macPwaAppsOn() && process.platform === "darwin") {
+    try {
+      const built = await writeMacPwaApp(updated, image);
+      updated.shortcuts = { bundle: built.bundle };
+    } catch (error) {
+      warnMacPwa(updated, error);
+    }
+  }
+  if (!updated.shortcuts?.bundle) {
+    try {
+      updated.shortcuts = writePwaShortcuts(updated, image);
+    } catch (error) {
+      console.error("Agzos: atalho do app não gravado após edição.", error?.message);
+    }
+  }
+  pwaStore.put(updated);
+  // Atualiza o ícone e o título da janela aberta, se houver.
+  const win = pwaWindows.get(id);
+  if (win && !win.isDestroyed()) {
+    if (!image.isEmpty()) win.setIcon(pwaIconFile(process.platform, pwaDir(id)) ? nativeImage.createFromPath(pwaIconFile(process.platform, pwaDir(id))) : image);
+    if (patch.name) win.setTitle(patch.name);
+  }
+  broadcast("agzos:pwa-changed", {});
   return { ok: true };
 }
 
