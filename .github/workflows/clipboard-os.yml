@@ -1,0 +1,79 @@
+name: Print no terminal (Windows, Mac, Linux)
+
+# 4.9.6: a colagem de print no terminal lê a área de transferência do sistema, que é
+# diferente em cada um; este job põe uma imagem pelo caminho nativo e roda o mesmo código
+# do main (electron/clipboard-image.cjs).
+on:
+  pull_request:
+    paths:
+      [
+        electron/clipboard-image.cjs,
+        scripts/clipboard-image-smoke.cjs,
+        .github/workflows/clipboard-os.yml,
+      ]
+  push:
+    branches: [main]
+    paths:
+      [
+        electron/clipboard-image.cjs,
+        scripts/clipboard-image-smoke.cjs,
+        .github/workflows/clipboard-os.yml,
+      ]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Electron da mesma versão do app
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').devDependencies.electron")
+          mkdir -p "$RUNNER_TEMP/electron" && cd "$RUNNER_TEMP/electron"
+          npm init -y >/dev/null && npm install --no-audit --no-fund "electron@$version"
+          echo "ELECTRON=$RUNNER_TEMP/electron/node_modules/.bin/electron" >> "$GITHUB_ENV"
+
+      - name: Windows — imagem como a Ferramenta de Captura (CF_DIB)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 37, 21
+          $g = [System.Drawing.Graphics]::FromImage($bmp); $g.Clear([System.Drawing.Color]::Orange); $g.Dispose()
+          [System.Windows.Forms.Clipboard]::SetImage($bmp)
+      - name: Windows — lê e salva
+        if: runner.os == 'Windows'
+        shell: bash
+        run: '"$ELECTRON" scripts/clipboard-image-smoke.cjs 37 21'
+
+      - name: Mac — imagem como o Cmd+Ctrl+Shift+4 (PNGf)
+        if: runner.os == 'macOS'
+        run: |
+          python3 - <<'PY'
+          import struct, zlib
+          w, h = 37, 21
+          raw = b"".join(b"\x00" + b"\xff\x80\x00" * w for _ in range(h))
+          chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+          png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+          open("/tmp/print.png", "wb").write(png)
+          PY
+          osascript -e 'set the clipboard to (read (POSIX file "/tmp/print.png") as «class PNGf»)'
+          "$ELECTRON" scripts/clipboard-image-smoke.cjs 37 21
+
+      - name: Linux — imagem pelo xclip (X11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xclip imagemagick >/dev/null
+          convert -size 37x21 xc:orange /tmp/print.png
+          export DISPLAY=:99 && (Xvfb :99 -screen 0 1024x768x24 &) && sleep 2
+          (xclip -selection clipboard -t image/png -i /tmp/print.png &) && sleep 1
+          "$ELECTRON" --no-sandbox scripts/clipboard-image-smoke.cjs 37 21

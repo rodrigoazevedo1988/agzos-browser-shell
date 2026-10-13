@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.6",
+    date: "2026-10-13",
+    items: [
+      "Corrigido: colar print no terminal não fazia nada (Ctrl+V no Windows, ⌘V no Mac, Ctrl+Shift+V no Linux). Agora a imagem vira um PNG temporário e o caminho entra no terminal, pronto para o Claude Code ou o Codex anexarem.",
+    ],
+  },
+  {
     version: "4.9.5",
     date: "2026-10-13",
     items: [

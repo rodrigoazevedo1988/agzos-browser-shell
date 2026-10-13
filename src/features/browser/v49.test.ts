@@ -187,7 +187,53 @@ describe("4.9: janela de vídeo", () => {
     expect(pastedImageText({ shell: "program", ssh: false }, "/tmp/x.png")).toBe("/tmp/x.png");
     expect(pastedImageText({ shell: "ssh", ssh: true }, "/tmp/x.png")).toBeNull();
     expect(main).toContain('ipcMain.handle("terminal:clipboard-image"');
-    expect(main).toContain('path.join(os.tmpdir(), "agzos-terminal-prints")');
+    expect(main).toContain("clipboardImage.pasteClipboardImage({ clipboard, nativeImage })");
+    expect(build).toContain("clipboard-image.cjs");
+  });
+
+  it("4.9.6: print lido pela área de transferência assíncrona (sem readImage)", async () => {
+    const shot = require("../../../electron/clipboard-image.cjs") as {
+      imageTypeOf: (types: string[]) => string | null;
+      readClipboardPng: (electron: unknown) => Promise<Buffer | null>;
+      savePrint: (png: Buffer, options: { dir: string; now: number }) => string | null;
+    };
+    expect(fs.readFileSync(path.join(root, "electron/clipboard-image.cjs"), "utf8")).not.toMatch(
+      /clipboard\.readImage\(/,
+    );
+    expect(shot.imageTypeOf(["text/plain", "image/bmp", "image/png"])).toBe("image/png");
+    expect(shot.imageTypeOf(["image/bmp"])).toBe("image/bmp");
+    expect(shot.imageTypeOf(["text/plain"])).toBeNull();
+
+    const bmp = Buffer.from("bmp");
+    const fake = {
+      clipboard: {
+        read: async () => [
+          { types: ["text/plain"], getType: async () => new Blob(["x"]) },
+          { types: ["image/bmp"], getType: async () => new Blob([bmp]) },
+        ],
+      },
+      nativeImage: {
+        createFromBuffer: (data: Buffer) => ({
+          isEmpty: () => !data.equals(bmp),
+          toPNG: () => Buffer.from("convertido"),
+        }),
+      },
+    };
+    expect(String(await shot.readClipboardPng(fake))).toBe("convertido");
+
+    const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "prints-"));
+    const old = path.join(dir, "print-velho.png");
+    fs.writeFileSync(old, "x");
+    fs.utimesSync(old, new Date(0), new Date(0));
+    fs.writeFileSync(path.join(dir, "outro.txt"), "x");
+    const now = Date.now();
+    const first = shot.savePrint(Buffer.from("a"), { dir, now })!;
+    const second = shot.savePrint(Buffer.from("b"), { dir, now })!;
+    expect(first).not.toBe(second);
+    expect(fs.existsSync(old)).toBe(false);
+    expect(fs.existsSync(path.join(dir, "outro.txt"))).toBe(true);
+    expect(shot.savePrint(Buffer.alloc(0), { dir, now })).toBeNull();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("preferência e estado da casca", () => {

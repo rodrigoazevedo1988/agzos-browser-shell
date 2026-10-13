@@ -5673,3 +5673,38 @@ test("4.8.3: modo app do PWA abre só a janela do app, com perfil próprio, e sa
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
   await closed;
 });
+
+test("4.9.6: print colado no terminal vira o caminho de um PNG que existe", async () => {
+  test.skip(process.platform === "win32", "o e2e usa bash");
+  const profile = tempProfile();
+  const { app, window } = await launch(profile);
+  try {
+    await window.locator(".browser-stage").click({ position: { x: 600, y: 400 } });
+    await window.keyboard.press("Control+Alt+t");
+    await skipCliSetup(window);
+    await expect.poll(() => terminalText(window)).toMatch(/\S/);
+    // Electron 44: só a área de transferência assíncrona (ClipboardItem).
+    await app.evaluate(async ({ clipboard, nativeImage, ClipboardItem }) => {
+      const png = nativeImage
+        .createFromBitmap(Buffer.alloc(37 * 21 * 4, 200), { width: 37, height: 21 })
+        .toPNG();
+      await clipboard.write([
+        new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) }),
+      ]);
+    });
+    const paste = process.platform === "darwin" ? "Meta+v" : "Control+Shift+v";
+    await window.keyboard.type("test -s ");
+    await window.keyboard.press(paste);
+    await window.keyboard.type(" && echo PRINT-$((40+2))");
+    await window.keyboard.press("Enter");
+    await expect.poll(() => terminalText(window)).toContain("PRINT-42");
+    expect(await terminalText(window)).toContain("agzos-terminal-prints");
+    // Texto continua colando como texto.
+    await app.evaluate(({ clipboard }) => clipboard.writeText("echo TEXTO-$((1+1))"));
+    await window.keyboard.press(paste);
+    await window.keyboard.press("Enter");
+    await expect.poll(() => terminalText(window)).toContain("TEXTO-2");
+  } finally {
+    await app.close();
+  }
+});
