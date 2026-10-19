@@ -138,7 +138,11 @@ test("sessão, tema e motor persistem; aba anônima não", async ({ page }) => {
   await page.getByRole("button", { name: "Usar tema claro" }).click();
   await page.getByRole("button", { name: "Menu do Agzos" }).click();
   await page.getByRole("menuitem", { name: "Configurações" }).click();
-  await page.getByRole("button", { name: "Mecanismo de pesquisa" }).click();
+  // 4.9.7: o motor de busca fica em Geral > Pesquisa.
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Geral" })
+    .click();
   await page.getByRole("button", { name: /Yandex/ }).click();
   // A página de configurações abriu numa guia nova: fecha para a sessão ficar como antes.
   await page.keyboard.press("Control+w");
@@ -550,14 +554,13 @@ test("1.5.2: menu do ⋯ com o essencial e página de configurações com seçõ
   await page.keyboard.press("Control+,");
   await expect(omnibox(page)).toHaveValue("agzos://configuracoes");
   const nav = page.getByRole("navigation", { name: "Seções das configurações" });
-  await expect(nav.getByRole("button", { name: "Aparência" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  // 4.5: na página, o tema é Escuro/Claro.
+  await expect(nav.getByRole("button", { name: "Geral" })).toHaveAttribute("aria-current", "page");
+  // 4.5: na página, o tema é Escuro/Claro (4.9.7: em Aparência > Tema e layout).
+  await nav.getByRole("button", { name: "Aparência" }).click();
+  await expect(page.getByRole("heading", { name: "Tema e layout" })).toBeVisible();
   await page.getByRole("radio", { name: "Escuro" }).click();
   await expect(page.locator(".browser-stage")).toHaveClass(/dark/);
-  await nav.getByRole("button", { name: "Atalhos de teclado" }).click();
+  await nav.getByRole("button", { name: "Atalhos e gestos" }).click();
   await expect(page.getByText("Ctrl+Shift+P", { exact: true })).toBeVisible();
   // Busca em todas as seções, palavra por palavra.
   await page.getByLabel("Pesquise nas configurações").fill("atalho fav");
@@ -722,8 +725,12 @@ test("3.0: barra lateral com os apps novos e GX Control com Hot Tabs Killer", as
     "true",
   );
 
-  // Ocultar a barra pelas configurações.
+  // Ocultar a barra pelas configurações (4.9.7: Aparência > Tema e layout).
   await go(page, "agzos://configuracoes");
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Aparência" })
+    .click();
   await page.getByRole("switch", { name: "Barra lateral" }).first().click();
   await expect(bar).toHaveCount(0);
 });
@@ -840,7 +847,10 @@ test("3.1.1: Configurações → Sons controla hover, teclado, tick e volume", a
   await expect.poll(played).toBeGreaterThanOrEqual(3);
 
   await go(page, "agzos://configuracoes");
-  await page.getByRole("button", { name: "Sons" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Aparência" })
+    .click();
   await expect(page.getByRole("switch", { name: "Sons da interface" })).toHaveAttribute(
     "aria-checked",
     "true",
@@ -863,11 +873,17 @@ test("3.1.1: Configurações → Sons controla hover, teclado, tick e volume", a
 
   // Tudo desligado: nem o hover da barra toca.
   await go(page, "agzos://configuracoes");
-  await page.getByRole("button", { name: "Sons" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Aparência" })
+    .click();
   await page.getByRole("switch", { name: "Sons da interface" }).click();
   await expect(page.getByRole("switch", { name: "Som ao passar o mouse" })).toBeDisabled();
   await reload(page);
-  await page.getByRole("button", { name: "Sons" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Aparência" })
+    .click();
   await expect(page.getByRole("switch", { name: "Sons da interface" })).toHaveAttribute(
     "aria-checked",
     "false",
@@ -891,7 +907,10 @@ test("4.0: Configurações → Gestos liga/desliga e troca a ação; botão late
   page,
 }) => {
   await go(page, "agzos://configuracoes");
-  await page.getByRole("button", { name: "Gestos" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Atalhos e gestos" })
+    .click();
   const swipe = page.getByRole("switch", { name: "Deslizar dois dedos para a direita" });
   await expect(swipe).toHaveAttribute("aria-checked", "true");
   await page
@@ -899,7 +918,10 @@ test("4.0: Configurações → Gestos liga/desliga e troca a ação; botão late
     .selectOption({ label: "Recarregar" });
   await swipe.click();
   await reload(page);
-  await page.getByRole("button", { name: "Gestos" }).first().click();
+  await page
+    .getByRole("navigation", { name: "Seções das configurações" })
+    .getByRole("button", { name: "Atalhos e gestos" })
+    .click();
   await expect(swipe).toHaveAttribute("aria-checked", "false");
   await expect(page.getByLabel("Ação de Botão direito + arrastar ↓", { exact: true })).toHaveValue(
     "reload",

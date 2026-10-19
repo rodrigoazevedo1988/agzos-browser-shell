@@ -1,3 +1,4 @@
+import { onAiDraft, takeAiDraft } from "./draft";
 import {
   Archive,
   ArchiveRestore,
@@ -23,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   useCallback,
@@ -41,9 +43,11 @@ import type {
   AiState,
   DesktopBridge,
 } from "@/features/browser/desktop";
+import { AI_CHAT_WIDTH } from "@/features/browser/store/state";
 import { cn } from "@/lib/utils";
 import { type Artifact, artifactsOf, previewDocument } from "./markdown";
 import { Markdown } from "./markdown-view";
+import { AiResizeHandle } from "./resize";
 import {
   type AiMessage,
   aiErrorText,
@@ -250,6 +254,10 @@ type Pending = { chatId: string | null; items: AiMessage[] };
  * artifacts e personalização; conversas em guias; composer fixo; resposta em markdown com
  * streaming. A chave da Groq fica só no main (safeStorage).
  */
+/** Lista de conversas e artifact (--ai-nav-w e --ai-artifact-w do CSS). */
+const AI_NAV_WIDTH = 220;
+const AI_ARTIFACT_WIDTH = 440;
+
 export function AiPanel({
   desktop,
   tab,
@@ -257,6 +265,8 @@ export function AiPanel({
   onModel,
   sidebar = true,
   onSidebar,
+  chatWidth = AI_CHAT_WIDTH.initial,
+  onChatWidth,
   onClose,
   onOpenUrl,
 }: {
@@ -268,6 +278,9 @@ export function AiPanel({
   /** Barra de conversas aberta (preferência salva). */
   sidebar?: boolean;
   onSidebar?: (open: boolean) => void;
+  /** Largura da coluna do chat (preferência salva; a alça muda). */
+  chatWidth?: number;
+  onChatWidth?: (width: number) => void;
   onClose: () => void;
   onOpenUrl: (url: string) => void;
 }) {
@@ -281,7 +294,9 @@ export function AiPanel({
   const [requestId, setRequestId] = useState<string | null>(null);
   const [error, setError] = useState<{ error: AiError; retryAfter?: number | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [text, setText] = useState("");
+  // Texto vindo de outro recurso (bolha de tradução): src/features/ai/draft.ts.
+  const [text, setText] = useState(() => takeAiDraft());
+  useEffect(() => onAiDraft(setText), []);
   const [withContext, setWithContext] = useState(false);
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -292,6 +307,7 @@ export function AiPanel({
   const [draftProject, setDraftProject] = useState<string | null>(null);
   const [persona, setPersona] = useState<string | null>(null);
   const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [liveWidth, setLiveWidth] = useState<number | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const currentRequest = useRef<string | null>(null);
@@ -941,8 +957,16 @@ export function AiPanel({
   return (
     <aside
       className={cn("ai-sidebar", "ai-studio", sidebar && "with-nav", artifact && "with-artifact")}
+      style={{ "--ai-chat-w": `${liveWidth ?? chatWidth}px` } as CSSProperties}
       aria-label="Agzos AI"
     >
+      <AiResizeHandle
+        desktop={desktop}
+        width={chatWidth}
+        extra={(sidebar ? AI_NAV_WIDTH : 0) + (artifact ? AI_ARTIFACT_WIDTH : 0)}
+        onLive={setLiveWidth}
+        onWidth={(width) => onChatWidth?.(width)}
+      />
       {nav}
       <div className="ai-main">
         {heading}

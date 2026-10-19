@@ -7,6 +7,23 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.0",
+    date: "2026-10-19",
+    items: [
+      "Novo: Conta Agzos (agzos://conta). Crie sua conta, entre e recupere a senha com códigos de recuperação. Conectado, você gerencia quantas contas Google quiser, cada uma num perfil isolado, e escolhe qual abrir no início. Também ganha a área Serviços Agzos e o espaço das funções Premium.",
+      "Novo: banner de abertura animado com o logo da Agzos.",
+      "Novo: tradução como no Chrome. Selecione um texto e use o clique direito, ou traduza a página inteira pelo ícone da barra de endereço (Alt+Shift+T). Escolha entre substituir, bilíngue ou ver o original ao passar o mouse, e ajuste tom, glossário, termos que não se traduzem, regras por idioma e por site, e o idioma de destino.",
+      'Novo: captura da página inteira (Ctrl+Alt+Shift+F ou "Página inteira" na captura) e um editor completo: recortar, lápis, marca-texto, linha, seta, retângulos, elipse, texto, contador numerado, pixelar e desfocar, com cores, espessura e desfazer/refazer.',
+      "Novo: preenchimento automático inteligente. Ele reconhece os campos pelo significado (nome, e-mail, CPF, CEP, endereço…), preenche com perfis que você cria e acha login e senha também dentro de iframes, como nos apps do Google Apps Script.",
+      "Novo: o conta-gotas do ColorTools pega cores de qualquer lugar da tela, não só do navegador.",
+      "Novo: o painel do Agzos AI pode ser redimensionado pela borda, como o terminal.",
+      "Novo: as Configurações estão organizadas em categorias e grupos.",
+      "Novo: cole prints também numa sessão SSH do terminal. A imagem vai para ~/.cache/agzos-prints no servidor e o caminho entra no terminal. Precisa de chave SSH na conexão.",
+      "Corrigido: os apps instalados (PWA) mostravam anúncios no YouTube. Agora eles têm o mesmo bloqueador do navegador, no Windows e no Mac.",
+      "Corrigido: o modo voz do terminal podia não transcrever. Ele tenta outro modelo do Whisper quando a Groq recusa o primeiro, avisa quando o microfone não capta som e mostra o motivo exato quando algo falha.",
+    ],
+  },
+  {
     version: "4.9.6",
     date: "2026-10-13",
     items: [

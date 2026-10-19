@@ -1,6 +1,8 @@
 import {
+  Camera,
   Download,
   History,
+  Languages,
   LogOut,
   Maximize2,
   Minus,
@@ -11,6 +13,7 @@ import {
   Settings,
   SquarePlus,
   Star,
+  UserRound,
   VenetianMask,
   AppWindow,
   Sparkles,
@@ -30,9 +33,12 @@ export type AppMenuAction =
   | "downloads.toggle"
   | "bookmarks.manager"
   | "page.find"
+  | "page.translate"
+  | "page.capture"
   | "ai.toggle"
   | "terminal.toggle"
   | "settings.open"
+  | "account.open"
   | "whats-new"
   | "update.install"
   | "app.quit";
@@ -129,6 +135,21 @@ export function AppMenu({
         hidden: !desktop,
         disabled: !canFind,
       },
+      {
+        action: "page.translate",
+        label: "Traduzir página",
+        icon: Languages,
+        shortcut: isMac ? "⌥⇧T" : "Alt+Shift+T",
+        hidden: !desktop,
+        disabled: !canFind,
+      },
+      {
+        action: "page.capture",
+        label: "Capturar tela",
+        icon: Camera,
+        shortcut: `${mod}${shift}S`,
+        hidden: !desktop,
+      },
     ],
     [
       { action: "ai.toggle", label: "Agzos AI", icon: Sparkles, shortcut: `${mod}${shift}A` },
@@ -155,6 +176,7 @@ export function AppMenu({
       icon: PartyPopper,
       hidden: !desktop || !appVersion,
     },
+    { action: "account.open", label: "Conta Agzos", icon: UserRound, hidden: !desktop },
     { action: "settings.open", label: "Configurações", icon: Settings, shortcut: `${mod},` },
     {
       action: "app.quit",

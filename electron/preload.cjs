@@ -72,6 +72,18 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
     ipcRenderer.invoke("tab:autofill", { id, username, password }),
   autofillOtp: (id, code) => ipcRenderer.invoke("tab:autofill-otp", { id, code }),
   loginFields: (id) => ipcRenderer.invoke("tab:login-fields", { id }),
+  // Perfis de preenchimento de formulários (os valores ficam cifrados no main).
+  fillProfile: (id, profileId) => ipcRenderer.invoke("tab:fill-profile", { id, profileId }),
+  autofillState: () => ipcRenderer.invoke("autofill:state"),
+  autofillSettings: (partial) => ipcRenderer.invoke("autofill:settings", partial),
+  autofillSaveProfile: (profile) => ipcRenderer.invoke("autofill:save-profile", profile),
+  autofillRemoveProfile: (id) => ipcRenderer.invoke("autofill:remove-profile", { id }),
+  autofillSetMapping: (site, signature, type, label) =>
+    ipcRenderer.invoke("autofill:set-mapping", { site, signature, type, label }),
+  autofillRemoveMapping: (site, signature) =>
+    ipcRenderer.invoke("autofill:remove-mapping", { site, signature }),
+  autofillSetNever: (site, never) => ipcRenderer.invoke("autofill:never", { site, never }),
+  onAutofillChanged: subscribe("agzos:autofill-changed"),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   permissionsList: () => ipcRenderer.invoke("permissions:list"),
   permissionsSet: (origin, type, value) =>
@@ -249,6 +261,7 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
     ipcRenderer.invoke("page-theme:set-domain", { domain, mode }),
   // 4.7: ColorTools.
   colorPick: (tabId, options) => ipcRenderer.invoke("colors:pick", { tabId, ...options }),
+  colorPickScreen: (options) => ipcRenderer.invoke("colors:pick-screen", { ...options }),
   colorAnalyze: (tabId) => ipcRenderer.invoke("colors:analyze", { tabId }),
   clipboardWrite: (text) => ipcRenderer.invoke("clipboard:write", { text }),
   saveFile: (payload) => ipcRenderer.invoke("file:save-as", payload),
@@ -290,5 +303,45 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onDevtools: subscribe("agzos:devtools"),
   onDevtoolsRequest: subscribe("agzos:devtools-request"),
   onPdfOpen: subscribe("agzos:pdf-open"),
+  // Tradução da página e de trechos (electron/translate-service.cjs).
+  translatePage: (id, options) => ipcRenderer.invoke("translate:page", { id, options }),
+  translateCancel: (id) => ipcRenderer.invoke("translate:cancel", { id }),
+  translateRestore: (id) => ipcRenderer.invoke("translate:restore", { id }),
+  translateMode: (id, mode) => ipcRenderer.invoke("translate:mode", { id, mode }),
+  translateState: (id) => ipcRenderer.invoke("translate:state", { id }),
+  translateProbe: (id) => ipcRenderer.invoke("translate:probe", { id }),
+  translateText: (id, text, task, options) =>
+    ipcRenderer.invoke("translate:text", { id, text, task, options }),
+  translateField: (id, options) => ipcRenderer.invoke("translate:field", { id, options }),
+  translateReplace: (id, text) => ipcRenderer.invoke("translate:replace", { id, text }),
+  translateCacheClear: () => ipcRenderer.invoke("translate:cache-clear"),
+  translateCacheInfo: () => ipcRenderer.invoke("translate:cache-info"),
+  translateMenuTarget: (code, label) =>
+    ipcRenderer.invoke("translate:menu-target", { code, label }),
+  onTranslateAction: subscribe("agzos:translate-action"),
   onPdfProgress: subscribe("agzos:pdf-progress"),
+});
+
+// Conta Agzos e contas Google (electron/agzos-account.cjs): o token nunca passa por aqui.
+contextBridge.exposeInMainWorld("agzosAccount", {
+  state: () => ipcRenderer.invoke("account:state"),
+  signup: (payload) => ipcRenderer.invoke("account:signup", payload),
+  login: (payload) => ipcRenderer.invoke("account:login", payload),
+  logout: () => ipcRenderer.invoke("account:logout"),
+  me: () => ipcRenderer.invoke("account:me"),
+  recover: (payload) => ipcRenderer.invoke("account:recover", payload),
+  changePassword: (payload) => ipcRenderer.invoke("account:change-password", payload),
+  regenerateCodes: (payload) => ipcRenderer.invoke("account:regenerate-codes", payload),
+  deleteAccount: (payload) => ipcRenderer.invoke("account:delete", payload),
+  services: () => ipcRenderer.invoke("account:services"),
+  setPickerOnStart: (showOnStart) => ipcRenderer.invoke("account:picker-pref", { showOnStart }),
+  windowProfile: () => ipcRenderer.invoke("account:window-profile"),
+  startupPicker: () => ipcRenderer.invoke("account:startup-picker"),
+  addProfile: (label) => ipcRenderer.invoke("profiles:add", { label }),
+  openProfile: (id) => ipcRenderer.invoke("profiles:open", { id }),
+  signInProfile: (id) => ipcRenderer.invoke("profiles:signin", { id }),
+  updateProfile: (id, patch) => ipcRenderer.invoke("profiles:update", { id, ...patch }),
+  removeProfile: (id) => ipcRenderer.invoke("profiles:remove", { id }),
+  detectProfile: (id) => ipcRenderer.invoke("profiles:detect", { id }),
+  onState: subscribe("agzos:account"),
 });

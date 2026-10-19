@@ -135,6 +135,48 @@ const PAGES: Record<string, string> = {
         }
       });
     </script>`,
+  // Como um web app do Google Apps Script: a página de cima (script.google.com) põe o
+  // sandbox de outra origem (*.script.googleusercontent.com, aqui localhost), que escreve o
+  // HTML do usuário num iframe about:blank com document.write. Login sem <form>, rótulos
+  // soltos e botão que é uma div (google.script.run, sem submit).
+  "/as-app": `<!doctype html><title>App do Apps Script</title><body style="margin:0">
+    <iframe id="sandbox" sandbox="allow-scripts allow-forms allow-same-origin"
+      src="OTHER_ORIGIN/as-sandbox" style="width:640px;height:420px;border:0"></iframe></body>`,
+  "/as-sandbox": `<!doctype html><title>sandbox</title><body style="margin:0">
+    <iframe id="userHtmlFrame" style="width:620px;height:400px;border:0"></iframe>
+    <script>
+      const html = '<!doctype html><body style="margin:0;font:14px sans-serif">' +
+        '<div class="card" style="padding:20px"><div>Login</div><input id="u" class="in">' +
+        '<div>Senha</div><input id="p" type="password" class="in">' +
+        '<div id="go" style="cursor:pointer;margin-top:12px;width:120px;padding:8px;background:#06c;color:#fff">ACESSAR</div>' +
+        '</div><scr' + 'ipt>document.getElementById("go").onclick = () => {' +
+        'window.parent.enviado = document.getElementById("u").value; };</scr' + 'ipt></body>';
+      setTimeout(() => {
+        const doc = document.getElementById("userHtmlFrame").contentDocument;
+        doc.open(); doc.write(html); doc.close();
+      }, 300);
+    </script></body>`,
+  // Formulário de dados (perfil de preenchimento): rótulos variados, máscara e select de UF.
+  "/form-dados": `<!doctype html><title>Cadastro de cliente</title>
+    <form id="f" onsubmit="event.preventDefault()" style="display:grid;gap:6px;width:420px">
+      <label>Nome completo <input id="nome"></label>
+      <label for="cpf">CPF</label><input id="cpf" maxlength="14" placeholder="000.000.000-00">
+      <label>E-mail <input id="email" type="email"></label>
+      <label>Celular <input id="cel" name="celular"></label>
+      <label>Data de nascimento <input id="nasc" type="date"></label>
+      <label>CEP <input id="cep" name="cep"></label>
+      <label>Rua <input id="rua"></label>
+      <label>Nº <input id="num" name="numero"></label>
+      <label>Referência <input id="ref"></label>
+      <label>Bairro <input id="bairro"></label>
+      <label>Cidade <input id="cidade"></label>
+      <label>UF <select id="uf"><option value="">--</option><option value="RJ">Rio de Janeiro</option>
+        <option value="SP">São Paulo</option></select></label>
+      <label>Observações <textarea id="obs"></textarea></label>
+      <button type="submit">Enviar</button>
+    </form>
+    <script>window.eventos = 0;
+      document.getElementById("cpf").addEventListener("input", () => window.eventos++);</script>`,
   "/com-video": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player" width="400" height="240"></iframe>`,
   // 4.9: vídeo de arquivo (gravado na hora com o MediaRecorder): ao contrário de um
@@ -152,6 +194,14 @@ const PAGES: Record<string, string> = {
   "/com-video-arquivo": `<!doctype html><title>Com vídeo</title><h1>Vídeo</h1>
     <iframe src="/player-arquivo" width="400" height="240"></iframe>`,
   // 4.5: artigo com menu, barra lateral e rodapé (o modo leitura tira tudo isso).
+  // 4.9.7: página longa (captura inteira), com cabeçalho fixo que não pode repetir.
+  "/longa": `<!doctype html><html lang="pt-BR"><title>Página longa</title>
+    <body style="margin:0">
+    <header style="position:fixed;top:0;left:0;right:0;height:40px;background:#000;color:#fff">Topo fixo</header>
+    ${["#c00", "#0a0", "#00c", "#cc0", "#0cc"]
+      .map((color) => `<section style="height:900px;background:${color}"></section>`)
+      .join("")}
+    </body></html>`,
   "/artigo": `<!doctype html><html lang="pt-BR"><title>Artigo de teste</title>
     <meta name="author" content="Ana Autora">
     <nav class="menu"><a href="/a">Menu do site</a> · <a href="/b">Outro item</a></nav>
@@ -544,7 +594,8 @@ test.beforeAll(async () => {
     const html = PAGES[url] ?? (url.startsWith("/sessao?") ? PAGES["/sessao"] : undefined);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     if (html) {
-      response.end(html);
+      // OTHER_ORIGIN: o mesmo servidor por outro host (iframe de outra origem).
+      response.end(html.replace(/OTHER_ORIGIN/g, origin.replace("127.0.0.1", "localhost")));
       return;
     }
     const name = url.slice(1) || "a";
@@ -1803,6 +1854,10 @@ test("1.5.1: picture-in-picture pega o vídeo de qualquer player (até em iframe
   try {
     // 4.9: o PiP simples do Chromium vira opção (o padrão é a janela de vídeo).
     await go(window, "agzos://configuracoes");
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Aparência" })
+      .click();
     const simple = window.getByRole("switch", { name: "Picture-in-Picture com controles" });
     await simple.click();
     await expect(simple).toHaveAttribute("aria-checked", "false");
@@ -2071,7 +2126,8 @@ test("1.5.2: configurações completas em agzos://configuracoes (Ctrl+,) e menu 
     // Seções que só existem no app.
     await nav.getByRole("button", { name: "Desempenho" }).click();
     await expect(window.getByRole("switch", { name: "Hibernar guias sem uso" })).toBeVisible();
-    await nav.getByRole("button", { name: "Downloads" }).click();
+    // 4.9.7: a pasta dos downloads fica em Geral > Downloads.
+    await nav.getByRole("button", { name: "Geral" }).click();
     // AGZOS_DOWNLOADS_DIR do teste: <perfil>/Downloads.
     await expect(window.locator(".settings-main")).toContainText(/agzos-e2e-.*Downloads/);
   } finally {
@@ -2874,6 +2930,230 @@ test("2.2.8: chave e estrela na ponta da omnibox; Preencher sem formulário avis
   }
 });
 
+/** Frame da guia `url` cujo endereço (ou origem, nos about:blank) contém `needle`. */
+async function inFrame<T>(
+  app: ElectronApplication,
+  url: string,
+  needle: { url?: string; origin?: string },
+  code: string,
+): Promise<T> {
+  return app.evaluate(
+    ({ webContents }, [target, wanted, source]) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      const want = wanted as { url?: string; origin?: string };
+      const frame = contents.mainFrame.framesInSubtree.find(
+        (item) =>
+          (!want.url || item.url.includes(want.url)) &&
+          (!want.origin || item.origin.includes(want.origin)),
+      );
+      // Ainda carregando: null (o expect.poll tenta de novo).
+      if (!frame) return null;
+      return frame.executeJavaScript(source as string).catch(() => null);
+    },
+    [url, needle, code] as const,
+  ) as Promise<T>;
+}
+
+/** Clique de verdade num elemento do login do "Apps Script" (somando os iframes). */
+async function clickAppsScript(app: ElectronApplication, url: string, selector: string) {
+  const outer = await inTab<{ x: number; y: number }>(
+    app,
+    url,
+    `(() => { const r = document.getElementById("sandbox").getBoundingClientRect();
+      return { x: r.x, y: r.y }; })()`,
+  );
+  const inner = await inFrame<{ x: number; y: number }>(
+    app,
+    url,
+    { url: "/as-sandbox" },
+    `(() => { const f = document.getElementById("userHtmlFrame");
+      const fr = f.getBoundingClientRect();
+      const r = f.contentDocument.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: fr.x + r.x + r.width / 2, y: fr.y + r.y + r.height / 2 }; })()`,
+  );
+  // sendInputEvent não chega aos iframes de outro processo: o clique vai pelo CDP (o
+  // debugger da guia já está preso pela identidade de Chrome), que faz o hit-test certo.
+  await app.evaluate(
+    async ({ webContents }, [target, x, y]) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      contents.focus();
+      if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+      for (const type of ["mousePressed", "mouseReleased"])
+        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type,
+          x: Math.round(x as number),
+          y: Math.round(y as number),
+          button: "left",
+          clickCount: 1,
+        });
+    },
+    [url, outer.x + inner.x, outer.y + inner.y] as const,
+  );
+}
+
+const userHtml = (code: string) =>
+  `(() => { const d = document.getElementById("userHtmlFrame").contentDocument; return ${code}; })()`;
+
+test("4.9.8: login dentro do iframe do Apps Script é detectado, preenchido e salvo", async () => {
+  const { app, window } = await launch(tempProfile(), {
+    AGZOS_DEBUG_OVERLAY: "1",
+    AGZOS_KEY_URL: origin,
+    // localhost faz o papel do *.script.googleusercontent.com dentro do script.google.com.
+    AGZOS_TEST_EMBED: "127.0.0.1>localhost",
+  });
+  const url = `${origin}/as-app`;
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("App do Apps Script");
+    await expect
+      .poll(() =>
+        inFrame<number>(
+          app,
+          url,
+          { url: "/as-sandbox" },
+          userHtml(`d.querySelectorAll("input").length`),
+        ),
+      )
+      .toBe(2);
+    // Login à vista no frame de dentro (about:blank escrito por document.write): a chave.
+    await expect(window.getByRole("button", { name: "Agzos Key deste site" })).toBeVisible();
+
+    // Clique no campo de usuário (dois iframes abaixo): o popup do Key sobe.
+    await clickAppsScript(app, url, "#u");
+    const overlay = await overlayPage(app);
+    const popup = overlay.getByRole("complementary", { name: "Entrar com o Agzos Key" });
+    await popup.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Código de pareamento").fill("ABCD-1234");
+    await overlay.getByRole("button", { name: "Conectar" }).click();
+    await overlay.getByLabel("Senha mestra").fill(KEY_PASSWORD);
+    await overlay.getByRole("button", { name: "Desbloquear" }).click();
+    await expect(overlay.getByText("Login local")).toBeVisible({ timeout: 30_000 });
+    await overlay.keyboard.press("Escape");
+
+    const fill = popup.getByRole("button", { name: "Preencher login de Login local" });
+    await expect(fill).toBeVisible();
+    await fill.click();
+    await expect
+      .poll(() =>
+        inFrame<string>(
+          app,
+          url,
+          { url: "/as-sandbox" },
+          userHtml(`d.getElementById("u").value + "|" + d.getElementById("p").value`),
+        ),
+      )
+      .toBe("arnaldo@agzos.com|segredo");
+
+    // Senha nova digitada e o "botão" (div com onclick, sem submit): oferecer atualizar.
+    await inFrame(
+      app,
+      url,
+      { url: "/as-sandbox" },
+      userHtml(`(() => { const p = d.getElementById("p");
+        p.value = "senha-nova-123"; p.dispatchEvent(new Event("input", { bubbles: true }));
+        return true; })()`),
+    );
+    await clickAppsScript(app, url, "#go");
+    const prompt = window.getByRole("dialog", { name: "Salvar credencial no Agzos Key" });
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toContainText("Atualizar senha no Agzos Key?");
+    await expect(prompt).toContainText("arnaldo@agzos.com");
+    // O app recebeu o clique normalmente.
+    expect(await inFrame<string>(app, url, { url: "/as-sandbox" }, "window.enviado")).toBe(
+      "arnaldo@agzos.com",
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.9.8: perfil de preenchimento completa o formulário e aprende a correção", async () => {
+  const profile = tempProfile();
+  const { app, window } = await launch(profile, {
+    AGZOS_DEBUG_OVERLAY: "1",
+    AGZOS_TEST_BASIC_KEYRING: "1",
+  });
+  const url = `${origin}/form-dados`;
+  try {
+    const saved = await window.evaluate(() =>
+      (
+        window as unknown as {
+          agzosDesktop: { autofillSaveProfile: (p: unknown) => Promise<{ ok: boolean }> };
+        }
+      ).agzosDesktop.autofillSaveProfile({
+        id: "pessoal",
+        name: "Pessoal",
+        fields: {
+          name: "Maria Souza",
+          cpf: "12345678909",
+          email: "maria@exemplo.com",
+          tel: "11912345678",
+          "birth-date": "31/12/1990",
+          "postal-code": "01310100",
+          street: "Av. Paulista",
+          "address-number": "1000",
+          "address-complement": "Apto 12",
+          neighborhood: "Bela Vista",
+          city: "São Paulo",
+          state: "SP",
+        },
+      }),
+    );
+    expect(saved.ok).toBe(true);
+    // Cifrado no disco: o CPF não aparece em texto puro no perfil.
+    const stored = fs.readFileSync(path.join(profile, "autofill-profiles.bin"));
+    expect(stored.includes("12345678909")).toBe(false);
+    expect(stored.includes("Maria Souza")).toBe(false);
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Cadastro de cliente");
+
+    await focusField(app, url, "#cep");
+    const overlay = await overlayPage(app);
+    const card = overlay.getByRole("complementary", { name: "Preencher formulário" });
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "Preencher com o perfil Pessoal" }).click();
+    const read = `["nome","cpf","email","cel","nasc","cep","rua","num","ref","bairro","cidade","uf","obs"]
+      .map((id) => document.getElementById(id).value).join("|")`;
+    await expect
+      .poll(() => inTab<string>(app, url, read))
+      .toBe(
+        "Maria Souza|123.456.789-09|maria@exemplo.com|(11) 91234-5678|1990-12-31|01310-100|" +
+          "Av. Paulista|1000|Apto 12|Bela Vista|São Paulo|SP|",
+      );
+    // Eventos de input de verdade (React/Vue/Angular veem a mudança).
+    expect(await inTab<number>(app, url, "window.eventos")).toBeGreaterThan(0);
+    await expect(card).toHaveCount(0);
+
+    // O usuário corrige "Referência" (era complemento) para o bairro: o Agzos pergunta.
+    await focusField(app, url, "#ref");
+    await keyInTab(app, url, "A", [MOD === "Meta" ? "meta" : "control"]);
+    await app.evaluate(({ webContents }, target) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      for (const char of "Bela Vista") contents.sendInputEvent({ type: "char", keyCode: char });
+    }, url);
+    await keyInTab(app, url, "Tab");
+    const learn = window.getByRole("dialog", { name: "Lembrar o tipo do campo" });
+    await expect(learn).toBeVisible();
+    await expect(learn).toContainText("Bairro");
+    await learn.getByRole("button", { name: "Lembrar" }).click();
+    await expect
+      .poll(() =>
+        window.evaluate(() =>
+          (
+            window as unknown as {
+              agzosDesktop: {
+                autofillState: () => Promise<{ mappings: { type: string; label: string }[] }>;
+              };
+            }
+          ).agzosDesktop.autofillState(),
+        ),
+      )
+      .toMatchObject({ mappings: [{ type: "neighborhood", label: "Referência" }] });
+  } finally {
+    await app.close();
+  }
+});
+
 test("2.2.8: com uma pasta aberta, o cursor sobre outra troca o menu (sem hover da camada)", async () => {
   const { app, window } = await launch(tempProfile());
   const url = `${origin}/video-vivo`;
@@ -3377,7 +3657,7 @@ test("4.1: terminal embaixo, à direita e flutuante sem perder as sessões; tema
     await window.getByRole("button", { name: "Terminal", exact: true }).first().click();
     await window.getByRole("combobox").filter({ hasText: "Agzos escuro" }).selectOption("dracula");
     await expect(window.locator(".terminal-view")).toHaveCSS("background-color", "rgb(40, 42, 54)");
-    await window.getByRole("button", { name: "Terminal avançado" }).first().click();
+    // 4.9.7: aliases ficam na mesma categoria (Terminal > Automação).
     await window.getByLabel("Nome do alias").fill("cumprimenta");
     await window.getByLabel("Comando do alias").fill("echo ALIAS-OK");
     await window.getByRole("button", { name: "Adicionar alias" }).click();
@@ -3750,7 +4030,10 @@ test("4.1.1: PWA instala com ícone no sistema, abre em janela própria isolada 
   ({ app, window } = await launch(profile, env));
   try {
     await go(window, "agzos://configuracoes");
-    await window.getByRole("button", { name: "Apps instalados" }).first().click();
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Apps e extensões" })
+      .click();
     const list = window.getByRole("list", { name: "Apps instalados" });
     await expect(list).toContainText("Agzos Teste PWA");
     await list.getByRole("button", { name: "Desinstalar Agzos Teste PWA" }).click();
@@ -3781,7 +4064,10 @@ test("4.1.3: PWA sem service worker e com manifesto tardio instala; Configuraç�
     await expect(tabs(window).last()).toContainText("Página PRINCIPAL");
     await window.keyboard.press("Control+t");
     await go(window, "agzos://configuracoes");
-    await window.getByRole("button", { name: "Apps instalados" }).first().click();
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Apps e extensões" })
+      .click();
     const site = window.getByLabel("Site para instalar");
     await expect(site.locator("option").first()).toContainText("Página PRINCIPAL");
     await window.getByRole("button", { name: "Tentar instalar" }).click();
@@ -4265,9 +4551,13 @@ test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
     await go(window, "agzos://configuracoes");
     await window
       .getByRole("navigation", { name: "Seções das configurações" })
-      .getByRole("button", { name: "Extensões" })
+      .getByRole("button", { name: "Privacidade e segurança" })
       .click();
     await expect(window.getByText(/Este build não traz o Widevine/)).toBeVisible();
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Apps e extensões" })
+      .click();
     await window.getByRole("button", { name: "Carregar descompactada…" }).click();
     await expect(
       window.getByRole("status").filter({ hasText: "Extensão carregada." }),
@@ -4287,7 +4577,7 @@ test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
     await tabs(window).first().click();
     await window
       .getByRole("navigation", { name: "Seções das configurações" })
-      .getByRole("button", { name: "Extensões" })
+      .getByRole("button", { name: "Apps e extensões" })
       .click();
     await list.getByRole("switch", { name: "Agzos E2E Ext ligada" }).click();
     await expect(list.getByRole("switch", { name: "Agzos E2E Ext ligada" })).toHaveAttribute(
@@ -4311,6 +4601,58 @@ test("4.5: extensão MV3 descompactada carrega, desliga e sai", async () => {
       .toBe("sem");
     await list.getByRole("button", { name: "Remover Agzos E2E Ext" }).click();
     await expect(window.getByText("Nenhuma extensão ainda.")).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("4.9.7: captura da página inteira rola a guia, costura e anota com seta", async () => {
+  const profile = tempProfile();
+  const { app, window } = await launch(profile);
+  try {
+    await go(window, `${origin}/longa`);
+    await expect(tabs(window).first()).toContainText("Página longa");
+    await window.keyboard.press(`${MOD}+Shift+S`);
+    const dialog = window.getByRole("dialog", { name: "Captura de tela" });
+    await dialog.getByRole("radio", { name: "Página inteira" }).click();
+    const preview = dialog.getByRole("img", { name: "Prévia da captura" });
+    await expect(dialog.getByRole("radio", { name: "Página inteira" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+      { timeout: 20_000 },
+    );
+    // 5 seções de 900 px: a imagem tem a altura toda (em px da imagem, ≥ 4500 × escala).
+    const size = await preview.evaluate((canvas: HTMLCanvasElement) => ({
+      width: canvas.width,
+      height: canvas.height,
+    }));
+    expect(size.height).toBeGreaterThanOrEqual(4500);
+    expect(size.height / size.width).toBeGreaterThan(3);
+    // Cores das seções no meio de cada uma e o topo fixo só no começo.
+    const colors = await preview.evaluate((canvas: HTMLCanvasElement) => {
+      const context = canvas.getContext("2d")!;
+      const scale = canvas.height / 4500;
+      const at = (y: number) => [
+        ...context.getImageData(20, Math.round(y * scale), 1, 1).data.slice(0, 3),
+      ];
+      return { top: at(10), sections: [450, 1350, 2250, 3150, 4050].map(at), second: at(905) };
+    });
+    expect(colors.top).toEqual([0, 0, 0]);
+    expect(colors.sections.map((rgb) => rgb.indexOf(Math.max(...rgb)))).toEqual([0, 1, 2, 0, 1]);
+    expect(colors.second.slice(0, 2)).toEqual([0, 170]);
+    // A rolagem do usuário volta ao lugar.
+    expect(await inTab<number>(app, `${origin}/longa`, "scrollY")).toBe(0);
+
+    // Seta desenhada entra na imagem copiada.
+    await dialog.getByRole("button", { name: "Seta" }).click();
+    const box = (await preview.boundingBox())!;
+    await window.mouse.move(box.x + 20, box.y + 20);
+    await window.mouse.down();
+    await window.mouse.move(box.x + 120, box.y + 60, { steps: 4 });
+    await window.mouse.up();
+    await expect(dialog.getByRole("button", { name: "Desfazer" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Copiar" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("Imagem copiada.");
   } finally {
     await app.close();
   }
@@ -4378,6 +4720,10 @@ test("4.5: captura, modo leitura, nota e tema persistem", async () => {
     // Tema claro pelas Configurações.
     await window.keyboard.press(`${MOD}+t`);
     await go(window, "agzos://configuracoes");
+    await window
+      .getByRole("navigation", { name: "Seções das configurações" })
+      .getByRole("button", { name: "Aparência" })
+      .click();
     await window.getByRole("radio", { name: "Claro" }).click();
     await expect(window.locator("html")).not.toHaveClass(/dark/);
     await app.close();

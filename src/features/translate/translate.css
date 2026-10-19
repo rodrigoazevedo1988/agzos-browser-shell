@@ -1,0 +1,380 @@
+/* Tradução: popup da barra de URL (.tr-panel) e bolha do trecho (.tr-bubble). */
+.tr-panel,
+.tr-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12.5px;
+}
+.tr-panel {
+  width: 340px;
+  max-height: calc(100vh - 64px);
+}
+.tr-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tr-head > svg {
+  width: 16px;
+  color: var(--primary);
+}
+.tr-head > strong {
+  margin-right: auto;
+  font-size: 13.5px;
+}
+.tr-bubble .tr-head > .tr-picker {
+  margin-right: auto;
+}
+.tr-from {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.tr-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.tr-icon:hover:not(:disabled) {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.tr-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tr-icon svg {
+  width: 15px;
+}
+.tr-status,
+.tr-callout,
+.tr-body {
+  padding: 10px 12px;
+}
+.tr-status p,
+.tr-callout p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+.tr-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  overflow: auto;
+}
+.tr-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tr-callout > svg {
+  width: 18px;
+  color: var(--primary);
+}
+.tr-row,
+.tr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tr-actions {
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--border);
+}
+.tr-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.tr-button svg {
+  width: 14px;
+}
+.tr-button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.tr-button:hover:not(.primary) {
+  background: var(--muted);
+}
+.tr-ai {
+  margin-left: auto;
+}
+.tr-kbd {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.tr-progress {
+  height: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--muted);
+}
+.tr-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
+.tr-error {
+  color: var(--destructive, #dc2626);
+}
+.tr-muted {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+.tr-langs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+.tr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tr-field > span {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+}
+.tr-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--muted);
+}
+.tr-seg button {
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tr-seg button.on {
+  background: var(--card);
+  color: var(--primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.14);
+}
+.tr-select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12.5px;
+}
+.tr-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.tr-check input {
+  accent-color: var(--primary);
+}
+.tr-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.tr-picker {
+  position: relative;
+  min-width: 0;
+}
+.tr-picker-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.tr-picker-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-picker-button svg {
+  width: 14px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.tr-picker-list {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 220px);
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 12px 32px oklch(0 0 0 / 22%);
+}
+.tr-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tr-search svg {
+  width: 14px;
+  color: var(--muted-foreground);
+}
+.tr-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+}
+.tr-picker-list ul {
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.tr-picker-list li button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tr-picker-list li button:hover,
+.tr-picker-list li button[aria-selected="true"] {
+  background: var(--muted);
+}
+.tr-picker-list li button svg {
+  width: 14px;
+  color: var(--primary);
+}
+.tr-empty {
+  padding: 6px 8px;
+  color: var(--muted-foreground);
+}
+.tr-original {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.tr-result {
+  padding: 4px 12px 8px;
+}
+.tr-translation {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.tr-extra {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.tr-extra p {
+  margin: 4px 0 0;
+  line-height: 1.45;
+}
+.tr-alternatives {
+  list-style: none;
+}
+.tr-alternatives button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.tr-alternatives button:hover {
+  background: var(--muted);
+}
+.tr-alternatives small {
+  color: var(--muted-foreground);
+}
+.tr-panel button:focus-visible,
+.tr-panel input:focus-visible,
+.tr-panel select:focus-visible,
+.tr-bubble button:focus-visible,
+.tr-bubble input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+/* Botão da barra de URL. */
+.translate-button.on {
+  color: var(--primary);
+}

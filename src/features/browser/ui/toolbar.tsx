@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Download,
   KeyRound,
+  Languages,
   Check,
   Link2,
   LockKeyhole,
@@ -65,6 +66,14 @@ export type ToolbarProps = {
   pageTheme?: { dark: boolean; domain: string; shortcut: string; onToggle: () => void } | null;
   /** 4.7: a guia mostra um PDF: abrir no PDF Tools. */
   pdf?: { onOpen: () => void } | null;
+  /** Tradução: a página está em outro idioma (ou já traduzida); abre o popup. */
+  translate?: {
+    active: boolean;
+    busy: boolean;
+    open: boolean;
+    label: string;
+    onToggle: (anchor: DOMRect) => void;
+  } | null;
   /** 4.7: ColorTools (conta-gotas na barra). */
   colors?: { open: boolean; onToggle: (anchor: DOMRect) => void } | null;
   /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
@@ -256,6 +265,30 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 aria-pressed={props.reader.active}
               >
                 <BookOpenText />
+              </button>
+            )}
+            {props.translate && (
+              <button
+                type="button"
+                className={cn(
+                  "omnibox-action",
+                  "translate-button",
+                  props.translate.active && "on",
+                  props.translate.busy && "busy",
+                )}
+                onClick={(event) =>
+                  props.translate?.onToggle(event.currentTarget.getBoundingClientRect())
+                }
+                title={
+                  props.translate.active
+                    ? `Página traduzida para ${props.translate.label}`
+                    : `Traduzir esta página para ${props.translate.label}`
+                }
+                aria-label="Traduzir página"
+                aria-pressed={props.translate.active}
+                aria-expanded={props.translate.open}
+              >
+                <Languages />
               </button>
             )}
             {props.pdf && (

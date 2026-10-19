@@ -193,6 +193,7 @@ describe("migração da 1.3", () => {
         shield: false,
         aiOpen: false,
         aiSidebar: true,
+        aiChatWidth: 420,
         notesOpen: false,
         readerFontSize: 19,
         pipMode: "agzos",

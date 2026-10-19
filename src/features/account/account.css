@@ -1,0 +1,601 @@
+/* Conta Agzos: agzos://conta, o modal "Escolha uma conta" e o botão da barra. */
+.acct-page {
+  min-height: 100%;
+  padding: 40px 24px 64px;
+  overflow: auto;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 14px;
+}
+.acct-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--card-foreground);
+}
+.acct-card h2,
+.acct-card h3 {
+  margin: 0;
+}
+.acct-card h3 {
+  font-size: 15px;
+}
+.acct-narrow {
+  width: min(440px, 100%);
+  margin: 0 auto;
+}
+.acct-muted {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+.acct-small {
+  font-size: 12.5px;
+}
+.acct-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.acct-brand h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.acct-brand p {
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.acct-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.acct-brand-mark svg {
+  width: 22px;
+  height: 22px;
+}
+.acct-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--muted);
+}
+.acct-tabs button {
+  padding: 7px 6px;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 500;
+}
+.acct-tabs button.active {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 18%);
+}
+.acct-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.acct-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-items: end;
+}
+.acct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.acct-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.acct-field small {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.acct-error,
+.acct-warn,
+.acct-success,
+.acct-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.acct-error {
+  background: color-mix(in oklab, var(--destructive) 14%, transparent);
+  color: var(--destructive);
+}
+.acct-warn {
+  background: color-mix(in oklab, #d97706 16%, transparent);
+}
+.acct-success {
+  background: color-mix(in oklab, #16a34a 16%, transparent);
+}
+.acct-info {
+  background: var(--muted);
+}
+.acct-info svg {
+  width: 15px;
+  flex: none;
+}
+.acct-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  color: var(--primary);
+  font-size: 13px;
+}
+.acct-link:hover {
+  text-decoration: underline;
+}
+.acct-link svg {
+  width: 14px;
+}
+.acct-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.acct-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.acct-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.acct-strength {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 14px;
+}
+.acct-strength i {
+  width: 34px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--muted);
+}
+.acct-strength em {
+  margin-left: 6px;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 400;
+}
+.acct-strength[data-score="1"] i:nth-child(-n + 1) {
+  background: #dc2626;
+}
+.acct-strength[data-score="2"] i:nth-child(-n + 2) {
+  background: #d97706;
+}
+.acct-strength[data-score="3"] i:nth-child(-n + 3) {
+  background: #65a30d;
+}
+.acct-strength[data-score="4"] i {
+  background: #16a34a;
+}
+.acct-codes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+  list-style: none;
+}
+.acct-codes code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  user-select: all;
+}
+
+/* Área logada */
+.acct-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 28px;
+  width: min(1080px, 100%);
+  margin: 0 auto;
+}
+@media (max-width: 760px) {
+  .acct-shell {
+    grid-template-columns: 1fr;
+  }
+}
+.acct-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.acct-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.acct-me div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.acct-me strong,
+.acct-me span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-me span {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.acct-plan {
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.acct-plan-premium {
+  background: color-mix(in oklab, #d97706 22%, transparent);
+}
+.acct-side nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.acct-side nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  font-size: 13.5px;
+  text-align: left;
+}
+.acct-side nav button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.acct-side nav button.active {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.acct-side nav svg {
+  width: 16px;
+}
+.acct-side nav em {
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--muted);
+  font-size: 11.5px;
+  font-style: normal;
+}
+.acct-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.acct-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+.acct-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.acct-head div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.acct-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.acct-facts dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.acct-facts dd {
+  margin: 2px 0 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.acct-danger {
+  border-color: color-mix(in oklab, var(--destructive) 45%, var(--border));
+}
+.acct-empty {
+  align-items: center;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.acct-empty svg {
+  width: 28px;
+  height: 28px;
+}
+.acct-empty p {
+  margin: 0;
+}
+
+/* Contas Google */
+.acct-profiles,
+.acct-services {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.acct-profile-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.acct-profile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.acct-profile-text strong,
+.acct-profile-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-profile-text span {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.acct-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+}
+.acct-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.acct-avatar-self {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 11px;
+}
+.acct-me .acct-avatar-self {
+  font-size: 16px;
+}
+.acct-swatches {
+  display: flex;
+  gap: 6px;
+}
+.acct-swatches button {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px oklch(0 0 0 / 20%);
+}
+.acct-swatches button[aria-checked="true"] {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+.acct-actions {
+  margin-top: auto;
+}
+.acct-confirm p {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+/* Serviços */
+.acct-service p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+.acct-service.locked {
+  opacity: 0.85;
+}
+.acct-service-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.acct-service-foot {
+  margin-top: auto;
+}
+.acct-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, #d97706 22%, transparent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.acct-badge svg {
+  width: 12px;
+}
+.acct-soon {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.acct-premium {
+  align-items: flex-start;
+}
+.acct-premium ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
+/* Modal "Escolha uma conta" */
+.acct-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: oklch(0 0 0 / 45%);
+  animation: fade-in var(--dur-enter, 0.2s) var(--ease-out);
+}
+.acct-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(440px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 30px 80px oklch(0 0 0 / 35%);
+  animation: panel-in 0.28s var(--ease-out);
+}
+.acct-picker h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.acct-picker-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.acct-picker-x:hover {
+  background: var(--muted);
+}
+.acct-picker-x svg {
+  width: 16px;
+}
+.acct-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+.acct-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+.acct-picker-row:hover,
+.acct-picker-row:focus-visible {
+  background: var(--muted);
+}
+.acct-picker-row > svg {
+  width: 16px;
+  margin-left: auto;
+  color: var(--muted-foreground);
+}
+.acct-picker-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.acct-picker-text span {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.acct-picker-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* Botão da barra */
+.acct-bar-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.acct-bar-button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.acct-bar-button > svg {
+  width: 16px;
+  height: 16px;
+}

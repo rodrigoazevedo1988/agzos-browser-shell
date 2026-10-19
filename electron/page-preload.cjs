@@ -14,95 +14,31 @@ const { ipcRenderer } = require("electron");
 
 const PANEL = Array.isArray(process.argv) && process.argv.includes("--agzos-surface=panel");
 
-const USER_RE =
-  /e-?mail|login|user|usu[aá]rio|conta|account|identifier|cpf|celular|phone|telefone|acesso/i;
-const OTP_RE =
-  /one-?time|otp|totp|2fa|mfa|two.?factor|verifica|verification|token|c[oó]digo|\bcode\b|authenticator|autentica/i;
-const SUBMIT_RE =
-  /entrar|login|log in|logon|sign in|signin|acessar|continuar|continue|pr[oó]ximo|next|avan[cç]ar|verificar|verify|enviar|submit|confirmar/i;
+// Só o quadro de cima cuida de gestos, PiP, tela cheia, PWA e visualizador de imagem. O
+// Agzos Key (login e formulários) roda em todo frame (nodeIntegrationInSubFrames nas
+// guias): logins em iframes, inclusive de outra origem como o HTML do Google Apps Script
+// (script.google.com → *.script.googleusercontent.com → userHtmlFrame). O main só aceita
+// o que vem de frame do mesmo site da guia ou de um embutido confiável (form-intel.cjs).
+const TOP = window === window.top;
+
+// Motor semântico (electron/form-intel.cjs). O preload em sandbox não dá require em
+// arquivo local: pede o fonte ao main uma vez por frame e monta aqui, no mundo isolado.
+let intel = null;
+function engine() {
+  if (intel !== null) return intel;
+  try {
+    const source = ipcRenderer.sendSync("agzos:form-intel-source");
+    intel =
+      typeof source === "string" && source.startsWith("function formIntelFactory")
+        ? new Function(`return (${source})();`)()
+        : false;
+  } catch {
+    intel = false;
+  }
+  return intel;
+}
+
 const TEXT_TYPES = new Set(["text", "email", "tel", "number", ""]);
-
-function hint(input) {
-  return [
-    input.name,
-    input.id,
-    input.getAttribute("autocomplete"),
-    input.placeholder,
-    input.getAttribute("aria-label"),
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function visible(el) {
-  if (!el || !el.isConnected || el.disabled) return false;
-  if (el.offsetWidth === 0 && el.offsetHeight === 0) return false;
-  const style = getComputedStyle(el);
-  return style.visibility !== "hidden" && style.display !== "none";
-}
-
-function isPassword(input) {
-  return input instanceof HTMLInputElement && input.type === "password";
-}
-
-function isOtp(input) {
-  if (!(input instanceof HTMLInputElement) || isPassword(input)) return false;
-  if (!TEXT_TYPES.has(input.type)) return false;
-  const auto = (input.getAttribute("autocomplete") || "").toLowerCase();
-  if (auto === "one-time-code") return true;
-  const text = hint(input);
-  if (USER_RE.test(text) && !OTP_RE.test(text)) return false;
-  const short = input.maxLength > 0 && input.maxLength <= 8;
-  const numeric = /numeric|decimal/.test(input.inputMode || "") || input.type === "number";
-  return OTP_RE.test(text) && (short || numeric || /otp|totp|2fa|mfa/i.test(text));
-}
-
-function isUsername(input) {
-  if (!(input instanceof HTMLInputElement) || isPassword(input) || isOtp(input)) return false;
-  if (!TEXT_TYPES.has(input.type)) return false;
-  const auto = (input.getAttribute("autocomplete") || "").toLowerCase();
-  if (auto.includes("username") || input.type === "email") return true;
-  return USER_RE.test(hint(input));
-}
-
-function visibleInputs(root) {
-  return Array.from((root || document).querySelectorAll("input")).filter(visible);
-}
-
-/** Códigos MFA divididos em várias caixinhas de 1 dígito (comum em bancos e SaaS). */
-function splitOtpBoxes() {
-  const boxes = visibleInputs().filter(
-    (input) => !isPassword(input) && TEXT_TYPES.has(input.type) && input.maxLength === 1,
-  );
-  return boxes.length >= 4 && boxes.length <= 8 ? boxes : [];
-}
-
-function fieldKind(target) {
-  if (!(target instanceof HTMLInputElement) || !visible(target)) return null;
-  if (isPassword(target)) return "password";
-  if (isOtp(target) || splitOtpBoxes().includes(target)) return "otp";
-  if (!isUsername(target)) return null;
-  // Usuário só conta como login se a página tem senha à vista ou o campo é claramente o
-  // primeiro passo de um login em etapas (autocomplete username / e-mail no formulário).
-  const auto = (target.getAttribute("autocomplete") || "").toLowerCase();
-  // Campo dentro de web component: a senha costuma estar na mesma shadow root.
-  const root = target.getRootNode();
-  const hasPassword =
-    visibleInputs().some(isPassword) ||
-    (root instanceof ShadowRoot && visibleInputs(root).some(isPassword));
-  const form = target.form;
-  const formText = form ? `${form.id} ${form.name} ${form.action} ${form.className}` : "";
-  if (hasPassword || auto.includes("username") || /login|signin|sign-in|auth/i.test(formText))
-    return "username";
-  // Formulário pequeno com e-mail e um botão de "continuar/entrar".
-  const scope = form || target.closest("div, section, main") || document.body;
-  const buttons = Array.from(scope.querySelectorAll("button, [type=submit], [role=button]"));
-  return buttons.some((button) => SUBMIT_RE.test(buttonLabel(button))) ? "username" : null;
-}
-
-function buttonLabel(el) {
-  return `${el.innerText || el.value || ""} ${el.getAttribute("aria-label") || ""} ${el.id || ""}`;
-}
 
 function send(channel, payload) {
   try {
@@ -120,7 +56,7 @@ function send(channel, payload) {
 // processo principal — o que travava a barra lateral e a navegação. O preload escuta os
 // eventos do próprio navegador e avisa na hora, o que também cobre o PiP iniciado pelo
 // player da página (o botão do site), e não só pelo nosso atalho.
-for (const type of ["enterpictureinpicture", "leavepictureinpicture"]) {
+for (const type of TOP ? ["enterpictureinpicture", "leavepictureinpicture"] : []) {
   document.addEventListener(type, (event) => {
     const video = event.target;
     if (!video || video.tagName !== "VIDEO") return;
@@ -143,23 +79,86 @@ if (window === window.top) {
   });
 }
 
-// --- Formulário de login à vista (aviso passivo) e foco num campo (aviso explícito) ---
+// --- Agzos Key: formulários de login e de dados (todo frame) ---------------------------
 
-let lastScan = "";
-function scan() {
-  const inputs = visibleInputs();
-  const password = inputs.some(isPassword);
-  const otp = inputs.some(isOtp) || splitOtpBoxes().length > 0;
-  const username = !password && inputs.some((input) => fieldKind(input) === "username");
-  const key = `${location.href}|${password}|${otp}|${username}`;
-  if (key === lastScan) return;
-  lastScan = key;
-  if (!password && !otp && !username) return;
-  send("agzos:login-form", {
-    url: location.href,
-    focused: false,
-    field: password ? "password" : otp ? "otp" : "username",
-  });
+// Cada documento observado: o deste frame e os filhos do mesmo site sem preload próprio
+// (iframe about:blank escrito por document.write, como o userHtmlFrame do Apps Script).
+// A marca (não enumerável, no mundo isolado) diz quem já cuida de um documento.
+const WATCH_MARK = "__agzosFormWatch";
+const WATCH_TOKEN = Math.random().toString(36).slice(2);
+const watched = new Map();
+
+/** Código MFA dividido em caixinhas de 1 dígito (comum em bancos e SaaS). */
+function splitOtpBoxes(doc) {
+  const boxes = Array.from(doc.querySelectorAll("input")).filter(
+    (input) =>
+      input.maxLength === 1 && TEXT_TYPES.has(input.type) && engine() && engine().isVisible(input),
+  );
+  return boxes.length >= 4 && boxes.length <= 8 ? boxes : [];
+}
+
+/** Campo de verdade por trás do evento (web components chegam com o host como alvo). */
+function fieldOf(event) {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  const first = path[0] && path[0].nodeType === 1 ? path[0] : event.target;
+  return first && first.nodeType === 1 ? first : null;
+}
+
+/** Papel do campo para o Agzos Key: { role: password|username|otp|form, type, kind }. */
+function inspect(el) {
+  const intel = engine();
+  if (!intel || !el || !intel.isFieldElement(el) || !intel.isVisible(el)) return null;
+  const doc = el.ownerDocument;
+  if (el.tagName === "INPUT" && el.maxLength === 1 && splitOtpBoxes(doc).includes(el)) {
+    return { role: "otp", type: "otp", kind: "otp" };
+  }
+  try {
+    const groups = intel.analyze(doc, { focus: el });
+    const found = intel.fieldRole(el, groups);
+    return found
+      ? { role: found.role, type: found.type, kind: found.kind, fillable: found.fillable || 0 }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function frameUrl() {
+  return location.href;
+}
+
+// --- Aviso passivo: formulário de login à vista ---
+
+function scanDoc(doc, state) {
+  const intel = engine();
+  if (!intel || !doc.documentElement) return;
+  const count = doc.querySelectorAll("input").length;
+  let field = null;
+  if (count > 0) {
+    try {
+      // Páginas enormes (planilhas, feeds): só o campo de senha conta, sem análise.
+      if (count > 150) {
+        const pass = Array.from(doc.querySelectorAll('input[type="password"]')).some(
+          intel.isVisible,
+        );
+        field = pass ? "password" : null;
+      } else {
+        const groups = intel.analyze(doc, { shallow: true });
+        if (groups.some((group) => group.fields.some((item) => item.password))) field = "password";
+        else if (groups.some((group) => group.form.kind === "otp") || splitOtpBoxes(doc).length > 0)
+          field = "otp";
+        else if (groups.some((group) => group.form.kind === "login-step")) field = "username";
+      }
+    } catch {
+      field = null;
+    }
+  }
+  checkPending();
+  const key = `${frameUrl()}|${field}`;
+  if (key === state.lastScan) return;
+  state.lastScan = key;
+  if (!field) return;
+  send("agzos:login-form", { url: frameUrl(), focused: false, field });
 }
 
 let scanTimer = null;
@@ -167,9 +166,11 @@ function scanSoon() {
   if (scanTimer || document.hidden) return;
   scanTimer = setTimeout(() => {
     scanTimer = null;
-    scan();
+    for (const [doc, state] of watched) scanDoc(doc, state);
   }, 600);
 }
+
+// --- Foco num campo (aviso explícito) ---
 
 // Foco que vale como "o usuário clicou no campo": logo depois de um clique, toque ou Tab.
 // Foco por script (autofocus, o próprio preenchimento do Agzos Key) não abre a sugestão.
@@ -181,150 +182,331 @@ function userActed(event) {
 let lastFocus = { el: null, at: 0 };
 function onFocus(event) {
   if (Date.now() - lastUserAt > 1000) return;
-  // Em web components (shadow DOM aberto) o evento chega com o host como alvo.
-  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  const target = path[0] instanceof HTMLInputElement ? path[0] : event.target;
-  const kind = fieldKind(target);
-  if (!kind) return;
+  const target = fieldOf(event);
+  const found = inspect(target);
+  if (!found) return;
   // O mesmo campo focado de novo em seguida (clique depois do foco): um aviso só.
   const now = Date.now();
   if (lastFocus.el === target && now - lastFocus.at < 400) return;
   lastFocus = { el: target, at: now };
-  send("agzos:login-form", { url: location.href, focused: true, field: kind });
+  if (found.role === "form") {
+    send("agzos:form-field", {
+      url: frameUrl(),
+      focused: true,
+      kind: found.kind,
+      type: found.type,
+      fillable: found.fillable,
+    });
+    return;
+  }
+  send("agzos:login-form", { url: frameUrl(), focused: true, field: found.role });
 }
 
-// --- Envio do login (salvar no Agzos Key) -------------------------------------
+/** Clique num campo que já tinha o foco (o usuário fechou a sugestão e clicou de novo). */
+function onPointerDown(event) {
+  userActed(event);
+  const doc = event.target && event.target.ownerDocument;
+  if (!doc || !engine()) return;
+  const active = engine().activeIn(doc);
+  if (fieldOf(event) === active) onFocus(event);
+}
+
+// --- Envio do login (salvar no Agzos Key) ---
 
 // Login em etapas (e-mail numa tela, senha na outra, na mesma página): guarda o último
 // usuário digitado para juntar com a senha no envio.
 let lastUsername = "";
-function rememberUsername(event) {
-  const target = event.target;
-  if (target instanceof HTMLInputElement && isUsername(target) && target.value)
-    lastUsername = target.value;
+// Senha digitada ainda não enviada: se o campo some (login por JS, google.script.run,
+// troca de tela sem submit) ou a página sai, o login vale como enviado.
+let pending = null;
+let pendingTimer = null;
+
+function onTyping(event) {
+  const target = fieldOf(event);
+  if (!target || target.tagName !== "INPUT" || !engine()) return;
+  watchCorrection(target, event);
+  const found = inspect(target);
+  if (!found) return;
+  if (found.role === "username" && target.value) lastUsername = target.value;
+  if (found.role === "password" && target.value) {
+    const doc = target.ownerDocument;
+    clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(() => {
+      const login = engine().readLogin(doc);
+      if (login.password) {
+        pending = {
+          el: target,
+          username: login.username || lastUsername,
+          password: login.password,
+          at: Date.now(),
+        };
+      }
+    }, 300);
+  }
 }
 
-/** Melhor palpite para o campo de usuário perto de um campo de senha. */
-function findUsername(scope, passwordField) {
-  const inputs = Array.from(scope.querySelectorAll("input")).filter(
-    (input) => visible(input) || input.value,
-  );
-  const explicit = inputs.find(
-    (input) =>
-      input.value &&
-      !isPassword(input) &&
-      /username|email/i.test(input.getAttribute("autocomplete") || ""),
-  );
-  if (explicit) return explicit.value;
-  const email = inputs.find((input) => input.type === "email" && input.value);
-  if (email) return email.value;
-  // Senão, o último campo de texto antes da senha com cara de login.
-  const passIndex = inputs.indexOf(passwordField);
-  for (let i = passIndex - 1; i >= 0; i--) {
-    const input = inputs[i];
-    if (TEXT_TYPES.has(input.type) && input.value && !isOtp(input)) {
-      if (USER_RE.test(hint(input)) || i === passIndex - 1) return input.value;
-    }
+/** O campo de senha com valor sumiu da tela: o login foi enviado por script. */
+function checkPending() {
+  if (!pending || Date.now() - pending.at > 120_000) {
+    pending = null;
+    return;
   }
-  return lastUsername;
+  const intel = engine();
+  if (!pending.el.isConnected || !(intel && intel.isVisible(pending.el))) {
+    const { username, password } = pending;
+    pending = null;
+    report(username, password);
+  }
 }
 
 let lastSent = "";
-function capture(scope) {
-  const root = scope || document;
-  const password =
-    Array.from(root.querySelectorAll('input[type="password"]')).find((input) => input.value) ||
-    (root !== document &&
-      Array.from(document.querySelectorAll('input[type="password"]')).find((input) => input.value));
+function report(username, password) {
   if (!password) return;
-  const username = findUsername(password.form || root, password) || lastUsername;
   // Submit + clique no botão disparam juntos: um aviso só.
-  const key = `${username}\u0000${password.value}`;
+  const key = `${username}\u0000${password}`;
   if (key === lastSent) return;
   lastSent = key;
   setTimeout(() => {
     if (lastSent === key) lastSent = "";
   }, 4000);
-  send("agzos:page-login", { url: location.href, username, password: password.value });
+  pending = null;
+  send("agzos:page-login", { url: frameUrl(), username, password });
 }
 
-function installLoginWatch() {
-  // Submit normal (inclui Enter dentro do form).
-  window.addEventListener(
-    "submit",
-    (event) => {
-      const target = event.target;
-      if (target && target.tagName === "FORM") capture(target);
-    },
-    true,
-  );
+function capture(doc) {
+  const intel = engine();
+  if (!intel || !doc) return;
+  let login = { username: "", password: "" };
+  try {
+    login = intel.readLogin(doc);
+  } catch {
+    return;
+  }
+  if (!login.password) return;
+  report(login.username || lastUsername, login.password);
+}
 
-  // Enter num campo de senha fora de <form> (páginas que logam por JS).
-  window.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Enter" && isPassword(event.target)) capture(event.target.form || document);
-    },
-    true,
+/** Elemento clicável com cara de "enviar": botão, link, role=button, onclick, cursor de mão. */
+function clickable(target) {
+  if (!target || target.nodeType !== 1) return null;
+  const el = target.closest(
+    "button, input[type=submit], input[type=button], input[type=image], [role=button], a, [onclick]",
   );
+  if (el) return el;
+  // Div/span com listener de clique (Apps Script, apps sem <form>): cursor de mão por perto.
+  let node = target;
+  for (let depth = 0; node && depth < 3; depth++, node = node.parentElement) {
+    const view = node.ownerDocument && node.ownerDocument.defaultView;
+    if (view && view.getComputedStyle(node).cursor === "pointer") return node;
+  }
+  return null;
+}
 
-  // Botões de "entrar" em páginas que logam por JS (sem submit de form de verdade).
-  window.addEventListener(
-    "click",
-    (event) => {
-      const el =
-        event.target instanceof Element
-          ? event.target.closest("button, [type=submit], [role=button], a")
+function labelOf(el) {
+  return `${el.innerText || el.value || ""} ${el.getAttribute("aria-label") || ""} ${el.id || ""} ${el.getAttribute("title") || ""}`;
+}
+
+function onSubmit(event) {
+  const target = event.target;
+  if (target && target.tagName === "FORM") capture(target.ownerDocument);
+}
+
+function onKeyDown(event) {
+  userActed(event);
+  if (event.key !== "Enter") return;
+  const target = fieldOf(event);
+  if (target && target.tagName === "INPUT") capture(target.ownerDocument);
+}
+
+function onClick(event) {
+  const el = clickable(fieldOf(event));
+  if (!el || !engine()) return;
+  if (engine().isFieldElement(el)) return;
+  const doc = el.ownerDocument;
+  // Botão de entrar/continuar, ou o único botão de um formulário com senha preenchida.
+  if (engine().isSubmitLabel(labelOf(el))) {
+    capture(doc);
+    return;
+  }
+  const scope = el.closest("form") || doc;
+  if (engine().buttonsOf(scope).length === 1) capture(doc);
+}
+
+function onPageHide() {
+  if (!pending) return;
+  const { username, password } = pending;
+  report(username, password);
+}
+
+// --- Preencher (pedido do main, só a frames permitidos) ---
+
+// Preenchido com perfil: se o usuário trocar o valor, o Agzos aprende (se ligado).
+let filledByProfile = null;
+
+function watchCorrection(target, event) {
+  if (!filledByProfile || event.type !== "change" || !event.isTrusted) return;
+  if (Date.now() > filledByProfile.until) {
+    filledByProfile = null;
+    return;
+  }
+  const item = filledByProfile.elements.find((entry) => entry.el === target);
+  if (!item || target.value === item.value) return;
+  const value = String(target.value || "").trim();
+  const to = value ? engine().typeForValue(filledByProfile.values, value) : "ignore";
+  if (!to || to === item.type) return;
+  item.value = target.value;
+  send("agzos:form-correction", {
+    signature: item.signature,
+    label: item.label || "",
+    from: item.type,
+    to,
+  });
+}
+
+/** Documentos na ordem de preferência: o que tem o foco primeiro. */
+function docsByFocus() {
+  const docs = [...watched.keys()].filter((doc) => doc.defaultView);
+  return docs.sort((a, b) => Number(b.hasFocus()) - Number(a.hasFocus()));
+}
+
+function fillRequest(request) {
+  const intel = engine();
+  if (!intel || !request || typeof request !== "object") return { filled: false };
+  const docs = docsByFocus();
+  if (request.mode === "login") {
+    const data = {
+      username: typeof request.username === "string" ? request.username : "",
+      password: typeof request.password === "string" ? request.password : "",
+    };
+    for (const doc of docs) {
+      const result = intel.fillLogin(doc, data);
+      if (result.filled) return { filled: true, focused: doc.hasFocus() };
+    }
+    return { filled: false };
+  }
+  if (request.mode === "profile") {
+    const values = request.values && typeof request.values === "object" ? request.values : {};
+    const mappings =
+      request.mappings && typeof request.mappings === "object" ? request.mappings : {};
+    for (const doc of docs) {
+      const result = intel.fillProfile(doc, { values, mappings });
+      if (result.filled > 0) {
+        filledByProfile = request.learn
+          ? {
+              values,
+              elements: result.elements.map((item, index) => ({
+                ...item,
+                label: (result.fields[index] && result.fields[index].label) || "",
+              })),
+              until: Date.now() + 180_000,
+            }
           : null;
-      if (!el || !SUBMIT_RE.test(buttonLabel(el))) return;
-      capture(el.closest("form") || document);
-    },
-    true,
-  );
+        return { filled: true, count: result.filled, focused: doc.hasFocus() };
+      }
+    }
+    return { filled: false };
+  }
+  if (request.mode === "read") {
+    for (const doc of docs) {
+      const login = intel.readLogin(doc);
+      if (login.password)
+        return { username: login.username || lastUsername, password: login.password };
+    }
+    return { username: "", password: "" };
+  }
+  return { filled: false };
+}
 
-  window.addEventListener("pointerdown", userActed, true);
-  window.addEventListener("keydown", userActed, true);
-  window.addEventListener("focusin", onFocus, true);
-  // Clique num campo que já tinha o foco (o usuário fechou a sugestão e clicou de novo).
-  window.addEventListener(
-    "pointerdown",
-    (event) => {
-      let active = document.activeElement;
-      while (active && active.shadowRoot && active.shadowRoot.activeElement)
-        active = active.shadowRoot.activeElement;
-      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-      if ((path[0] || event.target) === active) onFocus(event);
-    },
-    true,
-  );
-  window.addEventListener("input", rememberUsername, true);
-  window.addEventListener("change", rememberUsername, true);
+// --- Observação dos documentos (este frame e filhos sem preload) ---
 
-  function watch() {
-    scan();
+function arm(doc) {
+  if (!doc || !doc.defaultView) return;
+  let state = watched.get(doc);
+  if (state && state.root === doc.documentElement) return;
+  if (!state) {
+    if (doc[WATCH_MARK] && doc[WATCH_MARK] !== WATCH_TOKEN) return;
+    try {
+      Object.defineProperty(doc, WATCH_MARK, { value: WATCH_TOKEN, configurable: true });
+    } catch {
+      return;
+    }
+    state = { root: null, observer: null, lastScan: "" };
+    watched.set(doc, state);
+  }
+  // document.open() (o Apps Script escreve o HTML do usuário assim) apaga os listeners da
+  // janela e troca o <html>: arma de novo. As mesmas funções não duplicam o listener.
+  const win = doc.defaultView;
+  win.addEventListener("submit", onSubmit, true);
+  win.addEventListener("keydown", onKeyDown, true);
+  win.addEventListener("click", onClick, true);
+  win.addEventListener("pointerdown", onPointerDown, true);
+  win.addEventListener("focusin", onFocus, true);
+  win.addEventListener("input", onTyping, true);
+  win.addEventListener("change", onTyping, true);
+  win.addEventListener("pagehide", onPageHide, true);
+  if (state.observer) state.observer.disconnect();
+  state.root = doc.documentElement;
+  if (state.root) {
     // SPAs montam o formulário depois (e trocam de etapa sem navegar): reavalia em lote.
-    new MutationObserver(scanSoon).observe(document.documentElement, {
+    state.observer = new win.MutationObserver(scanSoon);
+    state.observer.observe(state.root, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["type", "hidden"],
+      attributeFilter: ["type", "hidden", "style", "class"],
     });
+  }
+  scanSoon();
+}
+
+/** Filhos do mesmo site sem preload próprio (about:blank) e documentos reescritos. */
+function rearm() {
+  for (const [doc, state] of watched) {
+    if (!doc.defaultView) {
+      watched.delete(doc);
+      continue;
+    }
+    if (state.root !== doc.documentElement) arm(doc);
+    for (const frame of doc.querySelectorAll("iframe, frame")) {
+      let child = null;
+      try {
+        child = frame.contentDocument;
+      } catch {
+        child = null;
+      }
+      if (child && child.defaultView) arm(child);
+    }
+  }
+}
+
+function installLoginWatch() {
+  ipcRenderer.on("agzos:fill", (_event, request) => {
+    let result = { filled: false };
+    try {
+      result = fillRequest(request);
+    } catch {
+      result = { filled: false };
+    }
+    send("agzos:fill-result", { nonce: request && request.nonce, result });
+  });
+  const start = () => {
+    arm(document);
     window.addEventListener("popstate", scanSoon);
     window.addEventListener("hashchange", scanSoon);
     document.addEventListener("visibilitychange", scanSoon);
-  }
-
+    setInterval(rearm, 1000);
+  };
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", watch, { once: true });
+    document.addEventListener("DOMContentLoaded", start, { once: true });
   } else {
-    watch();
+    start();
   }
 }
 
 // Painéis laterais (WhatsApp, Discord…) carregam este preload só pelos gestos: o Agzos Key
 // não observa login neles.
 if (!PANEL) installLoginWatch();
-installGestures();
+if (TOP) installGestures();
 
 // --- Gestos (4.0) ---------------------------------------------------------------
 
@@ -535,7 +717,7 @@ function directionsOf(points, segment) {
 
 // --- 4.1.1: PWA, arquivos locais e visualizador de imagem -------------------------
 
-if (!PANEL) {
+if (!PANEL && TOP) {
   installPwaWatch();
   installFileActions();
   installImageViewer();

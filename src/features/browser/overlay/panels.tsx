@@ -11,6 +11,8 @@ import { KeyPanel } from "@/features/key/panel";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { AppMenu } from "@/features/settings/menu";
 import { SitePanel } from "@/features/site/panel";
+import { TranslationBubble } from "@/features/translate/bubble";
+import { TranslatePagePanel } from "@/features/translate/page-panel";
 
 import { CommandPalette } from "../ui/command-palette";
 import { FolderMenu } from "../ui/folder-dropdown";
@@ -45,7 +47,10 @@ export type PanelSpec =
   /** 4.6: menu Ferramentas da barra lateral. */
   | { kind: "tools"; key?: string; props: ComponentProps<typeof ToolsMenu> }
   /** 4.7: ColorTools (popover do conta-gotas da barra). */
-  | { kind: "colors"; key?: string; props: ComponentProps<typeof ColorToolsPanel> };
+  | { kind: "colors"; key?: string; props: ComponentProps<typeof ColorToolsPanel> }
+  /** Tradução: popup do ícone da barra de URL e bolha do trecho selecionado. */
+  | { kind: "translate"; key?: string; props: ComponentProps<typeof TranslatePagePanel> }
+  | { kind: "translation"; key?: string; props: ComponentProps<typeof TranslationBubble> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -86,5 +91,9 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <ToolsMenu key={key} {...spec.props} />;
     case "colors":
       return <ColorToolsPanel key={key} {...spec.props} />;
+    case "translate":
+      return <TranslatePagePanel key={key} {...spec.props} />;
+    case "translation":
+      return <TranslationBubble key={key} {...spec.props} />;
   }
 }

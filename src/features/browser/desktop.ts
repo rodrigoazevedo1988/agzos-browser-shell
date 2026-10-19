@@ -1,5 +1,7 @@
 import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
 import type { DesktopV48 } from "./desktop-v48";
+import type { DesktopTranslate, TranslateTabEvent } from "@/features/translate/bridge";
+import type { DesktopFormFill, FormFillTabEvent } from "@/features/key/form-fill";
 import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
 import type { PanelKind } from "./overlay/panels";
@@ -68,6 +70,8 @@ export type DesktopTabEvent =
   /** 4.6: a página (nesta URL) tem artigo para o modo leitura. */
   | { type: "readable"; id: number; url: string; readable: boolean }
   | V47TabEvent
+  | TranslateTabEvent
+  | FormFillTabEvent
   | { type: "login-rejected"; id: number; rejected: boolean; continueUrl: string | null }
   /** Login enviado numa página (page-preload): oferecer salvar no Agzos Key. */
   | { type: "login-detected"; id: number; url: string; username: string; password: string }
@@ -475,7 +479,7 @@ export type WidevineStatus = {
 };
 
 /** Pontes de cada versão que ficam em arquivos à parte (só pelo tamanho). */
-type DesktopExtras = DesktopV47 & DesktopV48;
+type DesktopExtras = DesktopV47 & DesktopV48 & DesktopTranslate & DesktopFormFill;
 
 export type DesktopBridge = DesktopExtras & {
   attachTab(
@@ -679,7 +683,7 @@ export type DesktopBridge = DesktopExtras & {
     audio: Uint8Array,
     mime: string,
     language: string,
-  ): Promise<{ ok: true; text: string } | AiFailure>;
+  ): Promise<{ ok: true; text: string } | (AiFailure & { detail?: string })>;
   /** macOS: pede o microfone ao sistema (nos outros, true). */
   micAccess(): Promise<boolean>;
   onTerminalConfig(callback: (config: TerminalRuntimeConfig) => void): () => void;
@@ -756,9 +760,14 @@ export type DesktopBridge = DesktopExtras & {
   readerExtract(
     id: number,
   ): Promise<{ ok: true; article: ReaderArticle } | { ok: false; reason: "page" | "empty" }>;
-  captureTake(
-    mode: "tab" | "window",
-  ): Promise<{ ok: boolean; layers?: CaptureLayer[]; reason?: "tab" }>;
+  /** "page": a página inteira, em faixas (`size` em px CSS; `truncated` passou do teto). */
+  captureTake(mode: "tab" | "window" | "page"): Promise<{
+    ok: boolean;
+    layers?: CaptureLayer[];
+    size?: { width: number; height: number };
+    truncated?: boolean;
+    reason?: "tab";
+  }>;
   captureCopy(dataUrl: string): Promise<boolean>;
   captureSave(dataUrl: string): Promise<{ ok: boolean; path?: string; canceled?: boolean }>;
   scratchpadCapture(

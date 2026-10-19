@@ -120,6 +120,14 @@ const colorTools = require(path.join(electronDir, "color-tools.cjs")) as {
   hexOf: (rgb: { r: number; g: number; b: number }) => string;
   rgbOfBitmap: (bitmap: Uint8Array, offset?: number) => { r: number; g: number; b: number };
   colorAnalyzeSource: (limit?: number) => string;
+  screenSourceOf: <T extends { display_id: string }>(
+    sources: T[],
+    display: { id: number },
+  ) => T | null;
+  screenThumbnailSize: (display: {
+    scaleFactor: number;
+    bounds: { width: number; height: number };
+  }) => { width: number; height: number };
   PICKER_PAGE: string;
 };
 const pdfTools = require(path.join(electronDir, "pdf-tools.cjs")) as {
@@ -537,6 +545,18 @@ describe("4.7: ColorTools", () => {
     const merged = importColorLibrary(emptyColorLibrary, exportColorLibrary(withPalette));
     expect(merged?.palettes).toHaveLength(1);
     expect(importColorLibrary(emptyColorLibrary, '{"kind":"outra"}')).toBeNull();
+  });
+
+  it("conta-gotas da tela: fonte do monitor certo e foto em pixels físicos", () => {
+    const sources = [{ display_id: "1" }, { display_id: "2" }];
+    expect(colorTools.screenSourceOf(sources, { id: 2 })).toBe(sources[1]);
+    expect(colorTools.screenSourceOf(sources, { id: 3 })).toBeNull();
+    // Linux sem display_id: com uma tela só, é ela.
+    const single = [{ display_id: "" }];
+    expect(colorTools.screenSourceOf(single, { id: 9 })).toBe(single[0]);
+    expect(
+      colorTools.screenThumbnailSize({ scaleFactor: 2, bounds: { width: 1440, height: 900 } }),
+    ).toEqual({ width: 2880, height: 1800 });
   });
 
   it("conta-gotas: resposta pelo título da camada; pixel BGRA; analisador sem rede", () => {

@@ -31,6 +31,9 @@ const OVERLAY_KINDS = new Set([
   "tools",
   // 4.7: ColorTools.
   "colors",
+  // Tradução: popup da barra de URL e bolha do trecho selecionado.
+  "translate",
+  "translation",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;

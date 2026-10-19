@@ -1,0 +1,11 @@
+{
+  "name": "agzos-accounts",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "API de contas do Agzos Browser (Contas Agzos), servida em /browser-api/v1.",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "test": "bun test"
+  }
+}

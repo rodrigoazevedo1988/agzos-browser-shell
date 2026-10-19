@@ -61,6 +61,35 @@ export async function composeLayers(layers: CaptureLayer[]): Promise<string | nu
   return canvas.toDataURL("image/png");
 }
 
+/**
+ * Faixas da página inteira (4.9.7) → um PNG da altura toda. Cada faixa vai na posição de
+ * rolagem em que foi tirada; a última sobrepõe a anterior com o mesmo conteúdo.
+ */
+export async function composeStrips(
+  strips: CaptureLayer[],
+  size: { width: number; height: number },
+): Promise<string | null> {
+  if (!strips.length) return null;
+  const images = await Promise.all(strips.map((strip) => loadImage(strip.dataUrl)));
+  const scale = layerScale(strips[0]!, images[0]!.naturalWidth);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(size.width * scale);
+  canvas.height = Math.round(size.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  strips.forEach((strip, index) => {
+    const image = images[index]!;
+    context.drawImage(
+      image,
+      0,
+      Math.round(strip.y * scale),
+      image.naturalWidth,
+      image.naturalHeight,
+    );
+  });
+  return canvas.toDataURL("image/png");
+}
+
 /** Recorte (em pixels da imagem) de um PNG. */
 export async function cropPng(dataUrl: string, rect: Rect): Promise<string | null> {
   const image = await loadImage(dataUrl);

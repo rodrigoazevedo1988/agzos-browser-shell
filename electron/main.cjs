@@ -31,6 +31,7 @@ const {
 const { createDownloadManager, uniquePath } = require("./downloads.cjs");
 const pageTheme = require("./page-theme.cjs");
 const colorTools = require("./color-tools.cjs");
+const pageCapture = require("./page-capture.cjs");
 const { createPdfTools, safeFileName: safePdfName } = require("./pdf-tools.cjs");
 const {
   defaultTypeFolders,
@@ -56,6 +57,8 @@ const {
 } = require("./permissions.cjs");
 const { fetchSuggestions } = require("./suggest.cjs");
 const { createAgzosKey } = require("./agzos-key.cjs");
+const formIntel = require("./form-intel.cjs");
+const { createAutofillStore } = require("./autofill-store.cjs");
 const { createUpdater, compareVersions, DEFAULT_FEED, MAC_CERT_SHA1 } = require("./updater.cjs");
 const {
   createWindowStore,
@@ -100,6 +103,7 @@ const { createPortsService } = require("./ports-service.cjs");
 const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunnel.cjs");
 const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
 const { READER_WORLD, cleanArticle, readerProbeSource, readerSource } = require("./reader.cjs");
+const { createTranslateService, registerTranslateIpc } = require("./translate-service.cjs");
 const { createNetCapture, sendRequest } = require("./scratchpad.cjs");
 const { POPUP_MEASURE, createExtensions, popupPlacement } = require("./extensions.cjs");
 const { createTooltip } = require("./tooltip.cjs");
@@ -168,6 +172,9 @@ const pwaChrome = require("./pwa-chrome.cjs");
 const displayPicker = require("./display-picker.cjs");
 const videoWin = require("./video-window.cjs");
 const clipboardImage = require("./clipboard-image.cjs");
+const splash = require("./splash.cjs");
+const { createAgzosAccount, DEFAULT_BASE_URL: ACCOUNT_BASE_URL } = require("./agzos-account.cjs");
+const googleProfiles = require("./google-profiles.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
 const PRIVATE_PARTITION = "agzos-anonima";
@@ -1024,6 +1031,47 @@ function buildPageContextMenu(contents, params) {
     );
   }
 
+  // Tradução: trecho selecionado (bolha), o que foi escrito no campo e a página inteira.
+  const translateTab = tabOfContents.get(contents.id);
+  if (translateTab && isWebUrl(contents.getURL())) {
+    const target = translateService().menuTarget().label;
+    const translateAction = (payload) => {
+      const rect = rectOf(translateTab.ctx, translateTab.id);
+      send(translateTab.ctx, "agzos:translate-action", {
+        tabId: translateTab.id,
+        x: Math.round((rect?.x ?? 0) + params.x),
+        y: Math.round((rect?.y ?? 0) + params.y),
+        ...payload,
+      });
+    };
+    const selection = String(params.selectionText ?? "").trim();
+    const items = [];
+    if (selection) {
+      const snippet = selection.length > 24 ? `${selection.slice(0, 24).trimEnd()}…` : selection;
+      items.push({
+        label: `Traduzir “${snippet.replace(/\s+/g, " ")}” para ${target}`,
+        click: () =>
+          translateAction({
+            action: "selection",
+            text: selection.slice(0, 5000),
+            editable: Boolean(params.isEditable),
+          }),
+      });
+    }
+    if (params.isEditable) {
+      items.push({
+        label: `Traduzir o que escrevi para ${target}`,
+        click: () => translateAction({ action: "field" }),
+      });
+    } else if (!selection) {
+      items.push({
+        label: `Traduzir página para ${target}`,
+        click: () => translateAction({ action: "page" }),
+      });
+    }
+    if (items.length) template.push({ type: "separator" }, ...items);
+  }
+
   // 4.5: ferramentas da página (mira, leitura, Scratchpad), pelos comandos da casca.
   const pageTab = tabOfContents.get(contents.id);
   if (pageTab && isWebUrl(contents.getURL())) {
@@ -1317,6 +1365,111 @@ function windowOfContents(contents) {
   return BrowserWindow.getFocusedWindow();
 }
 
+/**
+ * capturePage com nova tentativa: o compositor às vezes recusa a foto de uma guia que
+ * acabou de pintar ("UnknownVizError") e aceita alguns quadros depois.
+ */
+async function capturePageRetry(contents, rect) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await (rect ? contents.capturePage(rect) : contents.capturePage());
+    } catch (error) {
+      if (attempt >= 3 || contents.isDestroyed()) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+    }
+  }
+}
+
+/** Foto do monitor `display` (pixels físicos) ou null. */
+async function captureDisplay(display) {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: colorTools.screenThumbnailSize(display),
+    fetchWindowIcons: false,
+  });
+  const image = colorTools.screenSourceOf(sources, display)?.thumbnail;
+  return image && !image.isEmpty() ? image : null;
+}
+
+let screenPicking = false;
+
+/**
+ * Conta-gotas da tela (ColorTools). Resolve com { r, g, b }, null (cancelou) ou
+ * { error: "permission" | "capture" }. As janelas escondidas voltam em qualquer saída.
+ */
+async function pickScreenColor({ light }) {
+  if (screenPicking) return null;
+  // macOS: sem "Gravação de Tela" a foto viria só com o papel de parede.
+  if (
+    process.platform === "darwin" &&
+    systemPreferences.getMediaAccessStatus("screen") === "denied"
+  )
+    return { error: "permission" };
+  screenPicking = true;
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const hidden = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && win.isVisible() && !win.isMinimized(),
+  );
+  let picker = null;
+  try {
+    for (const win of hidden) win.hide();
+    // O compositor do sistema leva uns quadros para tirar as janelas da tela.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    let image = null;
+    try {
+      image = await captureDisplay(display);
+    } catch {
+      image = null;
+    }
+    if (
+      process.platform === "darwin" &&
+      systemPreferences.getMediaAccessStatus("screen") !== "granted"
+    )
+      return { error: "permission" };
+    if (!image) return { error: "capture" };
+    const { x, y, width, height } = display.bounds;
+    picker = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      show: false,
+      frame: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      enableLargerThanScreen: true,
+      backgroundColor: "#000000",
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    // Acima da barra de menus do macOS e da barra de tarefas do Windows.
+    picker.setAlwaysOnTop(true, "screen-saver");
+    const win = picker;
+    return await colorTools.openColorPicker({
+      window: win,
+      bounds: { x: 0, y: 0, width, height },
+      capture: async () => image,
+      createView: () => createLayerView(WebContentsView),
+      scaleFactor: display.scaleFactor,
+      light,
+      onReady: () => {
+        win.setBounds({ x, y, width, height });
+        win.show();
+        if (process.platform === "darwin") app.focus({ steal: true });
+        win.focus();
+      },
+    });
+  } finally {
+    if (picker && !picker.isDestroyed()) picker.destroy();
+    for (const win of hidden) if (!win.isDestroyed()) win.show();
+    screenPicking = false;
+  }
+}
+
 /** Abre o seletor de telas e janelas; resolve com a fonte escolhida ou null. */
 async function pickDisplaySource(parent) {
   const sources = await desktopCapturer.getSources({
@@ -1578,6 +1731,8 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+alt+n",
   "mod+shift+c",
   "mod+shift+s",
+  // 4.9.7: captura da página inteira.
+  "mod+alt+shift+f",
   "mod+alt+r",
   "mod+shift+m",
   "mod+tab",
@@ -2022,9 +2177,17 @@ function* allTabContents() {
   }
 }
 
+/** Páginas dos PWAs abertos (janela no navegador ou app host). */
+function* allPwaPages() {
+  for (const win of pwaWindows.values()) {
+    const page = pwaPageOf(win);
+    if (page) yield page;
+  }
+}
+
 /** Escudo, sites pausados ou listas mudaram: os scriptlets registrados saem. */
 function resetScriptlets() {
-  for (const contents of allTabContents()) {
+  for (const contents of [...allTabContents(), ...allPwaPages()]) {
     const registry = scriptletRegistry.get(contents);
     if (!registry || contents.isDestroyed()) continue;
     scriptletRegistry.delete(contents);
@@ -2032,13 +2195,15 @@ function resetScriptlets() {
   }
 }
 
-/** Partição da guia: anônima, Session Tab (4.5, persistente e só dela) ou a padrão. */
-function tabPartition(options) {
+/**
+ * Partição da guia: anônima, Session Tab (4.5, persistente e só dela), a do perfil da
+ * conta Google da janela (`ctx.profile`) ou a padrão.
+ */
+function tabPartition(options, ctx = null) {
   if (options?.private) return PRIVATE_PARTITION;
   const id = options?.session;
-  return typeof id === "string" && SESSION_ID_RE.test(id)
-    ? `${SESSION_PARTITION_PREFIX}${id}`
-    : undefined;
+  if (typeof id === "string" && SESSION_ID_RE.test(id)) return `${SESSION_PARTITION_PREFIX}${id}`;
+  return (ctx?.profile && googleProfiles.partitionOf(ctx.profile)) || undefined;
 }
 
 /** Pastas de Session Tabs fechadas (nenhuma janela salva usa): somem na abertura. */
@@ -2294,6 +2459,22 @@ function gestureTargets() {
   return list.filter((contents) => contents && !contents.isDestroyed());
 }
 
+// Adblock da página além da rede (que a session já filtra): scriptlets e CSS cosmético.
+// Guias e páginas de PWA passam por aqui; sem isso o YouTube segue com anúncios.
+function wireAdblockPage(contents) {
+  contents.on("did-start-navigation", (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    adblock?.resetPage(contents.id);
+    ensureScriptlets(contents, details.url, "early");
+  });
+  contents.on("did-redirect-navigation", (details) => {
+    if (details.isMainFrame) ensureScriptlets(contents, details.url, "early");
+  });
+  contents.on("did-finish-load", () => ensureScriptlets(contents, contents.getURL(), "settled"));
+  contents.on("dom-ready", () => void applyCosmetics(contents, true));
+  contents.on("did-finish-load", () => void applyCosmetics(contents, false));
+}
+
 function wireView(view) {
   const contents = view.webContents;
   const ctxNow = () => tabOfContents.get(contents.id)?.ctx ?? null;
@@ -2307,23 +2488,15 @@ function wireView(view) {
     void contents.loadURL(target).catch(() => {});
   });
   contents.on("did-start-navigation", (details) => {
-    if (!details.isMainFrame || details.isSameDocument) return;
-    forgetPwa(contents);
-    adblock?.resetPage(contents.id);
-    ensureScriptlets(contents, details.url, "early");
+    if (details.isMainFrame && !details.isSameDocument) forgetPwa(contents);
   });
-  contents.on("did-redirect-navigation", (details) => {
-    if (details.isMainFrame) ensureScriptlets(contents, details.url, "early");
-  });
-  contents.on("did-finish-load", () => ensureScriptlets(contents, contents.getURL(), "settled"));
+  wireAdblockPage(contents);
   // Tela dividida (2.0): clicar na página do outro pane faz dela a guia ativa.
   contents.on("focus", () => {
     const where = tabOfContents.get(contents.id);
     if (!where || where.id === where.ctx.activeTabId) return;
     if (where.ctx.split?.includes(where.id)) emitTab(contents, { type: "focused" });
   });
-  contents.on("dom-ready", () => void applyCosmetics(contents, true));
-  contents.on("did-finish-load", () => void applyCosmetics(contents, false));
   contents.on("found-in-page", (_event, result) => {
     emitTab(contents, {
       type: "find",
@@ -2351,7 +2524,10 @@ function wireView(view) {
   contents.on("did-stop-loading", () => {
     scheduleThumbnail(contents, 600);
     scheduleReadableProbe(contents);
+    // Tradução: idioma da página (ícone na barra de URL e "sempre traduzir").
+    if (tabOfContents.has(contents.id)) void translateService().probe(contents);
   });
+  contents.on("did-navigate", () => translator?.reset(contents));
   contents.on("did-navigate", (_event, url) => recordVisit(contents, url));
   contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
     if (isMainFrame) recordVisit(contents, url, { sameDocument: true });
@@ -2454,7 +2630,16 @@ function adoptView(ctx, id, moved) {
  * Abre uma janela. `record`: janela restaurada (chave, posição, sessão); `near`: janela
  * de onde ela saiu (abre em cascata); `session`: guias iniciais; `adopt`: guia movida.
  */
-function createWindow({ record = null, near = null, session: initial = null, adopt = null } = {}) {
+function createWindow({
+  record = null,
+  near = null,
+  session: initial = null,
+  adopt = null,
+  profile: chosenProfile,
+} = {}) {
+  // Perfil da conta Google (guias na partição dele): o escolhido ou o da janela de origem
+  // (nova janela, link em nova janela, guia movida).
+  const profile = chosenProfile !== undefined ? chosenProfile : (near?.profile ?? null);
   let bounds = fitBounds(record?.bounds, workAreas());
   if (!bounds && near && !near.window.isDestroyed()) {
     let area = null;
@@ -2491,10 +2676,14 @@ function createWindow({ record = null, near = null, session: initial = null, ado
   });
 
   const session = record ? record.session : initial;
-  const key = record?.key ?? windowStore?.add({ session, bounds }) ?? `local-${++localWindowSeq}`;
+  // Janela de perfil não fica salva: volta pelo modal "Escolha uma conta" (e só com login).
+  const key = profile
+    ? `profile-${profile}-${++localWindowSeq}`
+    : (record?.key ?? windowStore?.add({ session, bounds }) ?? `local-${++localWindowSeq}`);
   const ctx = {
     window,
     key,
+    profile,
     session,
     views: new Map(),
     activeTabId: null,
@@ -2683,6 +2872,7 @@ function dropView(ctx, id, entry = ctx.views.get(id)) {
   const contents = entry.view.webContents;
   if (!ctx.window.isDestroyed()) ctx.window.contentView.removeChildView(entry.view);
   tabOfContents.delete(contents.id);
+  lastFormFrame.delete(contents.id);
   clearTimeout(thumbnailTimers.get(contents.id));
   thumbnailTimers.delete(contents.id);
   adblock?.forgetTab(contents.id);
@@ -4263,33 +4453,60 @@ function readLoginScript() {
   return { username: user ? user.value : "", password: pass ? pass.value : "" };
 }
 
-/** Host "do site" para comparar frames: sem www., em minúsculas. */
-function frameHost(url) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-  } catch {
-    return "";
+/**
+ * URL "de site" de um frame: a dele quando http(s); about:blank/srcdoc herdam a origem
+ * (`frame.origin`) ou, sem ela, a do frame pai.
+ */
+function frameSiteUrl(frame) {
+  for (let node = frame, depth = 0; node && depth < 12; node = node.parent, depth++) {
+    if (/^https?:/i.test(node.url || "")) return node.url;
+    if (/^https?:/i.test(node.origin || "")) return node.origin;
   }
+  return "";
 }
 
-/** Mesmo site (igual ou subdomínio um do outro): pode receber a credencial da guia. */
-function sameSite(a, b) {
-  if (!a || !b) return false;
-  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+/** e2e: pares "topo>frame" tratados como embutido confiável (nunca no app empacotado). */
+function testEmbeds() {
+  if (app.isPackaged || !process.env.AGZOS_TEST_EMBED) return [];
+  return process.env.AGZOS_TEST_EMBED.split(",")
+    .map((pair) => pair.split(">"))
+    .filter((pair) => pair.length === 2)
+    .map(([top, frame]) => ({ top: top.trim(), frame: frame.trim() }));
 }
 
 /**
- * Roda o script na página e nos iframes do mesmo site; vale o primeiro que preencheu.
- * Frames de outro site (anúncio, widget) nunca recebem a credencial.
+ * O frame pode receber/mandar a credencial da guia? O de cima sempre; os outros, do mesmo
+ * site (domínio registrável) ou embutido confiável (HTML do Apps Script). Anúncio e
+ * widget de outro site nunca.
  */
-async function runInLoginFrames(contents, script) {
+function loginFrameAllowed(contents, frame) {
+  if (!frame || frame.detached) return false;
+  if (frame === contents.mainFrame) return true;
+  return formIntel.frameAllowed(contents.getURL(), frameSiteUrl(frame), testEmbeds());
+}
+
+/** Frames permitidos da guia; o último em que o usuário clicou num campo vem primeiro. */
+function loginFrames(contents) {
   const top = contents.mainFrame;
-  const topHost = frameHost(contents.getURL());
   const frames = [
     top,
     ...top.framesInSubtree.filter((frame) => frame !== top && !frame.detached),
-  ].filter((frame) => frame === top || sameSite(frameHost(frame.url), topHost));
-  for (const frame of frames) {
+  ].filter((frame) => loginFrameAllowed(contents, frame));
+  const last = lastFormFrame.get(contents.id);
+  const preferred = last
+    ? frames.find(
+        (frame) => frame.processId === last.processId && frame.routingId === last.routingId,
+      )
+    : null;
+  return preferred ? [preferred, ...frames.filter((frame) => frame !== preferred)] : frames;
+}
+
+/**
+ * Roda o script na página e nos iframes permitidos; vale o primeiro que preencheu.
+ * Frames de outro site (anúncio, widget) nunca recebem a credencial.
+ */
+async function runInLoginFrames(contents, script) {
+  for (const frame of loginFrames(contents)) {
     try {
       const result = await frame.executeJavaScript(script, true);
       if (result && result.filled) return { ok: true, filled: true };
@@ -4300,19 +4517,105 @@ async function runInLoginFrames(contents, script) {
   return { ok: true, filled: false };
 }
 
+// --- Autofill pelo page-preload (mundo isolado de cada frame) ----------------------------
+// O main manda o pedido (login, perfil ou leitura) só aos frames permitidos com preload
+// (http/https; os about:blank filhos são cuidados pelo frame pai) e espera a resposta.
+
+/** Último frame em que o usuário focou um campo, por guia (webContents.id). */
+const lastFormFrame = new Map();
+const frameRequests = new Map();
+let frameRequestSeq = 0;
+
+function askFrame(frame, payload, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const nonce = `${Date.now().toString(36)}-${++frameRequestSeq}`;
+    const timer = setTimeout(() => {
+      frameRequests.delete(nonce);
+      resolve(null);
+    }, timeoutMs);
+    frameRequests.set(nonce, {
+      frame,
+      resolve: (result) => {
+        clearTimeout(timer);
+        frameRequests.delete(nonce);
+        resolve(result);
+      },
+    });
+    try {
+      frame.send("agzos:fill", { ...payload, nonce });
+    } catch {
+      frameRequests.get(nonce)?.resolve(null);
+    }
+  });
+}
+
+/** Pede aos frames permitidos, um por vez; para no primeiro que `done` aceitar. */
+async function askLoginFrames(contents, payload, done) {
+  let answered = false;
+  for (const frame of loginFrames(contents)) {
+    if (!/^https?:/i.test(frame.url || "")) continue;
+    const result = await askFrame(frame, payload);
+    if (result) answered = true;
+    if (result && done(result)) return { answered, result };
+  }
+  return { answered, result: null };
+}
+
+/** URL da guia para o Agzos Key quando o aviso vem de um frame permitido; null se não. */
+function loginEventUrl(event) {
+  const contents = event.sender;
+  const frame = event.senderFrame;
+  if (!frame || !loginFrameAllowed(contents, frame)) return null;
+  return contents.getURL();
+}
+
+let autofillStoreInstance = null;
+function autofillStore() {
+  allowTestKeyring();
+  autofillStoreInstance ??= createAutofillStore({
+    file: path.join(app.getPath("userData"), "autofill-profiles.bin"),
+    safeStorage,
+  });
+  return autofillStoreInstance;
+}
+
+/** Mudou perfil, mapeamento ou preferência: todas as janelas releem. */
+function autofillChanged(result) {
+  if (result && result.ok) broadcast("agzos:autofill-changed", autofillStore().state());
+  return result;
+}
+
 function registerIpc() {
+  // Fonte do motor semântico para o page-preload (sandbox: sem require de arquivo local).
+  ipcMain.on("agzos:form-intel-source", (event) => {
+    event.returnValue = tabOfContents.has(event.sender.id) ? formIntel.FORM_INTEL_SOURCE : "";
+  });
+
+  // Resposta de um frame a um pedido de preenchimento/leitura (askFrame).
+  ipcMain.on("agzos:fill-result", (event, payload) => {
+    const pending = payload && frameRequests.get(payload.nonce);
+    const frame = event.senderFrame;
+    if (!pending || !frame) return;
+    if (pending.frame.processId !== frame.processId || pending.frame.routingId !== frame.routingId)
+      return;
+    pending.resolve(payload.result && typeof payload.result === "object" ? payload.result : {});
+  });
+
   // Login enviado numa página (detectado pelo page-preload.cjs): acha a janela/guia dona
-  // pela webContents que mandou e repassa para a casca oferecer salvar no Agzos Key.
+  // pela webContents que mandou e repassa para a casca oferecer salvar no Agzos Key. Vale
+  // também de iframe permitido (mesmo site ou HTML do Apps Script), com a URL da guia.
   ipcMain.on("agzos:page-login", (event, payload) => {
     const where = tabOfContents.get(event.sender.id);
     if (!where || !payload || typeof payload.password !== "string" || !payload.password) return;
+    const url = loginEventUrl(event);
+    if (url === null) return;
     const { ctx, id } = where;
     send(ctx, "agzos:tab-event", {
       type: "login-detected",
       id,
-      url: typeof payload.url === "string" ? payload.url : "",
-      username: typeof payload.username === "string" ? payload.username : "",
-      password: payload.password,
+      url,
+      username: typeof payload.username === "string" ? payload.username.slice(0, 256) : "",
+      password: payload.password.slice(0, 1024),
     });
   });
 
@@ -4323,12 +4626,66 @@ function registerIpc() {
     if (!where || !payload) return;
     const field = ["password", "username", "otp"].includes(payload.field) ? payload.field : null;
     if (!field) return;
+    const url = loginEventUrl(event);
+    if (url === null) return;
+    if (payload.focused === true && event.senderFrame) {
+      lastFormFrame.set(event.sender.id, {
+        processId: event.senderFrame.processId,
+        routingId: event.senderFrame.routingId,
+      });
+    }
     send(where.ctx, "agzos:tab-event", {
       type: "login-form",
       id: where.id,
-      url: typeof payload.url === "string" ? payload.url : "",
+      url,
       focused: payload.focused === true,
       field,
+    });
+  });
+
+  // Campo de um formulário de dados (endereço, contato, cadastro) clicado: a casca oferece
+  // os perfis de preenchimento, se o autofill de formulários estiver ligado neste site.
+  ipcMain.on("agzos:form-field", (event, payload) => {
+    const where = tabOfContents.get(event.sender.id);
+    if (!where || !payload || payload.focused !== true) return;
+    const url = loginEventUrl(event);
+    if (url === null) return;
+    const store = autofillStore();
+    const settings = store.settings();
+    if (!settings.forms || !settings.suggest || store.isNever(url)) return;
+    if (event.senderFrame) {
+      lastFormFrame.set(event.sender.id, {
+        processId: event.senderFrame.processId,
+        routingId: event.senderFrame.routingId,
+      });
+    }
+    const type = formIntel.ALL_TYPES.includes(payload.type) ? payload.type : null;
+    send(where.ctx, "agzos:tab-event", {
+      type: "form-field",
+      id: where.id,
+      url,
+      kind: typeof payload.kind === "string" ? payload.kind.slice(0, 20) : "generic",
+      field: type,
+      fillable: Math.max(0, Math.min(99, Number(payload.fillable) || 0)),
+    });
+  });
+
+  // O usuário corrigiu um campo preenchido pelo perfil: a casca pergunta se lembra.
+  ipcMain.on("agzos:form-correction", (event, payload) => {
+    const where = tabOfContents.get(event.sender.id);
+    if (!where || !payload || typeof payload.signature !== "string") return;
+    const url = loginEventUrl(event);
+    if (url === null || !autofillStore().settings().learn) return;
+    const to = payload.to === "ignore" || formIntel.FILLABLE.has(payload.to) ? payload.to : null;
+    if (!to) return;
+    send(where.ctx, "agzos:tab-event", {
+      type: "form-learn",
+      id: where.id,
+      site: formIntel.siteKey(url),
+      signature: payload.signature.slice(0, 140),
+      label: typeof payload.label === "string" ? payload.label.slice(0, 80) : "",
+      from: formIntel.ALL_TYPES.includes(payload.from) ? payload.from : null,
+      to,
     });
   });
 
@@ -4350,26 +4707,85 @@ function registerIpc() {
     if (where && where.id === where.ctx.activeTabId) leaveHtmlFullscreen(where.ctx);
   });
 
-  // Autofill: a casca pede para preencher usuário/senha na guia; o main injeta nos campos
-  // da página e dos iframes do mesmo site (logins embutidos), nunca em frames de terceiros.
-  ipcMain.handle("tab:autofill", (event, { id, username, password } = {}) => {
+  // Autofill: a casca pede para preencher usuário/senha na guia. Vai ao page-preload dos
+  // frames permitidos (página, iframes do mesmo site e o HTML do Apps Script), primeiro o
+  // que o usuário clicou; sem resposta de nenhum, o script antigo no mundo da página.
+  ipcMain.handle("tab:autofill", async (event, { id, username, password } = {}) => {
     const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || contents.isDestroyed()) return { ok: false };
-    const data = { username: username ?? "", password: password ?? "" };
+    const data = {
+      username: typeof username === "string" ? username : "",
+      password: typeof password === "string" ? password : "",
+    };
     const ctx = ctxOfEvent(event);
-    return runInLoginFrames(
-      contents,
-      `(${fillLoginScript.toString()})(${JSON.stringify(data)})`,
-    ).then((result) => {
-      // Preenchido: o foco vai para a página (Enter já entra), também quando o pedido veio
-      // do popup da chave, que ao fechar devolveria o foco para a casca.
-      if (result.filled && !contents.isDestroyed()) {
-        if (ctx?.overlay?.model) ctx.overlay.returnFocus = contents;
-        else contents.focus();
-      }
-      return result;
-    });
+    const asked = await askLoginFrames(contents, { mode: "login", ...data }, (r) => r.filled);
+    const result =
+      asked.result || asked.answered
+        ? { ok: true, filled: Boolean(asked.result?.filled) }
+        : await runInLoginFrames(
+            contents,
+            `(${fillLoginScript.toString()})(${JSON.stringify(data)})`,
+          );
+    // Preenchido: o foco vai para a página (Enter já entra), também quando o pedido veio
+    // do popup da chave, que ao fechar devolveria o foco para a casca.
+    if (result.filled && !contents.isDestroyed()) {
+      if (ctx?.overlay?.model) ctx.overlay.returnFocus = contents;
+      else contents.focus();
+    }
+    return result;
   });
+
+  // Perfil de preenchimento (Pessoal, Trabalho…) no formulário em foco da guia. Os valores
+  // saem do arquivo cifrado direto para o frame; a casca só manda o id do perfil.
+  ipcMain.handle("tab:fill-profile", async (event, { id, profileId } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, id);
+    if (!contents || contents.isDestroyed()) return { ok: false };
+    const store = autofillStore();
+    const profile = typeof profileId === "string" ? store.profile(profileId) : null;
+    if (!profile) return { ok: false, error: "profile" };
+    const url = contents.getURL();
+    if (!store.settings().forms || store.isNever(url)) return { ok: false, error: "off" };
+    const asked = await askLoginFrames(
+      contents,
+      {
+        mode: "profile",
+        values: formIntel.profileValues(profile.fields),
+        mappings: store.mappingsFor(url),
+        learn: store.settings().learn,
+      },
+      (r) => r.filled,
+    );
+    const filled = Boolean(asked.result?.filled);
+    if (filled && !contents.isDestroyed()) {
+      if (ctx?.overlay?.model) ctx.overlay.returnFocus = contents;
+      else contents.focus();
+    }
+    return { ok: true, filled, count: Number(asked.result?.count) || 0 };
+  });
+
+  // Perfis, mapeamentos por site e preferências do autofill de formulários.
+  ipcMain.handle("autofill:state", () => autofillStore().state());
+  ipcMain.handle("autofill:settings", (_event, partial) =>
+    autofillChanged(autofillStore().setSettings(partial)),
+  );
+  ipcMain.handle("autofill:save-profile", (_event, profile) =>
+    autofillChanged(autofillStore().saveProfile(profile)),
+  );
+  ipcMain.handle("autofill:remove-profile", (_event, payload) =>
+    autofillChanged(autofillStore().removeProfile(String(payload?.id ?? ""))),
+  );
+  ipcMain.handle("autofill:set-mapping", (_event, payload = {}) =>
+    autofillChanged(
+      autofillStore().setMapping(payload.site, payload.signature, payload.type, payload.label),
+    ),
+  );
+  ipcMain.handle("autofill:remove-mapping", (_event, payload = {}) =>
+    autofillChanged(autofillStore().removeMapping(payload.site, payload.signature)),
+  );
+  ipcMain.handle("autofill:never", (_event, payload = {}) =>
+    autofillChanged(autofillStore().setNever(payload.site, payload.never === true)),
+  );
 
   // Código MFA (TOTP) no campo de código da página (ou nas caixinhas de 1 dígito).
   ipcMain.handle("tab:autofill-otp", (event, { id, code } = {}) => {
@@ -4380,9 +4796,17 @@ function registerIpc() {
   });
 
   // "Salvar login" pela chave da barra de endereço: o que o usuário já digitou na página.
-  ipcMain.handle("tab:login-fields", (event, { id } = {}) => {
+  ipcMain.handle("tab:login-fields", async (event, { id } = {}) => {
     const contents = tabContents(ctxOfEvent(event), id);
     if (!contents || contents.isDestroyed()) return { username: "", password: "" };
+    // Primeiro os frames permitidos (login em iframe, Apps Script); senão, a página.
+    const asked = await askLoginFrames(contents, { mode: "read" }, (r) => r.password);
+    if (asked.result?.password) {
+      return {
+        username: typeof asked.result.username === "string" ? asked.result.username : "",
+        password: String(asked.result.password),
+      };
+    }
     return contents
       .executeJavaScript(`(${readLoginScript.toString()})()`, true)
       .then((result) => ({
@@ -4400,13 +4824,16 @@ function registerIpc() {
         sandbox: true,
         contextIsolation: true,
         preload: PAGE_PRELOAD,
-        partition: tabPartition(options),
+        // Agzos Key em iframes: o preload também roda nos sub-frames (só a parte de login e
+        // formulários; gestos, PiP e PWA continuam só no quadro de cima).
+        nodeIntegrationInSubFrames: true,
+        partition: tabPartition(options, ctx),
         // 4.7: visualizador de PDF do Chromium na guia (como no Chrome); o ícone PDF da
         // barra leva o documento ao PDF Tools.
         plugins: true,
       },
     });
-    if (typeof options?.session === "string" && !options?.private) {
+    if ((typeof options?.session === "string" || ctx.profile) && !options?.private) {
       sessionTabSessions.add(view.webContents.session);
     }
     // Fundo base da página branco, como no Chrome: com o tema escuro (padrão desde a 4.5) um
@@ -4422,6 +4849,7 @@ function registerIpc() {
     wirePermissions(view.webContents.session);
     ensureFileProtocol(view.webContents.session);
     wireView(view);
+    watchProfileTab(ctx, view.webContents);
     const history = ctx.hibernated.get(id);
     ctx.hibernated.delete(id);
     if (!isWebUrl(url)) return;
@@ -4672,7 +5100,7 @@ function registerIpc() {
     const ctx = ctxOfEvent(event);
     if (!ctx || ctx.window.isDestroyed()) return { ok: false };
     const shot = async (contents) => {
-      const image = await contents.capturePage();
+      const image = await capturePageRetry(contents);
       return image.isEmpty() ? null : image.toDataURL();
     };
     try {
@@ -4701,6 +5129,15 @@ function registerIpc() {
       const contents = entry?.view.webContents;
       if (!contents || contents.isDestroyed() || !isShown(ctx, ctx.activeTabId)) {
         return { ok: false, reason: "tab" };
+      }
+      // 4.9.7: página inteira, rolando a guia de tela em tela (page-capture.cjs).
+      if (mode === "page") {
+        const result = await pageCapture.capturePageStrips({
+          run: (code) =>
+            contents.executeJavaScriptInIsolatedWorld(pageCapture.CAPTURE_WORLD, [{ code }], false),
+          shot: (rect) => capturePageRetry(contents, rect),
+        });
+        return result ? { ok: true, ...result } : { ok: false };
       }
       const dataUrl = await shot(contents);
       const rect = rectOf(ctx, ctx.activeTabId);
@@ -5090,6 +5527,10 @@ function registerIpc() {
     return result;
   });
   ipcMain.handle("ai:abort", (_event, { requestId } = {}) => aiService().abort(requestId));
+  // Tradução da página e de trechos: só a guia da janela que pediu.
+  registerTranslateIpc(ipcMain, translateService(), (event, id) =>
+    tabContents(ctxOfEvent(event), id),
+  );
   ipcMain.handle("ai:chat", async (event, payload = {}) => {
     const sender = event.sender;
     const requestId = String(payload.requestId ?? "");
@@ -5838,6 +6279,17 @@ function registerIpc() {
       light: dark === false,
     });
     if (!contents.isDestroyed()) contents.focus();
+    return color;
+  });
+  // Conta-gotas da tela inteira (outros apps, área de trabalho): as janelas do Agzos saem
+  // da frente, a foto é do monitor sob o cursor e a camada abre numa janela que o cobre.
+  ipcMain.handle("colors:pick-screen", async (event, { dark } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return null;
+    closePanelLayer(ctx, { notify: true, refocus: false });
+    ctx.tooltip?.hide();
+    const color = await pickScreenColor({ light: dark === false });
+    if (!ctx.window.isDestroyed()) ctx.window.focus();
     return color;
   });
   ipcMain.handle("colors:analyze", async (event, { tabId } = {}) => {
@@ -7368,6 +7820,7 @@ function openPwaWindowHere(id, url = null) {
   pwaPageOfWindow.set(win, contents);
   pwaWindowOfPage.set(contents, win);
   applyChromeIdentity(contents);
+  wireAdblockPage(contents);
 
   // --- Estado da barra ---
   let pageThemeColor = null;
@@ -7845,7 +8298,8 @@ function openPwaWindowHere(id, url = null) {
   void barContents
     .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pwaChrome.barHtml())}`)
     .catch(() => {});
-  void contents.loadURL(url ?? record.startUrl).catch(() => {});
+  // Scriptlets registrados antes da primeira carga (YouTube é SPA: depois seria tarde).
+  void loadWithScriptlets(contents, url ?? record.startUrl);
   return true;
 }
 
@@ -8108,6 +8562,31 @@ function pwaHostMenu(name) {
   ];
 }
 
+/**
+ * Bloqueador no app host (o mesmo do navegador, escudo ligado). As listas compiladas do
+ * navegador servem de ponto de partida: o app já abre bloqueando, sem esperar o download.
+ * Depois o cache é do perfil do app (o navegador pode estar gravando o dele).
+ */
+function startPwaHostAdblock(host) {
+  const own = path.join(app.getPath("userData"), "adblock");
+  const browser = path.join(host.userData, "adblock");
+  try {
+    if (!fs.existsSync(own) && fs.existsSync(browser)) fs.cpSync(browser, own, { recursive: true });
+  } catch {
+    // Sem cópia: o app baixa e compila as listas.
+  }
+  adblock = createAdblock({
+    userDataDir: app.getPath("userData"),
+    database,
+    fetchText,
+    lists: listsFromEnv(process.env.AGZOS_FILTER_LISTS),
+    emitPage: () => {},
+    emitStats: () => {},
+    onEnginesChanged: resetScriptlets,
+  });
+  adblock.start();
+}
+
 /** Modo app: perfil próprio, só a janela do PWA; o registro vem do marcador. */
 function startPwaHost() {
   const host = pwaHost;
@@ -8115,6 +8594,7 @@ function startPwaHost() {
     process.platform === "darwin" ? Menu.buildFromTemplate(pwaHostMenu(host.name)) : null,
   );
   openStateDatabase();
+  startPwaHostAdblock(host);
   // Sem banco, o app abre do mesmo jeito (posição e zoom valem só nesta execução).
   const memory = new Map();
   pwaStore = createPwaStore({
@@ -8190,11 +8670,36 @@ function aiService() {
   ai ??= createAi({
     userDataDir: app.getPath("userData"),
     safeStorage,
-    fetch: (url, init) => net.fetch(url, init),
+    // Mesmo plano B do updater (4.8.8): no Windows o net.fetch pode lançar
+    // net::ERR_FAILED; o modo voz e o chat seguem pelo fetch do Node.
+    fetch: async (url, init) => {
+      try {
+        return await net.fetch(url, init);
+      } catch (error) {
+        if (init?.signal?.aborted) throw error;
+        console.log(`Agzos: IA: net.fetch falhou (${error?.message}); usando o fetch do Node.`);
+        return fetch(url, init);
+      }
+    },
     database,
     ...(testUrl ? { baseUrl: testUrl } : {}),
   });
   return ai;
+}
+
+// --- Tradução (electron/translate-service.cjs): a Groq só pelo aiService. ---
+let translator = null;
+function translateService() {
+  translator ??= createTranslateService({
+    getAi: aiService,
+    database: {
+      getMeta: (key) => database?.getMeta(key),
+      setMeta: (key, value) => database?.setMeta(key, value),
+    },
+    isPrivate: (contents) => isPrivateContents(contents),
+    emit: emitTab,
+  });
+  return translator;
 }
 
 app.on("web-contents-created", (_event, contents) => {
@@ -8576,11 +9081,13 @@ function macMenuTemplate() {
         command("Agzos AI", "ai.toggle", "Shift+Cmd+A"),
         command("Terminal", "terminal.toggle", "Alt+Cmd+T"),
         command("Modo leitura", "page.reader", "Alt+Cmd+R"),
+        command("Traduzir página", "page.translate"),
         command("Notas desta página", "notes.toggle", "Shift+Cmd+M"),
         command("Mira de elemento", "page.inspect", "Shift+Cmd+C"),
         command("Ferramentas do desenvolvedor", "devtools.toggle", "Alt+Cmd+I"),
         command("Console JavaScript", "devtools.console", "Alt+Cmd+J"),
         command("Capturar tela…", "page.capture", "Shift+Cmd+S"),
+        command("Capturar a página inteira", "page.capture-full", "Alt+Shift+Cmd+F"),
         command("Portas em uso", "ports.open"),
         command("API Scratchpad", "scratchpad.open"),
         command("Mostrar/ocultar barra de favoritos", "bookmarks.toggle-bar", "Shift+Cmd+B"),
@@ -8630,6 +9137,7 @@ function macMenuTemplate() {
       submenu: [
         command("Novidades desta versão", "help.whats-new"),
         command("Atalhos de teclado", "settings.open"),
+        command("Conta Agzos", "account.open"),
         {
           label: "Site do Agzos",
           click: () => void shell.openExternal("https://agzosagency.com.br/"),
@@ -8637,6 +9145,341 @@ function macMenuTemplate() {
       ],
     },
   ];
+}
+
+// --- Conta Agzos e contas Google (electron/agzos-account.cjs, google-profiles.cjs) ---
+// O token da conta fica só aqui (cifrado); a casca recebe nome, e-mail, plano e a lista
+// de perfis. Cada perfil Google é uma partição persistente própria aberta numa janela
+// própria (ctx.profile); as guias dela herdam o perfil (tabPartition) e passam pelo
+// mesmo pipeline de rede, identidade do Chrome e permissões das outras sessões.
+const GOOGLE_SIGNIN_URL =
+  "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmyaccount.google.com%2F";
+const GOOGLE_LIST_ACCOUNTS_URL =
+  "https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard";
+const NEW_PROFILE_LABEL = "Nova conta Google";
+let accountClient = null;
+let profileStore = null;
+let accountReady = Promise.resolve();
+let splashDone = Promise.resolve();
+let pickerOffered = false;
+let accountWasLoggedIn = false;
+const profileDetectTimers = new Map();
+const profileDetectedAt = new Map();
+
+/** Página de login do Google falsa dos testes (só fora do pacote, só em 127.0.0.1). */
+function testGoogleBase() {
+  const base = app.isPackaged ? null : process.env.AGZOS_TEST_GOOGLE_URL;
+  return typeof base === "string" && /^http:\/\/127\.0\.0\.1:\d+$/.test(base) ? base : null;
+}
+
+function accountService() {
+  allowTestKeyring();
+  if (accountClient) return accountClient;
+  const testUrl = app.isPackaged ? null : process.env.AGZOS_ACCOUNT_URL;
+  accountClient = createAgzosAccount({
+    userDataDir: app.getPath("userData"),
+    safeStorage,
+    // Mesmo plano B do updater (4.8.8): net.fetch pode lançar net::ERR_FAILED no Windows.
+    fetch: async (url, init) => {
+      try {
+        return await net.fetch(url, init);
+      } catch (error) {
+        if (init?.signal?.aborted) throw error;
+        console.log(`Agzos: conta: net.fetch falhou (${error?.message}); usando o fetch do Node.`);
+        return fetch(url, init);
+      }
+    },
+    baseUrl:
+      typeof testUrl === "string" && /^https?:\/\//.test(testUrl) ? testUrl : ACCOUNT_BASE_URL,
+    device: `Agzos Browser em ${os.hostname()} (${process.platform})`.slice(0, 120),
+    clientVersion: app.getVersion(),
+    onChange: () => queueMicrotask(onAccountChanged),
+  });
+  return accountClient;
+}
+
+function accountSnapshot() {
+  const state = accountService().state();
+  const all = profileStore?.list() ?? [];
+  return {
+    ...state,
+    profiles: state.loggedIn ? all : [],
+    lockedProfiles: state.loggedIn ? 0 : all.length,
+    pickerOnStart: googleProfiles.pickerPrefOf(database?.getMeta("profilePicker")).showOnStart,
+  };
+}
+
+function broadcastAccount() {
+  broadcast("agzos:account", accountSnapshot());
+}
+
+/** Sem login, os perfis travam: as janelas deles fecham (os dados ficam no disco). */
+function onAccountChanged() {
+  const loggedIn = accountService().isLoggedIn();
+  if (accountWasLoggedIn && !loggedIn) closeProfileWindows(() => true);
+  accountWasLoggedIn = loggedIn;
+  broadcastAccount();
+}
+
+function closeProfileWindows(match) {
+  const closing = [...contexts.values()].filter((ctx) => ctx.profile && match(ctx.profile));
+  if (!closing.length) return;
+  // Fechar todas as janelas sairia do app: sobra (ou abre) uma janela do navegador.
+  if (closing.length === contexts.size) createWindow({ profile: null });
+  for (const ctx of closing) if (!ctx.window.isDestroyed()) ctx.window.close();
+}
+
+function openProfileWindow(id, { url = null } = {}) {
+  const profile = profileStore?.get(id);
+  if (!profile || !accountService().isLoggedIn()) return false;
+  profileStore.update(id, { lastUsed: Date.now() });
+  const open = [...contexts.values()].find((ctx) => ctx.profile === id);
+  if (open && !url) {
+    if (open.window.isMinimized()) open.window.restore();
+    open.window.show();
+    open.window.focus();
+  } else {
+    // Perfil sem conta detectada ainda: abre no login do Google.
+    const page = url ?? (profile.email ? null : signInUrl());
+    createWindow({
+      profile: id,
+      session: page
+        ? tabSession({ history: [{ title: "Google", url: page, kind: "page" }], index: 0 })
+        : null,
+    });
+  }
+  broadcastAccount();
+  return true;
+}
+
+function signInUrl() {
+  const base = testGoogleBase();
+  return base ? `${base}/signin` : GOOGLE_SIGNIN_URL;
+}
+
+/** Depois de navegar no Google, tenta descobrir o e-mail da conta do perfil. */
+function watchProfileTab(ctx, contents) {
+  const id = ctx?.profile;
+  if (!id) return;
+  const base = testGoogleBase();
+  contents.on("did-navigate", (_event, url) => {
+    if (base ? !url.startsWith(`${base}/`) : !googleProfiles.isGoogleUrl(url)) return;
+    clearTimeout(profileDetectTimers.get(id));
+    const timer = setTimeout(
+      () => {
+        profileDetectTimers.delete(id);
+        void detectGoogleAccount(id);
+      },
+      base ? 300 : 2500,
+    );
+    timer.unref?.();
+    profileDetectTimers.set(id, timer);
+  });
+}
+
+/**
+ * Lê (só leitura) a conta logada no perfil pelo ListAccounts do Google, com os cookies
+ * da partição do perfil. Achou: grava e-mail, nome e a foto (recodificada aqui).
+ */
+async function detectGoogleAccount(id, { force = false } = {}) {
+  const profile = profileStore?.get(id);
+  const partition = googleProfiles.partitionOf(id);
+  if (!profile || !partition) return null;
+  if (!force && profile.email && Date.now() - (profileDetectedAt.get(id) ?? 0) < 60_000) {
+    return profile;
+  }
+  profileDetectedAt.set(id, Date.now());
+  const ses = session.fromPartition(partition);
+  const base = testGoogleBase();
+  let found = null;
+  try {
+    const response = await ses.fetch(base ? `${base}/ListAccounts` : GOOGLE_LIST_ACCOUNTS_URL, {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (response.ok)
+      found = googleProfiles.parseListAccounts((await response.text()).slice(0, 200_000));
+  } catch {
+    return null;
+  }
+  if (!found) return null;
+  const patch = { email: found.email, name: found.name };
+  if (!profile.label || profile.label === NEW_PROFILE_LABEL || profile.label === profile.email) {
+    patch.label = found.name || found.email;
+  }
+  if (found.photo) {
+    const avatar = await profileAvatar(ses, found.photo);
+    if (avatar) patch.avatar = avatar;
+  }
+  const updated = profileStore.update(id, patch);
+  broadcastAccount();
+  return updated;
+}
+
+/** Foto da conta: baixada pelo perfil, recodificada em PNG 64×64 (nada remoto na casca). */
+async function profileAvatar(ses, url) {
+  try {
+    const response = await ses.fetch(url.replace(/=s\d+(-c)?$/, "=s96-c"), { cache: "no-store" });
+    const type = response.headers.get("content-type") ?? "";
+    if (!response.ok || !/^image\//.test(type)) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > 512 * 1024) return null;
+    const image = nativeImage.createFromBuffer(buffer);
+    return image.isEmpty() ? null : image.resize({ width: 64, height: 64 }).toDataURL();
+  } catch {
+    return null;
+  }
+}
+
+async function removeProfile(id) {
+  const partition = googleProfiles.partitionOf(id);
+  if (!partition || !profileStore?.get(id)) return false;
+  closeProfileWindows((profile) => profile === id);
+  profileStore.remove(id);
+  const ses = session.fromPartition(partition);
+  await ses.clearStorageData().catch(() => {});
+  await ses.clearCache().catch(() => {});
+  await ses.clearAuthCache().catch(() => {});
+  broadcastAccount();
+  return true;
+}
+
+/** Pastas de perfis removidos (antes de qualquer sessão deles existir neste início). */
+function purgeRemovedProfiles() {
+  const pending = profileStore?.pendingPurge() ?? [];
+  if (!pending.length) return;
+  const dir = path.join(app.getPath("userData"), "Partitions");
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    names = [];
+  }
+  const done = [...pending];
+  for (const name of googleProfiles.purgeDirs(names, pending)) {
+    try {
+      fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    } catch {
+      done.splice(done.indexOf(name.slice(googleProfiles.DIR_PREFIX.length)), 1);
+    }
+  }
+  profileStore.clearPurge(done);
+}
+
+/** No início (antes das janelas): lista de perfis, limpeza e conferência da sessão. */
+function startAccounts() {
+  profileStore = googleProfiles.createProfileStore({ database });
+  purgeRemovedProfiles();
+  accountWasLoggedIn = accountService().isLoggedIn();
+  const verify = accountService()
+    .verify()
+    .catch(() => null)
+    .then(() => onAccountChanged());
+  // Offline o modal do início não espera mais que isso.
+  accountReady = Promise.race([verify, new Promise((resolve) => setTimeout(resolve, 5000))]);
+}
+
+function registerAccountIpc() {
+  const call = (fn) =>
+    Promise.resolve()
+      .then(fn)
+      .catch((error) => {
+        console.error("Agzos: conta: erro inesperado.", error?.message ?? error);
+        return { ok: false, error: "Algo deu errado. Tente de novo." };
+      });
+  const withSnapshot = (result) => ({ ...result, account: accountSnapshot() });
+  ipcMain.handle("account:state", () => accountSnapshot());
+  ipcMain.handle("account:signup", (_event, payload = {}) =>
+    call(async () => withSnapshot(await accountService().signup(payload))),
+  );
+  ipcMain.handle("account:login", (_event, payload = {}) =>
+    call(async () => withSnapshot(await accountService().login(payload))),
+  );
+  ipcMain.handle("account:logout", () =>
+    call(async () => withSnapshot(await accountService().logout())),
+  );
+  ipcMain.handle("account:me", () => call(async () => withSnapshot(await accountService().me())));
+  ipcMain.handle("account:recover", (_event, payload = {}) =>
+    call(() => accountService().recover(payload)),
+  );
+  ipcMain.handle("account:change-password", (_event, payload = {}) =>
+    call(() => accountService().changePassword(payload)),
+  );
+  ipcMain.handle("account:regenerate-codes", (_event, payload = {}) =>
+    call(() => accountService().regenerateCodes(payload)),
+  );
+  ipcMain.handle("account:delete", (_event, payload = {}) =>
+    call(async () => withSnapshot(await accountService().deleteAccount(payload))),
+  );
+  ipcMain.handle("account:services", () => call(() => accountService().services()));
+  ipcMain.handle("account:picker-pref", (_event, { showOnStart } = {}) => {
+    database?.setMeta("profilePicker", { showOnStart: showOnStart !== false });
+    broadcastAccount();
+    return accountSnapshot();
+  });
+  // Perfil desta janela (a casca mostra a cor e o nome no botão da conta).
+  ipcMain.handle("account:window-profile", (event) => {
+    const id = ctxOfEvent(event)?.profile;
+    return id && accountService().isLoggedIn() ? (profileStore?.get(id) ?? null) : null;
+  });
+  // Modal "Escolha uma conta": uma vez por execução, para a primeira janela que pedir,
+  // depois da vinheta e da conferência da sessão.
+  ipcMain.handle("account:startup-picker", async (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx || ctx.profile || pickerOffered) return null;
+    pickerOffered = true;
+    await Promise.all([splashDone, accountReady]);
+    const profiles = profileStore?.list() ?? [];
+    const show = googleProfiles.shouldShowPicker({
+      loggedIn: accountService().isLoggedIn(),
+      profiles,
+      pref: database?.getMeta("profilePicker"),
+      pwaHost: Boolean(pwaHost),
+      env: process.env,
+      packaged: app.isPackaged,
+    });
+    return show ? { profiles } : null;
+  });
+  ipcMain.handle("profiles:add", (_event, { label } = {}) =>
+    call(() => {
+      if (!accountService().isLoggedIn())
+        return { ok: false, error: "Entre na sua conta Agzos primeiro." };
+      const profile = profileStore?.add({ label });
+      if (!profile) return { ok: false, error: "Limite de contas Google atingido." };
+      openProfileWindow(profile.id, { url: signInUrl() });
+      return { ok: true, profile, account: accountSnapshot() };
+    }),
+  );
+  ipcMain.handle("profiles:open", (_event, { id } = {}) =>
+    call(() => ({ ok: openProfileWindow(String(id ?? "")) })),
+  );
+  ipcMain.handle("profiles:signin", (_event, { id } = {}) =>
+    call(() => ({ ok: openProfileWindow(String(id ?? ""), { url: signInUrl() }) })),
+  );
+  ipcMain.handle("profiles:update", (_event, { id, label, color } = {}) =>
+    call(() => {
+      if (!accountService().isLoggedIn()) return { ok: false };
+      const patch = {};
+      if (typeof label === "string") patch.label = label;
+      if (typeof color === "string") patch.color = color;
+      const profile = profileStore?.update(String(id ?? ""), patch);
+      broadcastAccount();
+      return { ok: Boolean(profile), profile };
+    }),
+  );
+  ipcMain.handle("profiles:remove", (_event, { id } = {}) =>
+    call(async () => {
+      if (!accountService().isLoggedIn()) return { ok: false };
+      return { ok: await removeProfile(String(id ?? "")), account: accountSnapshot() };
+    }),
+  );
+  ipcMain.handle("profiles:detect", (_event, { id } = {}) =>
+    call(async () => {
+      if (!accountService().isLoggedIn()) return { ok: false };
+      const profile = await detectGoogleAccount(String(id ?? ""), { force: true });
+      return { ok: Boolean(profile?.email), profile };
+    }),
+  );
 }
 
 /** Abre as janelas salvas que ainda não estão abertas (início do app, Dock do Mac). */
@@ -8654,6 +9497,13 @@ app.whenReady().then(() => {
     startPwaHost();
     return;
   }
+  // Abertura (vinheta do logo): só no início normal do navegador; nunca segura a janela.
+  const splashScreen = splash.shouldShowSplash({ env: process.env, argv: process.argv, pwaHost })
+    ? splash.openSplash({
+        BrowserWindow,
+        icon: process.platform === "darwin" ? undefined : path.join(__dirname, "icons", "icon.png"),
+      })
+    : null;
   // Mac: barra de menus completa (Editar é o que faz ⌘C/⌘V funcionarem nos campos).
   // Windows e Linux: sem barra; o "⋯" da casca faz esse papel.
   if (process.platform === "darwin") {
@@ -8691,8 +9541,11 @@ app.whenReady().then(() => {
       Number(process.env.AGZOS_STABLE_AFTER_MS) || STABLE_AFTER_MS,
     ).unref();
   }
+  // Conta Agzos e perfis Google antes das janelas (pastas de perfis removidos somem aqui).
+  startAccounts();
   startServices();
   registerIpc();
+  registerAccountIpc();
   // 4.7: tema "Auto" das páginas segue o claro/escuro do sistema.
   nativeTheme.on("updated", () => reapplyPageTheme());
   startExtensions();
@@ -8709,6 +9562,9 @@ app.whenReady().then(() => {
     if (!contexts.size) createWindow();
   }
   startup = { ...startup, early: startup.early && startup.restoredWindows > 0 };
+  splashScreen?.follow([...contexts.values()][0]?.window ?? null);
+  // O modal "Escolha uma conta" só aparece depois que a vinheta some.
+  if (splashScreen?.closed) splashDone = splashScreen.closed;
   setTimeout(
     () => void runtimeCapabilities(),
     Number(process.env.AGZOS_CAPABILITY_DELAY_MS) || CAPABILITY_DELAY_MS,

@@ -96,6 +96,10 @@ export type DesktopV47 = {
 
   /** Conta-gotas na guia: a cor clicada, ou null (Esc). */
   colorPick(tabId: number, options: { dark: boolean }): Promise<Rgb | null>;
+  /** Conta-gotas da tela inteira (fora do navegador): a cor, null (Esc) ou o motivo da falha. */
+  colorPickScreen(options: {
+    dark: boolean;
+  }): Promise<Rgb | { error: "permission" | "capture" } | null>;
   colorAnalyze(tabId: number): Promise<{ ok: boolean; colors: PageColor[]; scanned: number }>;
   clipboardWrite(text: string): Promise<void>;
   /** Diálogo "Salvar como" para exportações (texto ou bytes). */

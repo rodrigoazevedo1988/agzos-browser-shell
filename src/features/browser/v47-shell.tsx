@@ -211,6 +211,31 @@ export function useV47Shell({
     [desktop, activeIsPage, colorsOpen, features.colors.theme, prefs.dark, choose, activeUrl],
   );
 
+  const eyedropperScreen = useCallback(
+    () => {
+      if (!desktop) return;
+      const reopen = colorsOpen;
+      setColorsOpen(false);
+      void desktop
+        .colorPickScreen({ dark: themeIsDark(features.colors.theme, prefs.dark) })
+        .then((result) => {
+          if (result && "error" in result) {
+            setNotice(
+              result.error === "permission"
+                ? "Libere o Agzos Browser em Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela e reabra o navegador."
+                : "Não foi possível capturar a tela.",
+            );
+          } else if (result) {
+            choose(hexOfRgb(result));
+            setColorTab("picker");
+          }
+          if (reopen || result) setColorsOpen(true);
+        });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [desktop, colorsOpen, features.colors.theme, prefs.dark, choose],
+  );
+
   const analyze = useCallback(() => {
     if (!desktop || !activeIsPage) return;
     setAnalyzing(true);
@@ -276,6 +301,7 @@ export function useV47Shell({
             top: anchor ? Math.round(anchor.y + anchor.height + 6) : 52,
             onTab: setColorTab,
             onPick: () => eyedropper(activeTabId),
+            onPickScreen: eyedropperScreen,
             onAnalyze: analyze,
             onSelect: (hex) => {
               setCurrent(hex);

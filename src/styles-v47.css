@@ -448,6 +448,9 @@
   text-align: left;
   cursor: pointer;
 }
+.ct-pick-button + .ct-pick-button {
+  margin-top: 8px;
+}
 .ct-pick-button:disabled {
   opacity: 0.6;
   cursor: default;

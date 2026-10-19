@@ -3,12 +3,18 @@
  * PDF Tools) e os atalhos configuráveis delas. Ficam em `prefs.features`.
  */
 
+import {
+  defaultTranslatePrefs,
+  parseTranslatePrefs,
+  type TranslatePrefs,
+} from "@/features/translate/prefs";
+
 /** Claro, escuro ou o mesmo tema do navegador. */
 export type UiTheme = "light" | "dark" | "browser";
 export type AutoCopy = "hex" | "rgb" | "hsl" | "off";
 
 export type FeatureShortcutId =
-  "colors.eyedropper" | "colors.panel" | "pdf.open" | "page-theme.toggle";
+  "colors.eyedropper" | "colors.panel" | "pdf.open" | "page-theme.toggle" | "page.translate";
 
 export const FEATURE_SHORTCUTS: { id: FeatureShortcutId; label: string; fallback: string }[] = [
   { id: "colors.eyedropper", label: "ColorTools: conta-gotas", fallback: "alt+shift+c" },
@@ -16,6 +22,7 @@ export const FEATURE_SHORTCUTS: { id: FeatureShortcutId; label: string; fallback
   // Ctrl+Shift+P já é o picture-in-picture: o PDF Tools nasce em Ctrl+Alt+P.
   { id: "pdf.open", label: "PDF Tools: abrir", fallback: "mod+alt+p" },
   { id: "page-theme.toggle", label: "Tema da página: Dark/Lightning", fallback: "alt+shift+d" },
+  { id: "page.translate", label: "Traduzir página / mostrar original", fallback: "alt+shift+t" },
 ];
 
 export type FeaturePrefs = {
@@ -35,6 +42,8 @@ export type FeaturePrefs = {
   };
   /** Combos no formato do main ("mod+alt+p"); "" desliga. */
   shortcuts: Record<FeatureShortcutId, string>;
+  /** Tradução de páginas e trechos (src/features/translate/prefs.ts). */
+  translate: TranslatePrefs;
 };
 
 export const PDF_MAX_MB = { min: 5, max: 500, initial: 50 } as const;
@@ -52,6 +61,7 @@ export const defaultFeaturePrefs: FeaturePrefs = {
   shortcuts: Object.fromEntries(
     FEATURE_SHORTCUTS.map((item) => [item.id, item.fallback]),
   ) as Record<FeatureShortcutId, string>,
+  translate: defaultTranslatePrefs,
 };
 
 const MODIFIERS = ["mod", "alt", "shift"] as const;
@@ -189,6 +199,7 @@ export function parseFeaturePrefs(value: unknown): FeaturePrefs {
       ocrLangs: langs.length ? langs : defaultFeaturePrefs.pdf.ocrLangs,
     },
     shortcuts: parsedShortcuts,
+    translate: parseTranslatePrefs(raw["translate"]),
   };
 }
 

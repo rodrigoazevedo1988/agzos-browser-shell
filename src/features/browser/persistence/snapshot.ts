@@ -22,6 +22,7 @@ import {
   HIBERNATE_MINUTES,
   HISTORY_URL,
   SETTINGS_URL,
+  AI_CHAT_WIDTH,
   defaultPrefs,
   type BrowserState,
   type Prefs,
@@ -255,6 +256,10 @@ export function parsePrefs(value: unknown): Prefs {
     shield: bool("shield"),
     aiOpen: bool("aiOpen"),
     aiSidebar: bool("aiSidebar"),
+    aiChatWidth:
+      typeof raw["aiChatWidth"] === "number" && Number.isFinite(raw["aiChatWidth"])
+        ? Math.round(Math.min(AI_CHAT_WIDTH.max, Math.max(AI_CHAT_WIDTH.min, raw["aiChatWidth"])))
+        : defaultPrefs.aiChatWidth,
     notesOpen: bool("notesOpen"),
     readerFontSize:
       typeof raw["readerFontSize"] === "number" && Number.isFinite(raw["readerFontSize"])

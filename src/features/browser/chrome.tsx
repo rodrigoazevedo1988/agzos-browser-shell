@@ -33,6 +33,9 @@ import { KeyPanel } from "@/features/key/panel";
 import { AutofillPopup, type AutofillStatus, type QuickLogin } from "@/features/key/autofill-popup";
 import { KeyBar } from "@/features/key/key-bar";
 import { SavePrompt, type SaveCandidate } from "@/features/key/save-prompt";
+import { LearnPrompt } from "@/features/key/learn-prompt";
+import { profileSummary } from "@/features/key/form-fill";
+import { useFormFill } from "@/features/key/use-form-fill";
 import { PrivacyPanel } from "@/features/privacy/panel";
 import { type AppMenuAction } from "@/features/settings/menu";
 import { SettingsPage } from "@/features/settings/page";
@@ -53,6 +56,7 @@ import {
 } from "./commands";
 import {
   desktopBridge,
+  type DesktopBridge,
   type DesktopPermissionRequest,
   type ExtensionInfo,
   type GestureEvent,
@@ -77,7 +81,7 @@ import {
   type SideMoreAnchor,
 } from "./ui/side-bar";
 import { CaptureDialog, type CaptureSources } from "@/features/capture/dialog";
-import { composeLayers } from "@/features/capture/compose";
+import { composeLayers, composeStrips } from "@/features/capture/compose";
 import { PortsPanel } from "@/features/dev/ports-panel";
 import { NotesPanel } from "@/features/notes/panel";
 import { READER_FONT, ReaderView } from "@/features/reader/view";
@@ -85,7 +89,8 @@ import { ScratchpadPage } from "@/features/scratchpad/page";
 import { DownloadsManager } from "@/features/downloads/manager";
 import { createDownloadsApi } from "@/features/downloads/api";
 import { PdfHelpPage } from "@/features/pdf/help";
-import { comboOfHotkey } from "./feature-prefs";
+import { comboLabel, comboOfHotkey } from "./feature-prefs";
+import { useTranslateShell, type TranslatePanelKind } from "@/features/translate/use-translate";
 import { useV47Shell, type PdfRequest } from "./v47-shell";
 import { useV48Shell } from "./v48-shell";
 import type { SettingsSectionId } from "@/features/settings/page";
@@ -151,6 +156,11 @@ import { Toolbar } from "./ui/toolbar";
 import { StartupNotice, UnresponsiveBar } from "./ui/notice-bars";
 import { Viewport, type ErrorActions } from "./ui/viewport";
 import { WhatsNew } from "./ui/whats-new";
+import { AccountButton } from "@/features/account/button";
+import { ACCOUNT_URL } from "@/features/account/model";
+import { AccountPage } from "@/features/account/page";
+import { ProfilePicker } from "@/features/account/picker";
+import { useAgzosAccount } from "@/features/account/use-account";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
 
@@ -175,7 +185,9 @@ type Panel =
   | "extensions"
   | "extmenu"
   | "tools"
-  | "colors";
+  | "colors"
+  | "translate"
+  | "translation";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -284,6 +296,8 @@ export function AgzosBrowser() {
     to: string;
     celebrate: boolean;
   } | null>(null);
+  // Conta Agzos: estado, perfil Google da janela e o modal "Escolha uma conta" do início.
+  const account = useAgzosAccount();
   // Modal de novo site (3.1.1): no "Adicionar" da home ou no "+" do Discador.
   const [linkDialog, setLinkDialog] = useState<"home" | "dial" | null>(null);
   // "Esperar" na página sem resposta: a faixa some até ela travar de novo.
@@ -472,6 +486,16 @@ export function AgzosBrowser() {
 
   // Chave do site atual (host), para resetar o popup de autofill ao trocar de página.
   const currentHostKey = hostOf(current.url) ?? current.url;
+  // Autofill de formulários em geral (perfis de preenchimento, use-form-fill.ts).
+  const formFill = useFormFill({ desktop, activeTabId: activeTab.id, currentUrl: current.url });
+  const formOfferRef = useRef(formFill.offer);
+  formOfferRef.current = formFill.offer;
+  const formDismissRef = useRef(formFill.dismiss);
+  formDismissRef.current = formFill.dismiss;
+  // Um popup por vez: o formulário de dados fecha o de login (e o contrário, abaixo).
+  useEffect(() => {
+    if (formFill.offer) setAutofillOpen(false);
+  }, [formFill.offer]);
   const autofillHostRef = useRef(currentHostKey);
   autofillHostRef.current = currentHostKey;
 
@@ -556,6 +580,7 @@ export function AgzosBrowser() {
       }
       // Só à vista (sem clique): quem sugere é o efeito abaixo, uma vez por página.
       if (!payload.focused) return;
+      formDismissRef.current();
       // O próprio preenchimento foca os campos: não reabre o popup logo depois.
       if (Date.now() - filledAtRef.current < 2000) return;
       // Clique num campo de login: sempre busca no cofre (e pede o desbloqueio se preciso).
@@ -880,6 +905,10 @@ export function AgzosBrowser() {
     ({ kind, click }: { kind?: Panel | "autofill"; click?: "shell" | "page" | false }) => {
       // Popup de autofill (na camada, fora do `panel`). Clique fora (na página, em geral
       // no próprio campo) só fecha; Esc dispensa neste site.
+      if (kind === "autofill" && formOfferRef.current) {
+        formDismissRef.current();
+        return;
+      }
       if (kind === "autofill") {
         setAutofillOpen(false);
         if (!click) setAutofillDismissed(autofillHostRef.current);
@@ -1278,6 +1307,34 @@ export function AgzosBrowser() {
     openSettings: () => openSettingsAt("recursos"),
   });
   const setFeatures = v47.setFeatures;
+  // Tradução: ícone da barra de URL, popup da página e bolha do trecho selecionado.
+  const translate = useTranslateShell({
+    desktop,
+    prefs: prefs.features.translate,
+    setPrefs: (next) => setFeatures({ translate: next }),
+    dark: prefs.dark,
+    shortcut: prefs.features.shortcuts["page.translate"]
+      ? comboLabel(prefs.features.shortcuts["page.translate"], isMac)
+      : "",
+    activeTabId: activeTab.id,
+    activeUrl: current.url,
+    activeIsPage: current.kind === "page",
+    tabInfo: (tabId) => {
+      const tab = state.tabs.find((item) => item.id === tabId);
+      if (!tab) return null;
+      const entry = entryOf(tab);
+      return { url: entry.url, private: Boolean(tab.private), page: entry.kind === "page" };
+    },
+    panel,
+    setPanel: (kind: TranslatePanelKind | null) => {
+      const mine = (value: Panel | null) => value === "translate" || value === "translation";
+      panelRef.current = kind ?? (mine(panelRef.current) ? null : panelRef.current);
+      setPanel((currentPanel) => kind ?? (mine(currentPanel) ? null : currentPanel));
+    },
+    setNotice,
+    openSettings: () => openSettingsAt("traducao"),
+    openAi: () => setPrefs({ aiOpen: true }),
+  });
   // 4.8: flags por bloco e DevTools encaixado.
   const v48 = useV48Shell({
     desktop,
@@ -1471,8 +1528,7 @@ export function AgzosBrowser() {
   };
 
   // 4.5: captura. As fotos (guia e janela inteira) saem antes do diálogo aparecer.
-  const takeCapture = async () => {
-    if (!desktop || capture) return;
+  const captureShots = async (desktop: DesktopBridge) => {
     const [tab, win] = await Promise.all([
       desktop.captureTake("tab").catch(() => ({ ok: false as const, layers: undefined })),
       desktop.captureTake("window").catch(() => ({ ok: false as const, layers: undefined })),
@@ -1481,11 +1537,52 @@ export function AgzosBrowser() {
       tab.ok && tab.layers ? composeLayers(tab.layers).catch(() => null) : null,
       win.ok && win.layers ? composeLayers(win.layers).catch(() => null) : null,
     ]);
-    if (!tabPng && !windowPng) {
+    return { tab: tabPng, window: windowPng, page: null };
+  };
+  const takeCapture = async () => {
+    if (!desktop || capture) return;
+    const shots = await captureShots(desktop);
+    if (!shots.tab && !shots.window) {
       setNotice("Não foi possível capturar a tela.");
       return;
     }
-    setCapture({ tab: tabPng, window: windowPng });
+    setCapture(shots);
+  };
+  // 4.9.7: página inteira. A guia precisa estar à vista (o diálogo a esconde): o diálogo
+  // sai da frente, o main rola a página e as faixas viram um PNG só.
+  const capturingPage = useRef(false);
+  const captureFullPage = async () => {
+    if (!desktop || capturingPage.current) return;
+    capturingPage.current = true;
+    const previous = capture;
+    try {
+      if (previous) {
+        setCapture(null);
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+      }
+      setNotice("Capturando a página inteira…");
+      const page = await desktop
+        .captureTake("page")
+        .catch(() => ({ ok: false, layers: undefined, size: undefined, truncated: false }));
+      const png =
+        page.ok && page.layers && page.size
+          ? await composeStrips(page.layers, page.size).catch(() => null)
+          : null;
+      if (!png) {
+        setNotice("Não foi possível capturar a página inteira. Abra um site e tente de novo.");
+        if (previous) setCapture(previous);
+        return;
+      }
+      setNotice(
+        page.truncated
+          ? "A página é maior que o limite de uma imagem: a captura vai até onde cabe."
+          : null,
+      );
+      const shots = previous ?? (await captureShots(desktop));
+      setCapture({ ...shots, page: png, initial: "page" });
+    } finally {
+      capturingPage.current = false;
+    }
   };
 
   // 4.5: modo leitura. Entrar extrai o artigo da guia; sair (ou navegar) devolve a página.
@@ -1532,6 +1629,7 @@ export function AgzosBrowser() {
       toggleColors: () => v47.toggleColors(),
       openPdfTools: () => openPdfTools(),
       togglePageTheme: (tabId) => v47.togglePageTheme(tabId),
+      translatePage: (tabId) => translate.togglePage(tabId),
       devtools: (tabId, action) => void v48.run(tabId, action),
       devtoolsEnabled: () => v48.devtoolsEnabled,
       devtoolsSide: (side) => v48.setSide(side),
@@ -1571,6 +1669,7 @@ export function AgzosBrowser() {
         setSidePanel(PORTS_PANEL);
       },
       capture: () => void takeCapture(),
+      captureFullPage: () => void captureFullPage(),
       toggleReader: (tabId) => void toggleReader(tabId),
       toggleNotes: () => setPrefs({ notesOpen: !prefs.notesOpen }),
       inspect: (tabId) => void inspect(tabId),
@@ -1973,17 +2072,24 @@ export function AgzosBrowser() {
   };
 
   const settingsButton = (
-    <Button
-      variant={panel === "menu" ? "default" : "ghost"}
-      size="icon"
-      title="Menu do Agzos"
-      aria-label="Menu do Agzos"
-      aria-haspopup="menu"
-      aria-expanded={panel === "menu"}
-      onClick={() => togglePanel("menu")}
-    >
-      <MoreHorizontal />
-    </Button>
+    <>
+      <AccountButton
+        state={account.state}
+        windowProfile={account.windowProfile}
+        onOpen={() => openInternal(ACCOUNT_URL, "Conta Agzos")}
+      />
+      <Button
+        variant={panel === "menu" ? "default" : "ghost"}
+        size="icon"
+        title="Menu do Agzos"
+        aria-label="Menu do Agzos"
+        aria-haspopup="menu"
+        aria-expanded={panel === "menu"}
+        onClick={() => togglePanel("menu")}
+      >
+        <MoreHorizontal />
+      </Button>
+    </>
   );
 
   const setTerminal = (patch: Partial<Prefs["terminal"]>) =>
@@ -2060,6 +2166,36 @@ export function AgzosBrowser() {
     ) : null;
 
   const openSettings = () => openInternal(SETTINGS_URL, "Configurações");
+  // Campo de formulário de dados clicado: o popup do Key oferece os perfis (na camada).
+  const formFillSpec: PanelSpec | null =
+    desktop && panel === null && !canAutofill && formFill.offer && current.kind === "page"
+      ? {
+          kind: "autofill",
+          key: `form:${currentHostKey}`,
+          props: {
+            ...autofillProps,
+            form: {
+              kind: formFill.offer.kind,
+              field: formFill.offer.field,
+              fillable: formFill.offer.fillable,
+              profiles: formFill.state.profiles.map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                summary: profileSummary(profile),
+              })),
+              missed: formFill.missed,
+              available: formFill.state.available,
+            },
+            onFillProfile: formFill.fill,
+            onNeverSite: formFill.never,
+            onOpenSettings: () => {
+              formFill.dismiss();
+              openSettingsAt("preenchimento");
+            },
+            onClose: formFill.dismiss,
+          },
+        }
+      : null;
   const runMenuAction = (action: AppMenuAction) => {
     switch (action) {
       case "settings.open":
@@ -2354,18 +2490,25 @@ export function AgzosBrowser() {
                             // cobriria um popup desenhado na casca); na web fica na casca.
                             desktop && panel === null && canAutofill
                             ? { kind: "autofill", key: currentHostKey, props: autofillProps }
-                            : panel === "login"
-                              ? {
-                                  kind: "login",
-                                  key: currentHostKey,
-                                  props: { ...autofillProps, mode: "site", capture: loginCapture },
-                                }
-                              : null;
+                            : formFillSpec
+                              ? formFillSpec
+                              : panel === "login"
+                                ? {
+                                    kind: "login",
+                                    key: currentHostKey,
+                                    props: {
+                                      ...autofillProps,
+                                      mode: "site",
+                                      capture: loginCapture,
+                                    },
+                                  }
+                                : null;
   // 4.6: Ferramentas, extensões e o menu de cada extensão (camada acima da página).
   const extMenuInfo = extMenu ? extensionList.find((item) => item.dir === extMenu.dir) : null;
   const activeHost = current.kind === "page" ? hostOf(current.url) : null;
-  const panelSpec: PanelSpec | null =
-    panel === "colors" && v47.colorsSpec
+  const panelSpec: PanelSpec | null = translate.spec
+    ? translate.spec
+    : panel === "colors" && v47.colorsSpec
       ? v47.colorsSpec
       : panel === "tools" && desktop
         ? {
@@ -2459,6 +2602,7 @@ export function AgzosBrowser() {
     (switcherVisible && !switcherLayer) ||
     omniboxOpen ||
     whatsNew !== null ||
+    account.picker !== null ||
     linkDialog !== null ||
     capture !== null;
 
@@ -2589,6 +2733,17 @@ export function AgzosBrowser() {
           reader={readerButton}
           pageTheme={v47.pageThemeButton}
           pdf={v47.pdfButton}
+          translate={
+            translate.urlButton
+              ? {
+                  ...translate.urlButton,
+                  onToggle: (anchor) => {
+                    if (justDismissed("translate")) return;
+                    translate.urlButton?.onToggle(rectOfDom(anchor));
+                  },
+                }
+              : null
+          }
           colors={
             desktop
               ? {
@@ -2651,6 +2806,13 @@ export function AgzosBrowser() {
             candidate={saveCandidate}
             onSave={saveDetectedCredential}
             onDismiss={() => setSaveCandidate(null)}
+          />
+        )}
+        {formFill.learn && (
+          <LearnPrompt
+            learn={formFill.learn}
+            onRemember={formFill.remember}
+            onDismiss={formFill.dismissLearn}
           />
         )}
         {keyBar && (prefs.keyBarPinned || keyBar.tabId === activeTab.id) && (
@@ -2859,6 +3021,13 @@ export function AgzosBrowser() {
                         requestedSection={settingsRequest}
                         onNotice={setNotice}
                       />
+                    ) : pageUrl === ACCOUNT_URL ? (
+                      <AccountPage
+                        bridge={account.bridge}
+                        state={account.state}
+                        desktop={desktop}
+                        onNotice={setNotice}
+                      />
                     ) : pageUrl === DOWNLOADS_URL ? (
                       <DownloadsManager
                         downloads={state.downloads}
@@ -2964,6 +3133,8 @@ export function AgzosBrowser() {
                 onModel={(aiModel) => setPrefs({ aiModel })}
                 sidebar={prefs.aiSidebar}
                 onSidebar={(aiSidebar) => setPrefs({ aiSidebar })}
+                chatWidth={prefs.aiChatWidth}
+                onChatWidth={(aiChatWidth) => setPrefs({ aiChatWidth })}
                 onClose={() => setPrefs({ aiOpen: false })}
                 onOpenUrl={(url) => openUrl(url, true)}
               />
@@ -2996,7 +3167,12 @@ export function AgzosBrowser() {
         />
       )}
       {capture && (
-        <CaptureDialog desktop={desktop} sources={capture} onClose={() => setCapture(null)} />
+        <CaptureDialog
+          desktop={desktop}
+          sources={capture}
+          onFullPage={() => void captureFullPage()}
+          onClose={() => setCapture(null)}
+        />
       )}
       {notice && (
         <div className="agzos-notice" role="status">
@@ -3009,6 +3185,13 @@ export function AgzosBrowser() {
           to={whatsNew.to}
           celebrate={whatsNew.celebrate}
           onClose={closeWhatsNew}
+        />
+      )}
+      {account.picker && account.bridge && !whatsNew && (
+        <ProfilePicker
+          bridge={account.bridge}
+          profiles={account.picker}
+          onClose={account.closePicker}
         />
       )}
       {preview.webCard && <TabPreviewCard {...preview.webCard} />}

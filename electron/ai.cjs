@@ -11,6 +11,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const library = require("./ai-library.cjs");
+const translate = require("./translate.cjs");
 
 const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 const KEY_FILE = "ai-key.bin";
@@ -30,6 +31,8 @@ const MESSAGE_LIMIT = 16000;
 const KEY_RE = /^[\x21-\x7e]{16,256}$/;
 /** Modo voz do terminal (4.1): Whisper da Groq. */
 const TRANSCRIBE_MODEL = "whisper-large-v3-turbo";
+/** Plano B: há chaves/organizações em que o turbo vem desativado ou restrito. */
+const TRANSCRIBE_FALLBACK = "whisper-large-v3";
 /** Limite de upload da Groq para áudio. */
 const AUDIO_LIMIT = 25 * 1024 * 1024;
 const AUDIO_TYPES = {
@@ -41,7 +44,7 @@ const AUDIO_TYPES = {
 };
 
 /** Corpo multipart/form-data do /audio/transcriptions (sem depender de FormData no main). */
-function transcriptionBody(audio, mime, language, boundary) {
+function transcriptionBody(audio, mime, language, boundary, model = TRANSCRIBE_MODEL) {
   const type = String(mime ?? "")
     .split(";")[0]
     .trim()
@@ -50,7 +53,7 @@ function transcriptionBody(audio, mime, language, boundary) {
   const field = (name, value) =>
     `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
   const fields = [
-    field("model", TRANSCRIBE_MODEL),
+    field("model", model),
     field("response_format", "json"),
     field("temperature", "0"),
     ...(language ? [field("language", language)] : []),
@@ -261,6 +264,15 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
   };
   const newId = () => `c${crypto.randomUUID().replace(/-/g, "").slice(0, 15)}`;
 
+  // Tradução: modelos sem raciocínio primeiro (o gpt-oss gasta o max_tokens pensando e
+  // demora mais); null = o padrão de `complete`. Erro (sem chave, rede) volta como objeto.
+  const TRANSLATION_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+  async function translationModel() {
+    const list = await api.models();
+    if (!list.ok) return list;
+    return TRANSLATION_MODELS.find((id) => list.models.includes(id)) ?? null;
+  }
+
   const api = {
     state() {
       return {
@@ -447,30 +459,51 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
       if (!bytes || !bytes.length || bytes.length > AUDIO_LIMIT)
         return { ok: false, error: "request" };
       const lang = typeof language === "string" && /^[a-z]{2}$/.test(language) ? language : "";
-      const boundary = `agzos${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-      let response;
-      try {
-        response = await fetch(`${baseUrl}/audio/transcriptions`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${key}`,
-            "Content-Type": `multipart/form-data; boundary=${boundary}`,
-          },
-          body: transcriptionBody(bytes, mime, lang, boundary),
-        });
-      } catch {
-        return { ok: false, error: "network" };
-      }
-      const body = await readJson(response);
-      if (!response.ok) {
-        return {
+      let failure = null;
+      for (const model of [TRANSCRIBE_MODEL, TRANSCRIBE_FALLBACK]) {
+        const boundary = `agzos${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+        let response;
+        try {
+          response = await fetch(`${baseUrl}/audio/transcriptions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${key}`,
+              "Content-Type": `multipart/form-data; boundary=${boundary}`,
+            },
+            body: transcriptionBody(bytes, mime, lang, boundary, model),
+          });
+        } catch (error) {
+          console.log(`Agzos: voz: sem conexão com a Groq (${error?.message ?? "erro"}).`);
+          return { ok: false, error: "network" };
+        }
+        const body = await readJson(response);
+        if (response.ok) {
+          const text = typeof body?.text === "string" ? body.text.trim() : "";
+          return { ok: true, text };
+        }
+        // Só o texto do erro da Groq (nunca a chave): explica o caso ao usuário e no log.
+        const detail = String(body?.error?.message ?? "")
+          .replace(/gsk_[\w-]+/g, "gsk_…")
+          .slice(0, 200);
+        console.log(
+          `Agzos: voz: ${model} HTTP ${response.status} (${bytes.length} bytes, ${String(mime).split(";")[0]})${detail ? `: ${detail}` : ""}`,
+        );
+        // Modelo recusado (desativado, bloqueado na organização): tenta o outro Whisper.
+        const status = errorOfStatus(response.status, body);
+        const code = String(body?.error?.code ?? "");
+        const modelProblem =
+          status === "model-unavailable" ||
+          /model/i.test(code) ||
+          (response.status === 403 && /model/i.test(detail));
+        failure = {
           ok: false,
-          error: errorOfStatus(response.status, body),
+          error: modelProblem ? "model-unavailable" : status,
           retryAfter: retryAfterOf(response.headers),
+          ...(detail ? { detail } : {}),
         };
+        if (!modelProblem) break;
       }
-      const text = typeof body?.text === "string" ? body.text.trim() : "";
-      return { ok: true, text };
+      return failure;
     },
 
     /**
@@ -519,6 +552,60 @@ function createAi({ userDataDir, safeStorage, fetch, baseUrl = DEFAULT_BASE_URL,
         return { ok: true, text: typeof text === "string" ? text : "", model: chosen };
       }
       return { ok: false, error: "model-unavailable" };
+    },
+
+    /**
+     * Tradução (4.9.x): lote de trechos (cada um, uma lista de partes) → mesma forma no
+     * idioma de destino. Só JSON na ida e na volta; o prompt manda só traduzir.
+     */
+    async translateSegments({ segments, source, target, tone, glossary }) {
+      if (!Array.isArray(segments) || !segments.length) return { ok: false, error: "request" };
+      const texts = segments.map((parts) => parts.join(" "));
+      const model = await translationModel();
+      if (model && typeof model === "object") return model;
+      const result = await api.complete({
+        system: translate.translateSystemPrompt({
+          source,
+          target,
+          tone,
+          glossary: translate.glossaryFor(glossary, texts),
+        }),
+        user: translate.translateUserPayload(segments),
+        model,
+        json: true,
+        maxTokens: 8192,
+      });
+      if (!result.ok) return result;
+      const parsed = translate.parseTranslateReply(result.text, segments);
+      if (!parsed) return { ok: false, error: "request" };
+      return { ok: true, ...parsed, model: result.model };
+    },
+
+    /** Trecho selecionado: "translate", "explain" ou "alternatives". */
+    async translateText({ text, task = "translate", source, target, tone, glossary }) {
+      const value =
+        typeof text === "string" ? text.trim().slice(0, translate.LIMITS.selection) : "";
+      if (!value) return { ok: false, error: "request" };
+      const kind = ["translate", "explain", "alternatives"].includes(task) ? task : "translate";
+      const model = await translationModel();
+      if (model && typeof model === "object") return model;
+      const result = await api.complete({
+        system: translate.textSystemPrompt({
+          task: kind,
+          source,
+          target,
+          tone,
+          glossary: translate.glossaryFor(glossary, [value]),
+        }),
+        user: JSON.stringify({ text: value }),
+        model,
+        json: true,
+        maxTokens: 4096,
+      });
+      if (!result.ok) return result;
+      const parsed = translate.parseTextReply(result.text, kind);
+      if (!parsed) return { ok: false, error: "request" };
+      return { ok: true, ...parsed, model: result.model };
     },
 
     /** A chave da Groq para o ambiente dos terminais (opção do usuário); nunca para a casca. */
@@ -574,6 +661,7 @@ function parseAgentPlan(text, tools) {
 module.exports = {
   AGENT_PLAN_SYSTEM,
   parseAgentPlan,
+  TRANSCRIBE_FALLBACK,
   TRANSCRIBE_MODEL,
   transcriptionBody,
   DEFAULT_BASE_URL,

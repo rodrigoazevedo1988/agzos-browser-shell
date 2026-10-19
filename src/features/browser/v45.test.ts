@@ -860,13 +860,18 @@ describe("4.5: captura de tela e imagem já carregada", () => {
     expect(mainSource).toContain('"Page.getResourceContent"');
     expect(mainSource).toContain('label: "Salvar imagem já carregada…"');
     expect(mainSource).toContain('ipcMain.handle("capture:take"');
-    // A captura do Agzos é só da janela do app. O único desktopCapturer (4.8.5) é o
-    // seletor do getDisplayMedia, em que o usuário escolhe a tela ou a janela.
+    // A captura do Agzos é só da janela do app. Os desktopCapturer são o seletor do
+    // getDisplayMedia (4.8.5, o usuário escolhe a tela ou a janela) e o conta-gotas da
+    // tela (ColorTools, só depois do clique em "Pegar cor da tela").
     const capture = mainSource.slice(mainSource.indexOf('ipcMain.handle("capture:take"'));
     expect(capture.slice(0, capture.indexOf("ipcMain.handle(", 10))).not.toContain(
       "desktopCapturer",
     );
-    expect(mainSource.match(/desktopCapturer\.\w+/g)).toEqual(["desktopCapturer.getSources"]);
+    expect(mainSource.match(/desktopCapturer\.\w+/g)).toEqual([
+      "desktopCapturer.getSources",
+      "desktopCapturer.getSources",
+    ]);
+    expect(mainSource).toMatch(/async function captureDisplay[^]*?desktopCapturer\.getSources/);
     expect(mainSource).toMatch(/async function pickDisplaySource[^]*?desktopCapturer\.getSources/);
   });
 });
@@ -965,7 +970,7 @@ describe("4.5: Session Tabs (sessões isoladas)", () => {
 
   it("main: partição persistente própria; Ctrl+Alt+N abre uma", () => {
     expect(mainSource).toContain('const SESSION_PARTITION_PREFIX = "persist:agzos-session-"');
-    expect(mainSource).toContain("partition: tabPartition(options)");
+    expect(mainSource).toContain("partition: tabPartition(options, ctx)");
     expect(mainSource).toContain('"mod+alt+n"');
     const command = commandById("tab.new-session")!;
     expect(command.shortcuts).toEqual([{ key: "n", alt: true }]);

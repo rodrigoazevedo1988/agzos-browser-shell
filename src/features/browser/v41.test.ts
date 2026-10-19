@@ -307,6 +307,93 @@ describe("modo voz (Whisper da Groq)", () => {
   });
 });
 
+describe("modo voz: Whisper recusado e erros com o motivo da Groq", () => {
+  const ai = require(path.join(electronDir, "ai.cjs")) as {
+    createAi: (options: Record<string, unknown>) => {
+      setKey(key: string): Promise<{ ok: boolean }>;
+      transcribe(options: {
+        audio: Uint8Array | null;
+        mime: string;
+        language: string;
+      }): Promise<{ ok: boolean; text?: string; error?: string; detail?: string }>;
+    };
+  };
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(text, "utf8").reverse(),
+    decryptString: (buffer: Buffer) => Buffer.from(buffer).reverse().toString("utf8"),
+  };
+  const audio = { audio: new Uint8Array([1, 2, 3]), mime: "audio/webm", language: "pt" };
+
+  it("turbo bloqueado na organização: tenta o whisper-large-v3", async () => {
+    const models: string[] = [];
+    const fetch = async (url: string, init: { body?: Buffer }) => {
+      if (url.endsWith("/models"))
+        return Response.json({ data: [{ id: "llama-3.3-70b-versatile" }] });
+      const body = Buffer.from(init.body ?? "").toString("latin1");
+      const model = /name="model"\r\n\r\n([\w.-]+)/.exec(body)?.[1] ?? "";
+      models.push(model);
+      if (model === "whisper-large-v3-turbo")
+        return Response.json(
+          {
+            error: {
+              message: "The model `whisper-large-v3-turbo` is blocked at the organization level.",
+              code: "model_permission_blocked_org",
+            },
+          },
+          { status: 403 },
+        );
+      return Response.json({ text: "git status" });
+    };
+    const service = ai.createAi({ userDataDir: tmp(), safeStorage, fetch, database: null });
+    await service.setKey("gsk_teste_0123456789abcdefghij");
+    expect(await service.transcribe(audio)).toEqual({ ok: true, text: "git status" });
+    expect(models).toEqual(["whisper-large-v3-turbo", "whisper-large-v3"]);
+  });
+
+  it("os dois recusados: model-unavailable com o texto da Groq; 400 de áudio não tenta outro", async () => {
+    const service = ai.createAi({
+      userDataDir: tmp(),
+      safeStorage,
+      database: null,
+      fetch: async (url: string) =>
+        url.endsWith("/models")
+          ? Response.json({ data: [{ id: "llama-3.3-70b-versatile" }] })
+          : Response.json(
+              { error: { message: "model not found", code: "model_not_found" } },
+              { status: 404 },
+            ),
+    });
+    await service.setKey("gsk_teste_0123456789abcdefghij");
+    expect(await service.transcribe(audio)).toMatchObject({
+      ok: false,
+      error: "model-unavailable",
+      detail: "model not found",
+    });
+    let calls = 0;
+    const bad = ai.createAi({
+      userDataDir: tmp(),
+      safeStorage,
+      database: null,
+      fetch: async (url: string) => {
+        if (url.endsWith("/models"))
+          return Response.json({ data: [{ id: "llama-3.3-70b-versatile" }] });
+        calls += 1;
+        return Response.json(
+          { error: { message: "could not process file - is it a valid media file? gsk_abc123" } },
+          { status: 400 },
+        );
+      },
+    });
+    await bad.setKey("gsk_teste_0123456789abcdefghij");
+    const result = await bad.transcribe(audio);
+    expect(result).toMatchObject({ ok: false, error: "request" });
+    expect(result.detail).toContain("could not process file");
+    expect(result.detail).not.toContain("gsk_abc123");
+    expect(calls).toBe(1);
+  });
+});
+
 describe("preferências do terminal 4.1", () => {
   it("valida o que vem do disco e mantém os padrões", () => {
     expect(parsePrefs({}).terminal).toEqual(DEFAULT_TERMINAL);

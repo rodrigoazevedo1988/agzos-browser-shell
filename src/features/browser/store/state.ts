@@ -74,6 +74,8 @@ export type Prefs = {
   aiOpen: boolean;
   /** Barra de conversas do Agzos AI (4.1.3) aberta ao lado do chat. */
   aiSidebar: boolean;
+  /** Largura da coluna do chat do Agzos AI (alça na borda esquerda, como no terminal). */
+  aiChatWidth: number;
   /** Painel de notas (4.5) aberto ao lado da página. */
   notesOpen: boolean;
   /** Tamanho da letra do modo leitura (4.5), em px. */
@@ -151,6 +153,9 @@ export type PipMode = "agzos" | "nativo";
 
 export const HIBERNATE_MINUTES = [30, 15, 60, 120] as const;
 
+/** Coluna do chat do Agzos AI: limites da alça. */
+export const AI_CHAT_WIDTH = { min: 320, max: 1200, initial: 420 } as const;
+
 export const defaultPrefs: Prefs = {
   dark: true,
   notesOpen: false,
@@ -160,6 +165,7 @@ export const defaultPrefs: Prefs = {
   shield: true,
   aiOpen: true,
   aiSidebar: true,
+  aiChatWidth: AI_CHAT_WIDTH.initial,
   orientation: "horizontal",
   railCollapsed: false,
   pausedHosts: [],

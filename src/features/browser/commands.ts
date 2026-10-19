@@ -11,6 +11,7 @@ import {
   type BrowserState,
 } from "./store/state";
 import { newTabSession } from "./types";
+import { ACCOUNT_URL } from "@/features/account/model";
 
 /** Id de uma sessão nova (partição "persist:agzos-session-<id>"). */
 function newSessionId() {
@@ -34,6 +35,7 @@ export type CommandId =
   | "tab.move-right"
   | "page.pip"
   | "settings.open"
+  | "account.open"
   | "help.whats-new"
   | "tabs.hibernate-others"
   | "tab.new-private"
@@ -47,7 +49,9 @@ export type CommandId =
   | "devtools.dock-bottom"
   | "devtools.dock-window"
   | "page.capture"
+  | "page.capture-full"
   | "page.reader"
+  | "page.translate"
   | "notes.toggle"
   | "ports.open"
   | "scratchpad.open"
@@ -152,6 +156,8 @@ export type CommandContext = {
     togglePorts: () => void;
     /** 4.5: captura de tela (guia, região ou janela do app). */
     capture: () => void;
+    /** 4.9.7: captura da página inteira (rolando a guia) direto no editor. */
+    captureFullPage: () => void;
     /** 4.5: modo leitura da guia (entra ou sai). */
     toggleReader: (tabId: number) => void;
     /** 4.5: notas da página atual, no painel ao lado. */
@@ -167,6 +173,8 @@ export type CommandContext = {
     toggleColors: () => void;
     openPdfTools: () => void;
     togglePageTheme: (tabId: number) => void;
+    /** Tradução: traduz a página da guia ou volta ao original. */
+    translatePage: (tabId: number) => void;
     /** 4.8: DevTools encaixado da guia (abrir/fechar, Console, seletor, modo dispositivo). */
     devtools: (tabId: number, action: "toggle" | "console" | "inspect" | "device") => void;
     /** 4.8: flag devtools ligada (Configurações → Recursos). */
@@ -485,6 +493,17 @@ export const commands: Command[] = [
       }),
   },
   {
+    // Conta Agzos (entrar, contas Google, Serviços Agzos): só no app para computador.
+    id: "account.open",
+    label: "Conta Agzos",
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Conta Agzos", url: ACCOUNT_URL, kind: "internal" },
+      }),
+  },
+  {
     id: "help.whats-new",
     label: "Novidades desta versão",
     visible: ({ desktop }) => desktop !== null,
@@ -752,12 +771,28 @@ export const commands: Command[] = [
     run: ({ ui }) => ui.capture(),
   },
   {
+    id: "page.capture-full",
+    label: "Capturar a página inteira",
+    shortcuts: [{ key: "f", shift: true, alt: true }],
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }) => ui.captureFullPage(),
+  },
+  {
     id: "page.reader",
     label: "Modo leitura",
     shortcuts: [{ key: "r", alt: true }],
     enabled: ({ desktop }) => desktop !== null,
     visible: ({ desktop }) => desktop !== null,
     run: ({ ui }, tabId) => ui.toggleReader(tabId),
+  },
+  // Atalho configurável (Configurações > Recursos, padrão Alt+Shift+T): sem `shortcuts`.
+  {
+    id: "page.translate",
+    label: "Traduzir página / mostrar original",
+    enabled: onDesktopPage,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.translatePage(tabId),
   },
   {
     id: "notes.toggle",

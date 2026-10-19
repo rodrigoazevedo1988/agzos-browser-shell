@@ -116,16 +116,40 @@ export function entryNamesHost(entry: VaultEntry, host: string): boolean {
 
 const isLogin = (entry: VaultEntry) => !entry.type || entry.type === "login";
 
+/**
+ * App do Google Apps Script (script.google.com/macros/s/<id>): cada app é um site à parte,
+ * com o login dele. null para qualquer outra URL.
+ */
+export function appsScriptApp(url: string | undefined | null): string | null {
+  try {
+    const parsed = new URL(url ?? "");
+    if (parsed.hostname !== "script.google.com") return null;
+    const match = /^\/(?:a\/macros\/[^/]+|macros)\/s\/([^/]+)/.exec(parsed.pathname);
+    return match ? match[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Login de app do Apps Script só serve para o mesmo app (e vice-versa). */
+function sameAppScope(entry: VaultEntry, pageApp: string | null): boolean {
+  const entryApp = appsScriptApp(entry.url);
+  if (pageApp) return entryApp === pageApp;
+  return entryApp === null;
+}
+
 /** Entradas do cofre que servem para o site aberto (para o popup de autofill). */
 export function matchesForUrl(entries: VaultEntry[], url: string | undefined | null): VaultEntry[] {
   const host = hostOf(url);
   if (!host || !/^https?:/i.test(url ?? "https:")) return [];
+  const app = appsScriptApp(url);
   return entries
     .filter(
       (entry) =>
         !entry.deletedAt &&
         isLogin(entry) &&
-        (entryMatchesHost(entry, host) || entryNamesHost(entry, host)),
+        sameAppScope(entry, app) &&
+        (entryMatchesHost(entry, host) || (!app && entryNamesHost(entry, host))),
     )
     .sort(
       (a, b) =>

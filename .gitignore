@@ -41,3 +41,6 @@ playwright-report/
 # Bundles vendorizados (adblock e Argon2id), gerados no desktop:vendor/desktop:build
 electron/adblocker.vendor.cjs
 electron/argon2.vendor.cjs
+
+# Contas Agzos (services/accounts): banco local do servidor
+services/accounts/data/

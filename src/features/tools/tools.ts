@@ -5,11 +5,13 @@ import {
   Crosshair,
   Download,
   FileText,
+  Languages,
   Layers,
   Pipette,
   Network,
   NotebookPen,
   Puzzle,
+  ScrollText,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -25,7 +27,9 @@ export type ToolId =
   | "page.inspect"
   | "devtools.toggle"
   | "page.capture"
+  | "page.capture-full"
   | "page.reader"
+  | "page.translate"
   | "notes.toggle"
   | "extensions.open"
   | "downloads.toggle"
@@ -83,9 +87,17 @@ export const TOOLS: Tool[] = [
   {
     id: "page.capture",
     label: "Capturar tela",
-    hint: "Guia, região ou janela em PNG",
+    hint: "Guia, região ou janela, com setas, formas e texto",
     icon: Camera,
     shortcut: "Ctrl+Shift+S",
+  },
+  {
+    id: "page.capture-full",
+    label: "Capturar a página inteira",
+    hint: "Rola a página toda e junta num PNG só",
+    icon: ScrollText,
+    shortcut: "Ctrl+Alt+Shift+F",
+    needsPage: true,
   },
   {
     id: "page.reader",
@@ -93,6 +105,14 @@ export const TOOLS: Tool[] = [
     hint: "Só o artigo, com letra grande",
     icon: BookOpen,
     shortcut: "Ctrl+Alt+R",
+    needsPage: true,
+  },
+  {
+    id: "page.translate",
+    label: "Traduzir página",
+    hint: "Substituir, bilíngue ou original no mouse",
+    icon: Languages,
+    shortcut: "Alt+Shift+T",
     needsPage: true,
   },
   {

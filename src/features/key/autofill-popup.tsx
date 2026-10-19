@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import type { VaultEntry } from "@/features/browser/types";
 import { searchLogins } from "@/features/browser/vault";
 
+import { FormFillCard, type FormFillInfo } from "./form-fill-card";
 import { generatePassword } from "./password";
 import { TotpCode } from "./totp-code";
 
@@ -48,6 +49,10 @@ export function AutofillPopup({
   onUnlock,
   onOpenVault,
   onClose,
+  form = null,
+  onFillProfile,
+  onNeverSite,
+  onOpenSettings,
 }: {
   /** Site aberto (sem www.). */
   host: string;
@@ -71,6 +76,11 @@ export function AutofillPopup({
   onUnlock: () => void;
   onOpenVault: () => void;
   onClose: () => void;
+  /** Campo de formulário de dados clicado: o popup vira "Preencher formulário" (perfis). */
+  form?: FormFillInfo | null;
+  onFillProfile?: ((id: string) => void) | undefined;
+  onNeverSite?: (() => void) | undefined;
+  onOpenSettings?: (() => void) | undefined;
 }) {
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(
@@ -98,6 +108,19 @@ export function AutofillPopup({
       </Button>
     </div>
   );
+
+  if (form) {
+    return (
+      <FormFillCard
+        host={host}
+        form={form}
+        onFillProfile={onFillProfile}
+        onNeverSite={onNeverSite}
+        onOpenSettings={onOpenSettings}
+        onClose={onClose}
+      />
+    );
+  }
 
   if (status !== "ready") {
     return (

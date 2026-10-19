@@ -2,6 +2,7 @@ import {
   Copy,
   Download,
   History,
+  Monitor,
   Palette as PaletteIcon,
   Pin,
   PinOff,
@@ -67,6 +68,8 @@ export type ColorToolsPanelProps = {
   top: number;
   onTab: (tab: ColorTab) => void;
   onPick: () => void;
+  /** Conta-gotas fora do navegador (qualquer ponto da tela). */
+  onPickScreen: () => void;
   onAnalyze: () => void;
   onSelect: (hex: string) => void;
   onCopy: (text: string) => void;
@@ -241,6 +244,13 @@ function PickerTab(props: ColorToolsPanelProps) {
               ? `Clique num ponto da guia · Esc cancela${props.pickShortcut ? ` · ${props.pickShortcut}` : ""}`
               : "Abra um site para usar o conta-gotas"}
           </small>
+        </span>
+      </button>
+      <button type="button" className="ct-pick-button" onClick={props.onPickScreen}>
+        <Monitor aria-hidden="true" />
+        <span>
+          <strong>Pegar cor da tela</strong>
+          <small>Outros apps e a área de trabalho · Esc cancela</small>
         </span>
       </button>
       {props.current ? (

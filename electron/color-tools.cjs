@@ -1,5 +1,5 @@
 // ColorTools (4.7). Conta-gotas: o main tira a foto da área da guia (compositor) e mostra
-// numa camada por cima dela, com lupa e HEX/RGB/HSL ao vivo; o clique escolhe, Esc
+// numa camada por cima dela (ou, no modo tela, a foto do monitor numa janela que o cobre), com lupa e HEX/RGB/HSL ao vivo; o clique escolhe, Esc
 // cancela. A camada é uma página data: do próprio app (sem preload): ela avisa o main
 // pelo título ("agzos-pick:#rrggbb" ou "agzos-pick:cancel"). Analisador: script no mundo
 // isolado COLOR_WORLD que só lê estilos computados, em blocos no requestIdleCallback.
@@ -83,10 +83,19 @@ addEventListener("blur", () => { setTimeout(() => { if (!document.hasFocus()) do
 
 /**
  * Abre o conta-gotas por cima de `bounds` (área da guia na janela). `capture()` devolve a
- * NativeImage da guia; `createView()` a WebContentsView da camada. Resolve com a cor ou
- * null (Esc, clique direito, perdeu o foco).
+ * NativeImage da guia; `createView()` a WebContentsView da camada; `onReady()` roda com a
+ * foto já na camada, antes do foco (o modo tela mostra a janela dela aí). Resolve com a
+ * cor ou null (Esc, clique direito, perdeu o foco).
  */
-function openColorPicker({ window, bounds, capture, createView, scaleFactor = 1, light = false }) {
+function openColorPicker({
+  window,
+  bounds,
+  capture,
+  createView,
+  scaleFactor = 1,
+  light = false,
+  onReady = () => {},
+}) {
   return new Promise((resolve) => {
     let view = null;
     let finished = false;
@@ -136,6 +145,7 @@ function openColorPicker({ window, bounds, capture, createView, scaleFactor = 1,
           finish(null);
           return;
         }
+        onReady();
         contents.focus();
       } catch {
         finish(null);
@@ -197,6 +207,27 @@ function colorAnalyzeSource(limit = ANALYZE_LIMIT) {
 })`;
 }
 
+/**
+ * Fonte do desktopCapturer que é a tela `display` (id em texto no Electron). Uma tela só:
+ * alguns Linux não preenchem display_id.
+ */
+function screenSourceOf(sources, display) {
+  const id = String(display?.id ?? "");
+  return (
+    sources.find((source) => source.display_id && source.display_id === id) ??
+    (sources.length === 1 ? sources[0] : null)
+  );
+}
+
+/** Tamanho em pixels físicos da tela (a foto sai nesse tamanho, sem perder detalhe). */
+function screenThumbnailSize(display) {
+  const scale = Number(display?.scaleFactor) || 1;
+  return {
+    width: Math.max(1, Math.round(display.bounds.width * scale)),
+    height: Math.max(1, Math.round(display.bounds.height * scale)),
+  };
+}
+
 module.exports = {
   ANALYZE_LIMIT,
   COLOR_WORLD,
@@ -206,4 +237,6 @@ module.exports = {
   openColorPicker,
   pickOfTitle,
   rgbOfBitmap,
+  screenSourceOf,
+  screenThumbnailSize,
 };
