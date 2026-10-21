@@ -373,11 +373,59 @@
   padding: 0;
   list-style: none;
 }
-.acct-profile-head {
+.acct-profile {
+  border-top: 4px solid var(--accent, var(--primary));
+}
+.acct-profile-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
+}
+.acct-profile-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.acct-profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.acct-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+.acct-pill svg {
+  width: 13px;
+  height: 13px;
+}
+.acct-pill-ok {
+  background: color-mix(in oklab, #16a34a 16%, transparent);
+  color: #15803d;
+}
+.acct-profile-used {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.acct-profile-color {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.acct-profile-label {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
 }
 .acct-profile-text {
   display: flex;
@@ -487,7 +535,7 @@
   line-height: 1.7;
 }
 
-/* Modal "Escolha uma conta" */
+/* Modal "Escolha uma conta" (estilo do "Quem está usando o Chrome") */
 .acct-picker-backdrop {
   position: fixed;
   inset: 0;
@@ -495,19 +543,20 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  background: oklch(0 0 0 / 45%);
+  background: oklch(0 0 0 / 50%);
   animation: fade-in var(--dur-enter, 0.2s) var(--ease-out);
 }
 .acct-picker {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: min(440px, 100%);
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-  padding: 24px;
-  border-radius: 16px;
+  gap: 18px;
+  box-sizing: border-box;
+  width: min(960px, 92vw);
+  height: min(680px, 90vh);
+  min-height: 0;
+  padding: 32px 36px 20px;
+  border-radius: 20px;
   background: var(--card);
   color: var(--card-foreground);
   box-shadow:
@@ -515,61 +564,126 @@
     0 30px 80px oklch(0 0 0 / 35%);
   animation: panel-in 0.28s var(--ease-out);
 }
-.acct-picker h2 {
+.acct-picker-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 40px;
+}
+.acct-picker-head h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 .acct-picker-x {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 14px;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   color: var(--muted-foreground);
 }
 .acct-picker-x:hover {
   background: var(--muted);
+  color: var(--foreground);
 }
 .acct-picker-x svg {
-  width: 16px;
+  width: 18px;
 }
-.acct-picker-list {
+.acct-picker-body {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: 4px;
-  margin: 4px 0;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 4px 10px;
+  margin: 0 -4px;
+}
+.acct-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 16px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
-.acct-picker-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 10px;
-  border-radius: 10px;
-  text-align: left;
-}
-.acct-picker-row:hover,
-.acct-picker-row:focus-visible {
-  background: var(--muted);
-}
-.acct-picker-row > svg {
-  width: 16px;
-  margin-left: auto;
-  color: var(--muted-foreground);
-}
-.acct-picker-text {
+.acct-pcard {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
+  padding: 22px 14px 18px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: var(--muted);
+  color: var(--foreground);
+  text-align: center;
+  transition:
+    background 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out),
+    transform 0.15s var(--ease-out);
 }
-.acct-picker-text span {
+.acct-pcard:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent, var(--primary)) 12%, var(--muted));
+  border-color: color-mix(in oklab, var(--accent, var(--primary)) 55%, transparent);
+  transform: translateY(-2px);
+}
+.acct-pcard:focus-visible {
+  outline: 2px solid var(--accent, var(--primary));
+  outline-offset: 3px;
+}
+.acct-pcard:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.acct-pcard-avatar {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 3px var(--card),
+    0 0 0 5px var(--accent, var(--primary));
+}
+.acct-pcard-avatar > svg {
+  width: 36px;
+  height: 36px;
+  color: var(--muted-foreground);
+}
+.acct-pcard-add .acct-pcard-avatar {
+  border: 2px dashed var(--border);
+  background: var(--card);
+  box-shadow: none;
+}
+.acct-pcard-name,
+.acct-pcard-mail {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-pcard-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.acct-pcard-mail {
   color: var(--muted-foreground);
   font-size: 12.5px;
+}
+.acct-picker-error {
+  margin: 0;
+  color: var(--destructive);
+  font-size: 13px;
 }
 .acct-picker-foot {
   display: flex;
@@ -577,8 +691,25 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding-top: 6px;
+  padding-top: 14px;
   border-top: 1px solid var(--border);
+}
+
+@media (max-width: 560px) {
+  .acct-picker {
+    padding: 24px 18px 16px;
+  }
+  .acct-picker-head h2 {
+    font-size: 21px;
+  }
+  .acct-picker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+  }
+  .acct-pcard-avatar {
+    width: 72px;
+    height: 72px;
+  }
 }
 
 /* Botão da barra */
@@ -598,4 +729,50 @@
 .acct-bar-button > svg {
   width: 16px;
   height: 16px;
+}
+
+/* Aviso "Conta conectada" */
+.acct-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 10px 12px 10px 14px;
+  transform: translateX(-50%);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 12px 32px oklch(0 0 0 / 25%);
+  font-size: 13.5px;
+  animation: panel-in 0.28s var(--ease-out);
+}
+.acct-toast > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: #16a34a;
+}
+.acct-toast > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-toast button {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-size: 18px;
+  line-height: 1;
+}
+.acct-toast button:hover {
+  background: var(--muted);
 }

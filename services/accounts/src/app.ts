@@ -3,6 +3,7 @@
 // recusadas e toda chamada precisa do header X-Agzos-Client (um navegador só mandaria
 // esse header depois de um preflight CORS, que esta API nunca aprova).
 import type { Database } from "bun:sqlite";
+import { AVATAR_MAX_BYTES, avatarUploadProblem } from "./avatar.ts";
 import { createLimiter } from "./rate-limit.ts";
 import {
   dummyPasswordHash,
@@ -105,6 +106,7 @@ const MESSAGES = {
   badRequest: "Requisição inválida.",
   forbidden: "Origem não permitida.",
   notFound: "Endereço não encontrado.",
+  noAvatar: "Esta conta não tem foto de perfil.",
   tooLarge: "Requisição grande demais.",
   unauthorized: "Sessão expirada. Entre de novo.",
   invalidLogin: "E-mail ou senha incorretos.",
@@ -156,6 +158,8 @@ export function createApp({
   const ipLogin = createLimiter({ limit: 30, windowMs: 10 * 60 * 1000, now });
   const ipRecover = createLimiter({ limit: 10, windowMs: 10 * 60 * 1000, now });
   const ipSignup = createLimiter({ limit: 10, windowMs: 60 * 60 * 1000, now });
+  // Foto: por conta (troca e remoção), 30 por hora.
+  const avatarChanges = createLimiter({ limit: 30, windowMs: 60 * 60 * 1000, now });
   const emailLogin = createLimiter({
     limit: config.loginLockThreshold,
     windowMs: config.loginLockMs,
@@ -202,6 +206,18 @@ export function createApp({
       "UPDATE users SET failed_recoveries = ?, recovery_locked_until = ? WHERE id = ?",
     ),
     deleteUser: db.query("DELETE FROM users WHERE id = ?"),
+    avatarVersion: db.query("SELECT version FROM avatars WHERE user_id = ?"),
+    avatarRow: db.query("SELECT mime, data FROM avatars WHERE user_id = ?"),
+    upsertAvatar: db.query(
+      `INSERT INTO avatars (user_id, mime, data, version, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         mime = excluded.mime,
+         data = excluded.data,
+         version = MAX(avatars.version + 1, excluded.version),
+         updated_at = excluded.updated_at
+       RETURNING version`,
+    ),
+    deleteAvatar: db.query("DELETE FROM avatars WHERE user_id = ?"),
   };
 
   const publicUser = (user: UserRow) => ({
@@ -211,6 +227,9 @@ export function createApp({
     createdAt: user.created_at,
   });
   const codesLeft = (userId: number) => (q.countCodes.get(userId) as { n: number } | null)?.n ?? 0;
+  /** Versão da foto (null sem foto). O app compara com a que tem em cache. */
+  const avatarVersionOf = (userId: number): number | null =>
+    (q.avatarVersion.get(userId) as { version: number } | null)?.version ?? null;
 
   async function storeCodes(userId: number): Promise<string[]> {
     const codes = newRecoveryCodes();
@@ -247,6 +266,34 @@ export function createApp({
     }
     q.touchSession.run(now(), row.session_id);
     return row;
+  }
+
+  /** Corpo binário (foto): lê até `limit` bytes e recusa o resto com 413. */
+  async function readRaw(request: Request, limit: number): Promise<Uint8Array> {
+    const length = Number(request.headers.get("content-length") ?? "0");
+    if (length > limit) throw new HttpError(413, "too_large", MESSAGES.tooLarge);
+    const reader = request.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) {
+          await reader.cancel().catch(() => {});
+          throw new HttpError(413, "too_large", MESSAGES.tooLarge);
+        }
+        chunks.push(value);
+      }
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
   }
 
   async function readBody(request: Request): Promise<Record<string, unknown>> {
@@ -308,7 +355,12 @@ export function createApp({
     const recoveryCodes = await storeCodes(userId);
     const user = q.userByEmail.get(email) as UserRow;
     const session = startSession(userId, str(body["device"]));
-    return json(201, { ...session, user: publicUser(user), recoveryCodes });
+    return json(201, {
+      ...session,
+      user: publicUser(user),
+      recoveryCodes,
+      avatarVersion: avatarVersionOf(userId),
+    });
   }
 
   async function login(request: Request, ip: string) {
@@ -337,7 +389,12 @@ export function createApp({
     emailLogin.reset(key);
     q.loginFailed.run(0, 0, user.id);
     const session = startSession(user.id, str(body["device"]));
-    return json(200, { ...session, user: publicUser(user), recoveryCodesLeft: codesLeft(user.id) });
+    return json(200, {
+      ...session,
+      user: publicUser(user),
+      recoveryCodesLeft: codesLeft(user.id),
+      avatarVersion: avatarVersionOf(user.id),
+    });
   }
 
   async function recover(request: Request, ip: string) {
@@ -443,6 +500,44 @@ export function createApp({
     return json(200, { ...session, user: publicUser(row) });
   }
 
+  async function putAvatar(request: Request) {
+    const row = authenticate(request);
+    if (!avatarChanges.allowed(String(row.id))) throw rateLimited();
+    avatarChanges.hit(String(row.id));
+    const bytes = await readRaw(request, AVATAR_MAX_BYTES);
+    const problem = avatarUploadProblem(request.headers.get("content-type"), bytes);
+    if (problem) {
+      const status = problem.code === "too_large" ? 413 : 400;
+      throw new HttpError(status, problem.code, problem.message);
+    }
+    const mime = (request.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    const at = now();
+    const { version } = q.upsertAvatar.get(row.id, mime, bytes, at, at) as { version: number };
+    return json(200, { avatarVersion: version });
+  }
+
+  function getAvatar(request: Request) {
+    const row = authenticate(request);
+    const photo = q.avatarRow.get(row.id) as { mime: string; data: Uint8Array } | null;
+    if (!photo) return fail(404, "not_found", MESSAGES.noAvatar);
+    return new Response(photo.data, {
+      status: 200,
+      headers: {
+        "Content-Type": photo.mime,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }
+
+  function deleteAvatar(request: Request) {
+    const row = authenticate(request);
+    if (!avatarChanges.allowed(String(row.id))) throw rateLimited();
+    avatarChanges.hit(String(row.id));
+    q.deleteAvatar.run(row.id);
+    return json(200, { ok: true, avatarVersion: null });
+  }
+
   function services(request: Request) {
     const row = authenticate(request);
     return json(200, {
@@ -464,7 +559,11 @@ export function createApp({
     },
     "GET /me": (request) => {
       const row = authenticate(request);
-      return json(200, { user: publicUser(row), recoveryCodesLeft: codesLeft(row.id) });
+      return json(200, {
+        user: publicUser(row),
+        recoveryCodesLeft: codesLeft(row.id),
+        avatarVersion: avatarVersionOf(row.id),
+      });
     },
     "POST /refresh": refresh,
     "POST /password/change": changePassword,
@@ -472,6 +571,9 @@ export function createApp({
     "POST /recovery-codes/regenerate": regenerateCodes,
     "DELETE /account": deleteAccount,
     "GET /services": services,
+    "GET /avatar": getAvatar,
+    "PUT /avatar": putAvatar,
+    "DELETE /avatar": deleteAvatar,
   };
 
   let lastSweep = 0;

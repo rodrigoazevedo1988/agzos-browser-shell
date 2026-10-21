@@ -201,6 +201,7 @@ describe("4.8 Fase 0: flags por bloco", () => {
       rewind: false,
       kiosk: false,
       pwa_mac_apps: true,
+      ytdlp: true,
     });
   });
 

@@ -124,6 +124,7 @@ function createDownloadManager({
       etag: "",
       lastModified: "",
       urlChain: item.getURLChain(),
+      source: "",
     };
     if (isPrivate || !database) record.id = -++privateSeq;
     else record.id = database.addDownload(record);
@@ -206,6 +207,83 @@ function createDownloadManager({
       : null;
   }
 
+  /**
+   * 5.0: download feito por outro programa (yt-dlp). Entra na lista como os outros: `cancel()`
+   * interrompe o processo; quem baixa avisa com update(campos) e finish(estado, caminho).
+   */
+  function startExternal({
+    url,
+    filename,
+    mime = "",
+    tags = [],
+    source = "",
+    cancel,
+    private: isPrivate = false,
+  }) {
+    const record = {
+      id: 0,
+      url,
+      filename,
+      path: "",
+      mime,
+      totalBytes: 0,
+      receivedBytes: 0,
+      state: "progressing",
+      startedAt: Date.now(),
+      endedAt: null,
+      tags: cleanTags(tags),
+      etag: "",
+      lastModified: "",
+      urlChain: [url],
+      source,
+    };
+    if (isPrivate || !database) record.id = -++privateSeq;
+    else record.id = database.addDownload(record);
+    const stub = {
+      cancel: () => cancel?.(),
+      pause() {},
+      resume() {},
+      isPaused: () => false,
+      canResume: () => false,
+    };
+    const entry = {
+      item: stub,
+      record,
+      lastEmit: 0,
+      private: isPrivate,
+      session: null,
+      moveTo: null,
+    };
+    active.set(record.id, entry);
+    if (isPrivate) privateRecords.set(record.id, entry);
+    send(entry);
+    return {
+      id: record.id,
+      update(fields) {
+        if (Number.isFinite(fields.receivedBytes)) record.receivedBytes = fields.receivedBytes;
+        if (Number.isFinite(fields.totalBytes)) record.totalBytes = fields.totalBytes;
+        if (typeof fields.filename === "string" && fields.filename)
+          record.filename = fields.filename;
+        if (Date.now() - entry.lastEmit >= PROGRESS_INTERVAL_MS) send(entry);
+      },
+      finish(state, filePath = "") {
+        if (closing) return;
+        record.state = state;
+        record.endedAt = Date.now();
+        if (filePath) {
+          record.path = filePath;
+          record.filename = path.basename(filePath);
+          record.receivedBytes = record.totalBytes || record.receivedBytes;
+          record.totalBytes = record.totalBytes || record.receivedBytes;
+        }
+        entry.item = null;
+        active.delete(record.id);
+        persist(entry);
+        send(entry);
+      },
+    };
+  }
+
   function list() {
     const stored = database ? database.listDownloads() : [];
     const live = new Map([...active.values()].map((entry) => [entry.record.id, snapshot(entry)]));
@@ -226,6 +304,7 @@ function createDownloadManager({
 
   return {
     track,
+    startExternal,
     /** O próximo download iniciado por este webContents abre o diálogo "Salvar como". */
     askNext(contents) {
       saveAsNext.add(contents);
@@ -253,7 +332,7 @@ function createDownloadManager({
      */
     restart(id) {
       const entry = storedEntry(id);
-      if (!entry || !/^https?:/i.test(entry.record.url)) return false;
+      if (!entry || entry.record.source || !/^https?:/i.test(entry.record.url)) return false;
       const ses = entry.session ?? defaultSession();
       if (!ses) return false;
       restarts.set(entry.record.url, {

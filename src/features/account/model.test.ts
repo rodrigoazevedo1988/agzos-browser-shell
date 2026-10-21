@@ -8,6 +8,7 @@ import {
   PROFILE_COLORS,
   emailProblem,
   initialsOf,
+  isPhotoUrl,
   passwordProblem,
   passwordStrength,
   recoveryCodesFileName,
@@ -44,6 +45,16 @@ describe("conta: regras da casca", () => {
     expect(initialsOf("ana.souza@gmail.com")).toBe("AS");
     expect(initialsOf("rodrigo")).toBe("R");
     expect(initialsOf("")).toBe("?");
+  });
+
+  it("foto da conta: só data: de imagem", () => {
+    expect(isPhotoUrl("data:image/png;base64,iVBORw0KGgo=")).toBe(true);
+    expect(isPhotoUrl("data:image/jpeg;base64,/9j/4AAQ")).toBe(true);
+    expect(isPhotoUrl("https://example.com/a.png")).toBe(false);
+    expect(isPhotoUrl("data:text/html;base64,PGI+")).toBe(false);
+    expect(isPhotoUrl("data:image/svg+xml;base64,PHN2Zz4=")).toBe(false);
+    expect(isPhotoUrl("data:image/png;base64,AAAA<script>")).toBe(false);
+    expect(isPhotoUrl(null)).toBe(false);
   });
 
   it("agzos://conta é uma página da casca", () => {
@@ -159,6 +170,7 @@ describe("conta Agzos (main)", () => {
       name: "Ana",
       email: "ana@example.com",
       plan: "premium",
+      avatar: null,
     });
     expect(JSON.stringify(state)).not.toContain("segredo");
     expect(account.publicState(null).loggedIn).toBe(false);
@@ -232,5 +244,151 @@ describe("conta Agzos (main)", () => {
     });
     expect((await noKeyring.login({ email: "a@b.co", password: "x" })).code).toBe("keyring");
     expect(changes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("foto da conta (main)", () => {
+  const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const pngBytes = (fill = 7) => Buffer.from([...PNG_HEAD, ...new Array(24).fill(fill)]);
+  const reply = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  // Imagem com a forma do NativeImage: registra o recorte e a redução feitos.
+  const fakeImage = (width: number, height: number) => {
+    const log: string[] = [];
+    const make = (w: number, h: number) => ({
+      isEmpty: () => false,
+      getSize: () => ({ width: w, height: h }),
+      crop: (rect: { x: number; y: number; width: number; height: number }) => {
+        log.push(`crop ${rect.x},${rect.y},${rect.width}x${rect.height}`);
+        return make(rect.width, rect.height);
+      },
+      resize: (opts: { width: number; height: number }) => {
+        log.push(`resize ${opts.width}x${opts.height}`);
+        return make(opts.width, opts.height);
+      },
+      toPNG: () => pngBytes(),
+    });
+    return { image: make(width, height), log };
+  };
+
+  it("recorta pelo centro, reduz a 256 e recusa o que não é imagem", () => {
+    const { image, log } = fakeImage(300, 200);
+    const png = account.squareAvatarPng(image);
+    expect(log).toEqual(["crop 50,0,200x200", "resize 256x256"]);
+    expect(account.imageMimeOf(png)).toBe("image/png");
+    expect(account.squareAvatarPng({ isEmpty: () => true })).toBeNull();
+    expect(account.imageMimeOf(Buffer.from("GIF89a"))).toBeNull();
+    expect(account.imageMimeOf(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+  });
+
+  it("envia a foto, guarda em cache, troca quando o servidor muda e apaga ao sair", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-avatar-"));
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (text: string) => Buffer.from(`enc:${text}`),
+      decryptString: (buffer: Buffer) => buffer.toString().slice(4),
+    };
+    const ana = { name: "Ana", email: "ana@example.com", plan: "free" };
+    const server: { avatarVersion: number | null; photo: Buffer | null; calls: string[] } = {
+      avatarVersion: null,
+      photo: null,
+      calls: [],
+    };
+    const fetch = async (url: string, init: RequestInit) => {
+      const route = new URL(url).pathname.replace("/browser-api/v1", "");
+      const method = init.method ?? "GET";
+      server.calls.push(`${method} ${route}`);
+      if (route === "/login") {
+        return reply(200, {
+          token: "tok_abcdefghijklmnopqrstuvwxyz",
+          user: ana,
+          recoveryCodesLeft: 8,
+          avatarVersion: server.avatarVersion,
+        });
+      }
+      if (route === "/me") {
+        return reply(200, { user: ana, recoveryCodesLeft: 8, avatarVersion: server.avatarVersion });
+      }
+      if (route === "/avatar" && method === "PUT") {
+        server.photo = Buffer.from(init.body as Uint8Array);
+        server.avatarVersion = 1_700_000_000_000;
+        return reply(200, { avatarVersion: server.avatarVersion });
+      }
+      if (route === "/avatar" && method === "GET") {
+        if (!server.photo) return reply(404, { error: { code: "not_found", message: "x" } });
+        return new Response(new Uint8Array(server.photo), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      }
+      if (route === "/avatar" && method === "DELETE") {
+        server.photo = null;
+        server.avatarVersion = null;
+        return reply(200, { ok: true, avatarVersion: null });
+      }
+      return reply(404, {});
+    };
+    const client = account.createAgzosAccount({
+      userDataDir: dir,
+      safeStorage,
+      fetch,
+      baseUrl: "http://127.0.0.1:1/browser-api/v1",
+    });
+    const avatarFile = path.join(dir, account.AVATAR_FILE);
+    const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString("base64")}`;
+
+    expect((await client.login({ email: ana.email, password: "senha-forte-123" })).ok).toBe(true);
+    expect(client.state().avatar).toBeNull();
+
+    const { image } = fakeImage(256, 256);
+    const sent = await client.changeAvatar(image);
+    expect(sent.ok).toBe(true);
+    expect(sent.state.avatar).toBe(dataUrl(pngBytes()));
+    expect(fs.existsSync(avatarFile)).toBe(true);
+    expect(JSON.stringify(sent)).not.toContain("tok_");
+
+    // Outro aparelho trocou a foto: o próximo /me baixa a nova.
+    server.photo = pngBytes(9);
+    server.avatarVersion = 1_800_000_000_000;
+    const fresh = await client.me();
+    expect(server.calls).toContain("GET /avatar");
+    expect(fresh.state.avatar).toBe(dataUrl(pngBytes(9)));
+
+    // Foto apagada no servidor: some daqui também.
+    server.photo = null;
+    server.avatarVersion = null;
+    expect((await client.me()).state.avatar).toBeNull();
+    expect(fs.existsSync(avatarFile)).toBe(false);
+
+    await client.changeAvatar(fakeImage(256, 256).image);
+    expect(client.state().avatar).not.toBeNull();
+    await client.logout();
+    expect(client.state().loggedIn).toBe(false);
+    expect(client.state().avatar).toBeNull();
+    expect(fs.existsSync(avatarFile)).toBe(false);
+  });
+
+  it("sem login não envia foto", async () => {
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-avatar-"));
+    const client = account.createAgzosAccount({
+      userDataDir: dir,
+      safeStorage: { isEncryptionAvailable: () => true },
+      fetch: async () => {
+        throw new Error("não deveria chamar a rede");
+      },
+    });
+    const sent = await client.changeAvatar(fakeImage(256, 256).image);
+    expect(sent).toEqual({ ok: false, error: expect.any(String) });
+    expect(client.state().avatar).toBeNull();
   });
 });

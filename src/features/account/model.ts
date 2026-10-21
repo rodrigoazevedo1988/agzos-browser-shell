@@ -76,6 +76,12 @@ export function initialsOf(label: string): string {
   return letters.toUpperCase();
 }
 
+/** Foto da conta vinda do main: só data: de imagem PNG, JPEG ou WebP (nunca URL externa). */
+const PHOTO_URL_RE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+export function isPhotoUrl(value: string | null | undefined): value is string {
+  return typeof value === "string" && value.length <= 720_000 && PHOTO_URL_RE.test(value);
+}
+
 export function planLabel(plan: string): string {
   return plan === "premium" ? "Premium" : "Gratuito";
 }

@@ -15,6 +15,7 @@ const zoom = require(path.join(electronDir, "zoom.cjs")) as {
   ZOOM_STEPS: number[];
   nextZoom: (current: number, direction: number) => number;
   zoomHostOf: (url: string) => string | null;
+  createWheelZoomGate: (now?: () => number) => (direction: string) => boolean;
 };
 const adblockModule = require(path.join(electronDir, "adblock.cjs")) as {
   createAdblock: (options: Record<string, unknown>) => Adblock;
@@ -86,6 +87,20 @@ describe("zoom.cjs", () => {
     expect(zoom.zoomHostOf("https://www.exemplo.com:8443/a?b")).toBe("www.exemplo.com:8443");
     expect(zoom.zoomHostOf("agzos://inicio")).toBeNull();
     expect(zoom.zoomHostOf("file:///tmp/a.html")).toBeNull();
+  });
+
+  it("Ctrl+roda: o aviso duplicado do mesmo passo conta uma vez só", () => {
+    let time = 1000;
+    const gate = zoom.createWheelZoomGate(() => time);
+    // Electron manda "in" duas vezes no mesmo instante: vale um passo.
+    expect([gate("in"), gate("in")]).toEqual([true, false]);
+    // Roda seguinte, depois do intervalo: outro passo.
+    time += 60;
+    expect([gate("in"), gate("in")]).toEqual([true, false]);
+    // Sentido contrário não é repetição.
+    expect(gate("out")).toBe(true);
+    // Filtro por página: outra página (outro gate) não herda o aviso.
+    expect(zoom.createWheelZoomGate(() => time)("out")).toBe(true);
   });
 });
 

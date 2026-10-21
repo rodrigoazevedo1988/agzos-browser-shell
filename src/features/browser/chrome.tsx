@@ -91,6 +91,7 @@ import { createDownloadsApi } from "@/features/downloads/api";
 import { PdfHelpPage } from "@/features/pdf/help";
 import { comboLabel, comboOfHotkey } from "./feature-prefs";
 import { useTranslateShell, type TranslatePanelKind } from "@/features/translate/use-translate";
+import { useYtdlpShell, type YtdlpPanelKind } from "@/features/ytdlp/use-ytdlp";
 import { useV47Shell, type PdfRequest } from "./v47-shell";
 import { useV48Shell } from "./v48-shell";
 import type { SettingsSectionId } from "@/features/settings/page";
@@ -160,6 +161,7 @@ import { AccountButton } from "@/features/account/button";
 import { ACCOUNT_URL } from "@/features/account/model";
 import { AccountPage } from "@/features/account/page";
 import { ProfilePicker } from "@/features/account/picker";
+import { ConnectNotice } from "@/features/account/profiles";
 import { useAgzosAccount } from "@/features/account/use-account";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
@@ -187,7 +189,8 @@ type Panel =
   | "tools"
   | "colors"
   | "translate"
-  | "translation";
+  | "translation"
+  | "ytdlp";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -1335,6 +1338,25 @@ export function AgzosBrowser() {
     openSettings: () => openSettingsAt("traducao"),
     openAi: () => setPrefs({ aiOpen: true }),
   });
+  // 5.0: yt-dlp (botão da barra, popup de qualidade, clique direito na página).
+  const ytdlp = useYtdlpShell({
+    desktop,
+    panel,
+    setPanel: (kind: YtdlpPanelKind | null) => {
+      panelRef.current = kind ?? (panelRef.current === "ytdlp" ? null : panelRef.current);
+      setPanel((currentPanel) => kind ?? (currentPanel === "ytdlp" ? null : currentPanel));
+    },
+    activeUrl: current.url,
+    activeIsPage: current.kind === "page",
+    activeTabId: activeTab.id,
+    tabInfo: (tabId) => {
+      const tab = state.tabs.find((item) => item.id === tabId);
+      if (!tab) return null;
+      const entry = entryOf(tab);
+      return { url: entry.url, private: Boolean(tab.private), page: entry.kind === "page" };
+    },
+    setNotice,
+  });
   // 4.8: flags por bloco e DevTools encaixado.
   const v48 = useV48Shell({
     desktop,
@@ -1630,6 +1652,7 @@ export function AgzosBrowser() {
       openPdfTools: () => openPdfTools(),
       togglePageTheme: (tabId) => v47.togglePageTheme(tabId),
       translatePage: (tabId) => translate.togglePage(tabId),
+      openYtdlp: (tabId) => ytdlp.openTab(tabId, null),
       devtools: (tabId, action) => void v48.run(tabId, action),
       devtoolsEnabled: () => v48.devtoolsEnabled,
       devtoolsSide: (side) => v48.setSide(side),
@@ -2130,7 +2153,9 @@ export function AgzosBrowser() {
   const devtoolsDock =
     desktop && devtoolsSide ? (
       <DevtoolsDock
-        key={devtoolsSide}
+        // Chave própria: o terminal encaixado no mesmo lado usa key igual, e chaves repetidas
+        // no mesmo filho fazem o React perder o nó do DevTools ao fechar (fica na tela).
+        key={`devtools-${devtoolsSide}`}
         desktop={desktop}
         side={devtoolsSide}
         size={devtoolsSide === "right" ? v48.dock.width : v48.dock.height}
@@ -2506,8 +2531,10 @@ export function AgzosBrowser() {
   // 4.6: Ferramentas, extensões e o menu de cada extensão (camada acima da página).
   const extMenuInfo = extMenu ? extensionList.find((item) => item.dir === extMenu.dir) : null;
   const activeHost = current.kind === "page" ? hostOf(current.url) : null;
-  const panelSpec: PanelSpec | null = translate.spec
-    ? translate.spec
+  // Tradução e yt-dlp (um por vez) ficam na frente dos painéis da casca.
+  const shellSpec = translate.spec ?? ytdlp.spec;
+  const panelSpec: PanelSpec | null = shellSpec
+    ? shellSpec
     : panel === "colors" && v47.colorsSpec
       ? v47.colorsSpec
       : panel === "tools" && desktop
@@ -2740,6 +2767,17 @@ export function AgzosBrowser() {
                   onToggle: (anchor) => {
                     if (justDismissed("translate")) return;
                     translate.urlButton?.onToggle(rectOfDom(anchor));
+                  },
+                }
+              : null
+          }
+          ytdlp={
+            ytdlp.urlButton
+              ? {
+                  ...ytdlp.urlButton,
+                  onToggle: (anchor) => {
+                    if (justDismissed("ytdlp")) return;
+                    ytdlp.urlButton?.onToggle(rectOfDom(anchor));
                   },
                 }
               : null
@@ -3187,6 +3225,7 @@ export function AgzosBrowser() {
           onClose={closeWhatsNew}
         />
       )}
+      {account.bridge && <ConnectNotice bridge={account.bridge} />}
       {account.picker && account.bridge && !whatsNew && (
         <ProfilePicker
           bridge={account.bridge}

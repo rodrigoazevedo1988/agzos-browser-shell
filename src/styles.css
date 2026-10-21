@@ -9238,18 +9238,19 @@ button.download-name:hover {
 .side-bar .side-bar-item {
   width: calc(var(--side-bar-w, 60px) - 8px);
 }
+/* 5.0.1: --side-scale encolhe os ícones em telas baixas (ver o bloco de max-height no fim). */
 .side-bar .side-app-icon {
-  width: var(--side-icon, 26px);
-  height: var(--side-icon, 26px);
-  border-radius: calc(var(--side-icon, 26px) * 0.3);
+  width: calc(var(--side-icon, 26px) * var(--side-scale, 1));
+  height: calc(var(--side-icon, 26px) * var(--side-scale, 1));
+  border-radius: calc(var(--side-icon, 26px) * 0.3 * var(--side-scale, 1));
 }
 .side-bar .side-app-icon svg {
-  width: calc(var(--side-icon, 26px) * 0.58);
-  height: calc(var(--side-icon, 26px) * 0.58);
+  width: calc(var(--side-icon, 26px) * 0.58 * var(--side-scale, 1));
+  height: calc(var(--side-icon, 26px) * 0.58 * var(--side-scale, 1));
 }
 .side-bar .side-app-icon img {
-  width: var(--side-img, 18px);
-  height: var(--side-img, 18px);
+  width: calc(var(--side-img, 18px) * var(--side-scale, 1));
+  height: calc(var(--side-img, 18px) * var(--side-scale, 1));
 }
 .side-bar .side-bar-name {
   max-width: calc(var(--side-bar-w, 60px) - 12px);
@@ -9294,4 +9295,129 @@ button.download-name:hover {
 .side-bar-resize:focus-visible {
   background: color-mix(in oklab, var(--primary) 45%, transparent);
   outline: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   5.0.1: telas baixas e estreitas (notebook 1366×768 a 125 %: ~566 px úteis, e janelas
+   mais estreitas que a barra). Só medidas e contenção: nada some sem outro caminho.
+   --------------------------------------------------------------------------- */
+
+/* Barra lateral: o "+" fica no fim da barra; ícones e espaços encolhem em telas baixas. */
+.side-bar .side-bar-item.add {
+  margin-top: auto;
+}
+@media (max-height: 800px) {
+  .side-bar {
+    --side-scale: 0.86;
+    gap: 4px;
+    padding: 6px 0;
+  }
+  .side-bar .side-bar-item {
+    min-height: 30px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+}
+@media (max-height: 680px) {
+  .side-bar {
+    --side-scale: 0.74;
+    gap: 2px;
+    padding: 4px 0;
+  }
+  .side-bar .side-bar-item {
+    min-height: 26px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+  }
+  .side-bar .side-bar-name {
+    margin-top: 1px;
+    font-size: 8.5px;
+  }
+  .side-bar .side-bar-divider {
+    margin: 1px 0;
+  }
+}
+
+/* Fileira de abas: rola por dentro; a lista não empurra os botões de nova aba para fora. */
+.tabs-scroll {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: end;
+  align-self: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+.tabs > .new-tab {
+  flex: 0 0 auto;
+}
+
+/* Barra de ferramentas: a barra de endereço tem largura mínima; o que sobra sai em ordem de
+   importância (o escudo da barra de endereço faz o mesmo que o botão "bloqueados"). */
+.omnibox {
+  min-width: 200px;
+}
+.nav-actions,
+.toolbar-actions {
+  flex-shrink: 0;
+}
+@media (max-width: 1100px) {
+  .toolbar {
+    gap: 8px;
+  }
+  .privacy-pill {
+    padding: 0 8px;
+  }
+  .privacy-pill span {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .toolbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .privacy-pill {
+    display: none;
+  }
+  .toolbar-actions {
+    gap: 0;
+  }
+  .update-pill span {
+    display: none;
+  }
+  .omnibox-action.copy-link,
+  .omnibox-action.pdf-button {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .nav-actions button:nth-child(2),
+  .toolbar-actions .pinned-extension,
+  .toolbar-actions .colors-button,
+  .omnibox-action.page-theme-button {
+    display: none;
+  }
+}
+
+/* Painéis e balões com medida fixa: nunca mais largos que a janela, e com rolagem própria. */
+.site-panel {
+  left: min(150px, calc(100% - 320px));
+}
+.vertical-tabs .site-panel {
+  left: min(330px, calc(100% - 340px));
+}
+.group-editor {
+  width: min(260px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+.workspace-panel {
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
 }

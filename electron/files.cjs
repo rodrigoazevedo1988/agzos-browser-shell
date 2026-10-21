@@ -489,8 +489,65 @@ function filesOfArgv(argv, { cwd = process.cwd(), skip = 1, exists = fs.existsSy
   return files.slice(0, 20);
 }
 
+/**
+ * Links http(s) que o sistema passa como argumento (5.0.1: Windows e Linux entregam o link
+ * assim; no macOS é o evento open-url). Opções (--...) e outros esquemas ficam de fora.
+ */
+function urlsOfArgv(argv, { skip = 1 } = {}) {
+  const urls = [];
+  const args = (Array.isArray(argv) ? argv : []).slice(skip);
+  for (const arg of args) {
+    if (typeof arg !== "string" || !/^https?:\/\//i.test(arg.trim())) continue;
+    let url;
+    try {
+      url = new URL(arg.trim());
+    } catch {
+      continue;
+    }
+    if (!url.hostname || !["http:", "https:"].includes(url.protocol)) continue;
+    if (!urls.includes(url.href)) urls.push(url.href);
+  }
+  return urls.slice(0, 20);
+}
+
+/** Tipos que o Agzos Browser aceita no "Abrir com" do Linux (.desktop MimeType). */
+const LINUX_MIME_TYPES = [
+  "text/html",
+  "application/xhtml+xml",
+  "x-scheme-handler/http",
+  "x-scheme-handler/https",
+  "application/pdf",
+  "image/svg+xml",
+];
+
+/**
+ * Atalho do navegador no Linux (freedesktop): Exec com o caminho do executável e %U (recebe
+ * arquivos e links). `exec` e `icon` são caminhos absolutos do próprio app.
+ */
+function linuxBrowserDesktopEntry({ exec, icon }) {
+  const quoted = `"${String(exec).replace(/(["`$\\])/g, "\\$1")}"`.replace(/%/g, "%%");
+  return [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Version=1.0",
+    "Name=Agzos Browser",
+    "GenericName=Navegador web",
+    "Comment=Navegador da Agzos",
+    `Exec=${quoted} %U`,
+    `Icon=${String(icon).replace(/[\r\n]/g, " ")}`,
+    "Terminal=false",
+    "Categories=Network;WebBrowser;",
+    "StartupNotify=true",
+    `MimeType=${LINUX_MIME_TYPES.join(";")};`,
+    "",
+  ].join("\n");
+}
+
 module.exports = {
   filesOfArgv,
+  linuxBrowserDesktopEntry,
+  LINUX_MIME_TYPES,
+  urlsOfArgv,
   FILE_SCHEME,
   createSkill,
   fileKind,

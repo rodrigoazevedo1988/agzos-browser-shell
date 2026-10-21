@@ -20,6 +20,8 @@ export type AccountState = {
   name: string;
   email: string;
   plan: Plan;
+  /** Foto de perfil em data: (PNG 256×256 do servidor, guardada no main), ou null. */
+  avatar: string | null;
   /** Há chaveiro do sistema para guardar o login? */
   available?: boolean;
   profiles: GoogleProfile[];
@@ -38,6 +40,9 @@ export type AgzosService = {
 };
 
 export type Failure = { ok: false; error: string; code?: string };
+/** Troca de foto: canceled quando o usuário fecha o diálogo (sem mensagem). */
+export type AvatarChange = ({ ok: true } | { ok: false; canceled?: boolean; error?: string }) &
+  WithAccount;
 export type Result<T extends object = object> = ({ ok: true } & T) | Failure;
 type WithAccount = { account?: AccountState };
 
@@ -63,6 +68,9 @@ export type AccountBridge = {
   regenerateCodes(payload: { password: string }): Promise<Result<{ recoveryCodes: string[] }>>;
   deleteAccount(payload: { password: string }): Promise<Result & WithAccount>;
   services(): Promise<Result<{ plan: Plan; services: AgzosService[] }>>;
+  /** Abre o diálogo de arquivo no main, recodifica e envia a foto. */
+  changeAvatar(): Promise<AvatarChange>;
+  removeAvatar(): Promise<Result & WithAccount>;
   setPickerOnStart(showOnStart: boolean): Promise<AccountState>;
   windowProfile(): Promise<GoogleProfile | null>;
   startupPicker(): Promise<{ profiles: GoogleProfile[] } | null>;

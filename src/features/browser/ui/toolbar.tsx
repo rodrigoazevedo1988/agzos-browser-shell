@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpenText,
   Download,
+  FileVideo,
   KeyRound,
   Languages,
   Check,
@@ -76,6 +77,8 @@ export type ToolbarProps = {
   } | null;
   /** 4.7: ColorTools (conta-gotas na barra). */
   colors?: { open: boolean; onToggle: (anchor: DOMRect) => void } | null;
+  /** 5.0: baixar o vídeo da página com o yt-dlp; destaque nos sites de vídeo conhecidos. */
+  ytdlp?: { known: boolean; open: boolean; onToggle: (anchor: DOMRect) => void } | null;
   /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
   pwa?: { name: string; installed: boolean; onClick: () => void } | null;
   dark: boolean;
@@ -265,6 +268,25 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 aria-pressed={props.reader.active}
               >
                 <BookOpenText />
+              </button>
+            )}
+            {props.ytdlp && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "ytdlp-button", props.ytdlp.known && "known")}
+                onClick={(event) =>
+                  props.ytdlp?.onToggle(event.currentTarget.getBoundingClientRect())
+                }
+                title={
+                  props.ytdlp.known
+                    ? "Baixar vídeo com yt-dlp (site com vídeo)"
+                    : "Baixar vídeo com yt-dlp"
+                }
+                aria-label="Baixar vídeo com yt-dlp"
+                aria-pressed={props.ytdlp.open}
+                aria-expanded={props.ytdlp.open}
+              >
+                <FileVideo />
               </button>
             )}
             {props.translate && (

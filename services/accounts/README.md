@@ -13,21 +13,30 @@ Todas as chamadas (menos `GET /health`) precisam do header `X-Agzos-Client`. Req
 com `Origin` de navegador fora de `ALLOWED_ORIGINS` recebem 403. Corpo sempre JSON
 (`Content-Type: application/json`, até 16 KB). Erros: `{ "error": { "code", "message" } }`.
 
-| Método e rota                     | Autenticação | Corpo                                  | Resposta                                                                        |
-| --------------------------------- | ------------ | -------------------------------------- | ------------------------------------------------------------------------------- |
-| `GET /health`                     | —            | —                                      | `{ ok }`                                                                        |
-| `POST /signup`                    | —            | `{ name, email, password, device? }`   | 201 `{ token, expiresAt, user, recoveryCodes }` (os 8 códigos aparecem só aqui) |
-| `POST /login`                     | —            | `{ email, password, device? }`         | `{ token, expiresAt, user, recoveryCodesLeft }`                                 |
-| `POST /logout`                    | Bearer       | —                                      | `{ ok }`                                                                        |
-| `GET /me`                         | Bearer       | —                                      | `{ user, recoveryCodesLeft }`                                                   |
-| `POST /refresh`                   | Bearer       | —                                      | `{ token, expiresAt, user }` (o token antigo deixa de valer)                    |
-| `POST /password/change`           | Bearer       | `{ currentPassword, newPassword }`     | `{ ok }` (outras sessões caem)                                                  |
-| `POST /password/recover`          | —            | `{ email, recoveryCode, newPassword }` | `{ ok, recoveryCodesLeft }` (consome o código, derruba todas as sessões)        |
-| `POST /recovery-codes/regenerate` | Bearer       | `{ password }`                         | `{ recoveryCodes }` (os antigos deixam de valer)                                |
-| `DELETE /account`                 | Bearer       | `{ password }`                         | `{ ok }`                                                                        |
-| `GET /services`                   | Bearer       | —                                      | `{ plan, services: [{ id, name, description, plan, status, locked }] }`         |
+| Método e rota                     | Autenticação | Corpo                                      | Resposta                                                                        |
+| --------------------------------- | ------------ | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `GET /health`                     | —            | —                                          | `{ ok }`                                                                        |
+| `POST /signup`                    | —            | `{ name, email, password, device? }`       | 201 `{ token, expiresAt, user, recoveryCodes }` (os 8 códigos aparecem só aqui) |
+| `POST /login`                     | —            | `{ email, password, device? }`             | `{ token, expiresAt, user, recoveryCodesLeft }`                                 |
+| `POST /logout`                    | Bearer       | —                                          | `{ ok }`                                                                        |
+| `GET /me`                         | Bearer       | —                                          | `{ user, recoveryCodesLeft }`                                                   |
+| `POST /refresh`                   | Bearer       | —                                          | `{ token, expiresAt, user }` (o token antigo deixa de valer)                    |
+| `POST /password/change`           | Bearer       | `{ currentPassword, newPassword }`         | `{ ok }` (outras sessões caem)                                                  |
+| `POST /password/recover`          | —            | `{ email, recoveryCode, newPassword }`     | `{ ok, recoveryCodesLeft }` (consome o código, derruba todas as sessões)        |
+| `POST /recovery-codes/regenerate` | Bearer       | `{ password }`                             | `{ recoveryCodes }` (os antigos deixam de valer)                                |
+| `DELETE /account`                 | Bearer       | `{ password }`                             | `{ ok }`                                                                        |
+| `GET /services`                   | Bearer       | —                                          | `{ plan, services: [{ id, name, description, plan, status, locked }] }`         |
+| `GET /avatar`                     | Bearer       | —                                          | a imagem (`Content-Type` do arquivo) ou 404                                     |
+| `PUT /avatar`                     | Bearer       | bytes crus (PNG, JPEG ou WebP, até 512 KB) | `{ avatarVersion }`                                                             |
+| `DELETE /avatar`                  | Bearer       | —                                          | `{ ok, avatarVersion: null }`                                                   |
 
-`user` = `{ name, email, plan: "free" | "premium", createdAt }`.
+`user` = `{ name, email, plan: "free" | "premium", createdAt }`. `avatarVersion` (em `/me`,
+`/login` e `/signup`) é `null` sem foto; com foto, muda a cada troca e nunca volta a um
+número usado: o app compara com o que tem em cache e só baixa `GET /avatar` quando muda.
+
+Foto: o tipo é conferido pela assinatura do arquivo (não pelo nome), não pode passar de
+512 KB e tem 30 trocas (envio ou remoção) por hora por conta. Fica na tabela `avatars`
+(migração 2), fora da linha de `users`, para não carregar a imagem em toda autenticação.
 
 ## Segurança
 
@@ -69,7 +78,8 @@ vírgula; vazia por padrão).
    curl -s http://127.0.0.1:3920/browser-api/v1/health   # {"ok":true}
    ```
    Se o bun não estiver em `/root/.bun/bin/bun`, defina `BUN_PATH` antes do `pm2 start`.
-4. nginx: cole `deploy/nginx-browser-api.conf` nos dois `server { }` de
+4. nginx: cole `deploy/nginx-browser-api.conf` (inclui `client_max_body_size 600k`, sem o
+   qual o envio de foto volta 413) nos dois `server { }` de
    `agzosagency.com.br` (443 e 80, que recebe o Cloudflare Tunnel), antes do location do OTA, depois
    `nginx -t && systemctl reload nginx`.
 5. Teste de fora: `curl -s https://agzosagency.com.br/browser-api/v1/health`.

@@ -39,6 +39,7 @@ import type { DesktopBridge } from "../desktop";
 import { faviconSources } from "../favicon";
 import { HOVER_SOUND } from "@/features/sounds/sounds";
 
+import { sideBarRoom } from "./side-bar-room";
 import {
   SIDE_BAR_WIDTH,
   clampSideBarWidth,
@@ -159,30 +160,41 @@ export function SideBar({
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
+    // Mede o que o CSS põe de fato: a largura e a altura da tela mudam a altura dos itens.
     const measure = () => {
       const style = getComputedStyle(nav);
-      const gap = parseFloat(style.rowGap) || 0;
-      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
       const item = nav.querySelector<HTMLElement>(".side-bar-item.app");
       if (item?.offsetHeight) itemHeight.current = item.offsetHeight;
-      const fixed = [...nav.querySelectorAll<HTMLElement>("[data-side-fixed]")].reduce(
-        (sum, element) => sum + element.offsetHeight + gap,
-        0,
-      );
+      const fixed = [...nav.querySelectorAll<HTMLElement>("[data-side-fixed]")].map((element) => {
+        // O "+" vai para o fim com margem automática: a margem medida seria o espaço sobrando.
+        const box = element.hasAttribute("data-side-end") ? null : getComputedStyle(element);
+        return {
+          height: element.offsetHeight,
+          marginTop: parseFloat(box?.marginTop ?? "") || 0,
+          marginBottom: parseFloat(box?.marginBottom ?? "") || 0,
+        };
+      });
       setFit(
-        sideBarFit(apps.length, {
-          height: nav.clientHeight - padding,
-          fixed,
-          item: itemHeight.current,
-          gap,
-        }),
+        sideBarFit(
+          apps.length,
+          sideBarRoom(
+            {
+              clientHeight: nav.clientHeight,
+              paddingTop: parseFloat(style.paddingTop) || 0,
+              paddingBottom: parseFloat(style.paddingBottom) || 0,
+              gap: parseFloat(style.rowGap) || 0,
+            },
+            fixed,
+            itemHeight.current,
+          ),
+        ),
       );
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(nav);
     return () => observer.disconnect();
-  }, [apps.length]);
+  }, [apps.length, width]);
 
   const shown = fit === null ? apps : apps.slice(0, fit);
   const hidden = fit === null ? [] : apps.slice(fit);
@@ -306,6 +318,7 @@ export function SideBar({
         title="Escolher painéis"
         aria-label="Escolher painéis laterais"
         data-side-fixed
+        data-side-end
         {...HOVER_SOUND}
       >
         <Plus />

@@ -37,8 +37,9 @@ const {
   defaultTypeFolders,
   exportDownloads,
   parseDownloadsConfig,
+  routeDownload,
 } = require("./download-rules.cjs");
-const { nextZoom, zoomHostOf } = require("./zoom.cjs");
+const { createWheelZoomGate, nextZoom, zoomHostOf } = require("./zoom.cjs");
 const {
   createPanelLog,
   isPanelLoginPage,
@@ -101,6 +102,7 @@ const { applyGpuFlags, watchGpuCrashes, setGpuEnabled, gpuStatus } = require("./
 const { SESSION_ID_RE, orphanPartitionDirs, sessionIdsOf } = require("./session-tabs.cjs");
 const { createPortsService } = require("./ports-service.cjs");
 const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunnel.cjs");
+const ytdlp = require("./ytdlp.cjs");
 const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
 const { READER_WORLD, cleanArticle, readerProbeSource, readerSource } = require("./reader.cjs");
 const { createTranslateService, registerTranslateIpc } = require("./translate-service.cjs");
@@ -139,7 +141,9 @@ const {
   listDirectory,
   pathOfFileUrl,
   filesOfArgv,
+  linuxBrowserDesktopEntry,
   urlForPath,
+  urlsOfArgv,
   viewableUrl,
 } = require("./files.cjs");
 const {
@@ -173,7 +177,11 @@ const displayPicker = require("./display-picker.cjs");
 const videoWin = require("./video-window.cjs");
 const clipboardImage = require("./clipboard-image.cjs");
 const splash = require("./splash.cjs");
-const { createAgzosAccount, DEFAULT_BASE_URL: ACCOUNT_BASE_URL } = require("./agzos-account.cjs");
+const {
+  createAgzosAccount,
+  DEFAULT_BASE_URL: ACCOUNT_BASE_URL,
+  AVATAR_INPUT_MAX_BYTES,
+} = require("./agzos-account.cjs");
 const googleProfiles = require("./google-profiles.cjs");
 
 const DUCK_AI_URL = "https://duck.ai/chat";
@@ -241,6 +249,14 @@ app.on("open-file", (event, file) => {
   event.preventDefault();
   if (app.isReady()) openSystemFiles([file]);
   else pendingSystemFiles.push(file);
+});
+// 5.0.1: link http(s) entregue pelo macOS (Mail, Mensagens, "Abrir com" de um link); mesmo
+// esquema do open-file: guardado até o app ficar pronto.
+const pendingSystemUrls = [];
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (app.isReady()) openSystemLinks([url]);
+  else pendingSystemUrls.push(url);
 });
 
 // O mesmo vale para o atalho de um PWA instalado: o lock é adquirido aqui, no
@@ -945,6 +961,14 @@ async function copyPixelColor(contents, ctx, x, y) {
   }
 }
 
+/** 5.0: o que baixar no clique direito: o vídeo (endereço direto ou a própria página) ou o link. */
+function ytdlpTargetOf(contents, params) {
+  if (params.mediaType === "video") {
+    return /^https?:\/\//i.test(params.srcURL ?? "") ? params.srcURL : contents.getURL();
+  }
+  return params.linkURL || "";
+}
+
 function buildPageContextMenu(contents, params) {
   const template = [];
   const canBack = contents.navigationHistory.canGoBack();
@@ -1013,6 +1037,24 @@ function buildPageContextMenu(contents, params) {
         label: "Picture-in-picture",
         accelerator: "CmdOrCtrl+Shift+P",
         click: () => void togglePictureInPicture(contents),
+      },
+    );
+  }
+
+  // 5.0: baixar o vídeo (ou o link) com o yt-dlp; a casca abre as opções de qualidade.
+  const ytdlpTab = tabOfContents.get(contents.id);
+  const ytdlpTarget = ytdlpTab && featureFlags().ytdlp ? ytdlpTargetOf(contents, params) : "";
+  if (ytdlpTab && isWebUrl(ytdlpTarget)) {
+    template.push(
+      { type: "separator" },
+      {
+        label: "Baixar vídeo com yt-dlp",
+        click: () =>
+          send(ytdlpTab.ctx, "agzos:ytdlp-open", {
+            tabId: ytdlpTab.id,
+            url: ytdlpTarget,
+            private: contents.session === privateSession(),
+          }),
       },
     );
   }
@@ -2504,9 +2546,11 @@ function wireView(view) {
       total: result.matches ?? 0,
     });
   });
-  contents.on("zoom-changed", (_event, direction) =>
-    changeZoom(contents, direction === "in" ? 1 : -1),
-  );
+  // Ctrl+roda (Chromium) e pinça (preload → gesto) caem no mesmo changeZoom: um passo cada.
+  const wheelZoom = createWheelZoomGate();
+  contents.on("zoom-changed", (_event, direction) => {
+    if (wheelZoom(direction)) changeZoom(contents, direction === "in" ? 1 : -1);
+  });
   // Falha na carga: o Chromium não dispara did-navigate (a página de erro dele fica em
   // branco); a tela de erro da casca fica até uma navegação dar certo.
   contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
@@ -2655,8 +2699,8 @@ function createWindow({
     width: 1440,
     height: 960,
     ...(bounds ?? {}),
-    minWidth: 980,
-    minHeight: 680,
+    minWidth: 720,
+    minHeight: 480,
     backgroundColor: "#0E0E0E",
     // Windows e Linux (no Mac vale o .icns do bundle).
     ...(process.platform === "darwin" ? {} : { icon: path.join(__dirname, "icons", "icon.png") }),
@@ -3029,6 +3073,30 @@ const tunnels = createTunnels({
     const ctx = [...contexts.values()].find((item) => item.key === owner);
     if (ctx) send(ctx, "agzos:tunnel", { port, state, url: url ?? null });
   },
+});
+
+// 5.0: yt-dlp (downloads de vídeo). O gerenciador de downloads nasce em startServices; aqui
+// só se chama quando um download começa.
+const ytdlpService = ytdlp.createYtdlpService({
+  spawn: require("node:child_process").spawn,
+  execFile: require("node:child_process").execFile,
+  userDataDir: () => app.getPath("userData"),
+  getMeta: (key) => database?.getMeta(key) ?? null,
+  setMeta: (key, value) => database?.setMeta(key, value),
+  downloads: { startExternal: (fields) => downloads.startExternal(fields) },
+  routeFor: ({ url, filename, mime }) => {
+    const route = routeDownload(downloadsConfig(), { filename, mime, url }, downloadsDir());
+    return { dir: route.dir, tags: route.tags };
+  },
+  fetchImpl: async (url, init) => {
+    try {
+      return await net.fetch(url, init);
+    } catch {
+      return fetch(url, init);
+    }
+  },
+  emit: (channel, payload) => broadcast(channel, payload),
+  enabled: () => featureFlags().ytdlp,
 });
 
 // 4.5: requisições capturadas para o API Scratchpad, avisadas à janela da guia.
@@ -4160,10 +4228,11 @@ function sidePanelView(ctx, app, url) {
   wireShortcuts(contents, {
     zoom: (direction) => setPanelZoom(ownerCtx(contents), app, direction),
   });
-  // Ctrl+roda do mouse no painel.
-  contents.on("zoom-changed", (_event, direction) =>
-    setPanelZoom(ownerCtx(contents), app, direction === "in" ? 1 : -1),
-  );
+  // Ctrl+roda do mouse no painel (um passo por roda, como nas guias).
+  const wheelZoom = createWheelZoomGate();
+  contents.on("zoom-changed", (_event, direction) => {
+    if (wheelZoom(direction)) setPanelZoom(ownerCtx(contents), app, direction === "in" ? 1 : -1);
+  });
   contents.on("render-process-gone", (_event, details) => {
     if (details.reason !== "clean-exit" && !contents.isDestroyed()) contents.reload();
   });
@@ -4994,6 +5063,23 @@ function registerIpc() {
     }
     database?.setMeta("cloudflaredPath", file);
     return { ok: true, binary: file };
+  });
+
+  // 5.0: yt-dlp: estado, instalação (SHA-256 do release), binário escolhido e início.
+  ytdlp.registerYtdlpIpc(ipcMain, ytdlpService, {
+    ctxOf: ctxOfEvent,
+    pick: async (event) => {
+      const ctx = ctxOfEvent(event);
+      if (!ctx || ctx.window.isDestroyed()) return null;
+      const result = await dialog.showOpenDialog(ctx.window, {
+        title: "Escolher o yt-dlp",
+        properties: ["openFile"],
+        ...(process.platform === "win32"
+          ? { filters: [{ name: "yt-dlp", extensions: ["exe"] }] }
+          : {}),
+      });
+      return result.canceled ? null : (result.filePaths[0] ?? null);
+    },
   });
 
   // 4.5: mira de elemento (Ctrl+Shift+C) num mundo isolado; liga ou desliga.
@@ -7047,6 +7133,36 @@ function openSystemFiles(files) {
   else deliver();
 }
 
+/**
+ * Links http(s) abertos pelo sistema (5.0.1: "Abrir com" no Windows e no Linux, open-url no
+ * macOS): cada um numa guia nova da janela em foco, como os arquivos.
+ */
+function openSystemLinks(urls) {
+  const valid = urls
+    .filter((url) => typeof url === "string" && /^https?:\/\//i.test(url))
+    .slice(0, 20);
+  if (!valid.length) return;
+  if (pwaHost) {
+    for (const url of valid) openInBrowserFromHost(url);
+    return;
+  }
+  const ctx =
+    lastFocused && !lastFocused.window.isDestroyed()
+      ? lastFocused
+      : ([...contexts.values()][0] ??
+        (openSavedWindows() ? [...contexts.values()][0] : createWindow()));
+  if (!ctx) return;
+  const deliver = () => {
+    for (const url of valid) send(ctx, "agzos:open-request", { url });
+    if (ctx.window.isMinimized()) ctx.window.restore();
+    ctx.window.show();
+    ctx.window.focus();
+  };
+  const contents = ctx.window.webContents;
+  if (contents.isLoading()) contents.once("did-finish-load", () => setTimeout(deliver, 800));
+  else deliver();
+}
+
 /** Home das integrações com o sistema (os e2e usam uma pasta temporária). */
 function integrationHome() {
   return (!app.isPackaged && process.env.AGZOS_TEST_HOME) || os.homedir();
@@ -8187,6 +8303,13 @@ function openPwaWindowHere(id, url = null) {
     contents.setZoomLevel(pwaStore?.get(id)?.zoom ?? 0);
     pipActive = false;
   });
+  // Ctrl+roda do mouse: o mesmo passo de Ctrl +/− (0,5 nível). Sem preload, sem pinça aqui.
+  const wheelZoom = createWheelZoomGate();
+  contents.on("zoom-changed", (_event, direction) => {
+    if (!wheelZoom(direction)) return;
+    if (direction === "in") setZoom(Math.min(8, contents.getZoomLevel() + 0.5));
+    else setZoom(Math.max(-8, contents.getZoomLevel() - 0.5));
+  });
   const onKey = (event, input) => {
     if (input.type !== "keyDown") return;
     const mod = process.platform === "darwin" ? input.meta : input.control;
@@ -8318,6 +8441,12 @@ function syncWindowsInstall() {
       if (error) console.error("Agzos: versão do instalador não atualizada.", error.message);
     });
   }
+  // 5.0.1: "Abrir com" e Programas padrão apontam para este executável (só caminho; HKCU).
+  for (const regArgs of winInstall.handlerRegArgs(process.execPath) ?? []) {
+    require("node:child_process").execFile("reg.exe", regArgs, { windowsHide: true }, (error) => {
+      if (error) console.error("Agzos: associação de arquivos não atualizada.", error.message);
+    });
+  }
   const startMenu = path.join(
     app.getPath("appData"),
     "Microsoft",
@@ -8336,6 +8465,29 @@ function syncWindowsInstall() {
     } catch {
       // Atalho movido ou sem permissão: segue sem ele.
     }
+  }
+}
+
+/**
+ * Linux instalado (5.0.1): o navegador entra no "Abrir com" do gerenciador de arquivos
+ * (páginas, PDF, SVG e links http/https). Grava ~/.local/share/applications/agzos-browser.desktop
+ * só quando o conteúdo muda (também acerta o caminho depois de mover a pasta). Só no app
+ * empacotado: sem o desktop file do navegador, o tar não aparecia como opção.
+ */
+function syncLinuxDesktopEntry() {
+  if (process.platform !== "linux" || !app.isPackaged) return;
+  const dataHome = process.env.XDG_DATA_HOME || path.join(integrationHome(), ".local", "share");
+  const file = path.join(dataHome, "applications", "agzos-browser.desktop");
+  const text = linuxBrowserDesktopEntry({
+    exec: process.execPath,
+    icon: path.join(__dirname, "icons", "icon.png"),
+  });
+  try {
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf8") === text) return;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  } catch (error) {
+    console.error("Agzos: atalho do Linux não gravado.", error?.message);
   }
 }
 
@@ -9082,6 +9234,7 @@ function macMenuTemplate() {
         command("Terminal", "terminal.toggle", "Alt+Cmd+T"),
         command("Modo leitura", "page.reader", "Alt+Cmd+R"),
         command("Traduzir página", "page.translate"),
+        command("Baixar vídeo com yt-dlp", "ytdlp.download"),
         command("Notas desta página", "notes.toggle", "Shift+Cmd+M"),
         command("Mira de elemento", "page.inspect", "Shift+Cmd+C"),
         command("Ferramentas do desenvolvedor", "devtools.toggle", "Alt+Cmd+I"),
@@ -9165,6 +9318,7 @@ let pickerOffered = false;
 let accountWasLoggedIn = false;
 const profileDetectTimers = new Map();
 const profileDetectedAt = new Map();
+const profileCookieWatch = new Set();
 
 /** Página de login do Google falsa dos testes (só fora do pacote, só em 127.0.0.1). */
 function testGoogleBase() {
@@ -9257,24 +9411,42 @@ function signInUrl() {
   return base ? `${base}/signin` : GOOGLE_SIGNIN_URL;
 }
 
-/** Depois de navegar no Google, tenta descobrir o e-mail da conta do perfil. */
+/** Depois de navegar no Google (ou mudar um cookie dele), tenta descobrir a conta do perfil. */
 function watchProfileTab(ctx, contents) {
   const id = ctx?.profile;
   if (!id) return;
   const base = testGoogleBase();
   contents.on("did-navigate", (_event, url) => {
     if (base ? !url.startsWith(`${base}/`) : !googleProfiles.isGoogleUrl(url)) return;
-    clearTimeout(profileDetectTimers.get(id));
-    const timer = setTimeout(
-      () => {
-        profileDetectTimers.delete(id);
-        void detectGoogleAccount(id);
-      },
-      base ? 300 : 2500,
-    );
-    timer.unref?.();
-    profileDetectTimers.set(id, timer);
+    scheduleProfileDetect(id, base ? 300 : 2500);
   });
+  watchProfileCookies(id, contents.session);
+}
+
+/**
+ * Login no Google muda os cookies da partição do perfil, também quando o fim do fluxo
+ * não é uma navegação que o did-navigate pegue (SPA, redirect por JS). Cada cookie do
+ * Google reinicia a espera de 1,5 s; só então lê a conta (força a leitura, sem o cache
+ * de 60 s, para trocar de conta também). Uma vez por perfil e por execução.
+ */
+function watchProfileCookies(id, ses) {
+  if (profileCookieWatch.has(id) || !ses?.cookies) return;
+  profileCookieWatch.add(id);
+  ses.cookies.on("changed", (_event, cookie, _cause, removed) => {
+    if (removed || !googleProfiles.isGoogleCookieDomain(cookie?.domain)) return;
+    scheduleProfileDetect(id, 1500, { force: true });
+  });
+}
+
+/** Debounce da leitura da conta do perfil: cada pedido novo reinicia a espera. */
+function scheduleProfileDetect(id, delay, options = {}) {
+  clearTimeout(profileDetectTimers.get(id));
+  const timer = setTimeout(() => {
+    profileDetectTimers.delete(id);
+    void detectGoogleAccount(id, options);
+  }, delay);
+  timer.unref?.();
+  profileDetectTimers.set(id, timer);
 }
 
 /**
@@ -9303,11 +9475,15 @@ async function detectGoogleAccount(id, { force = false } = {}) {
     return null;
   }
   if (!found) return null;
+  // Igual ao que já está gravado: nada a gravar nem a avisar (a leitura é repetida).
+  const changed = found.email !== profile.email || found.name !== profile.name;
+  const needAvatar = Boolean(found.photo) && (changed || !profile.avatar);
+  if (!changed && !needAvatar) return profile;
   const patch = { email: found.email, name: found.name };
   if (!profile.label || profile.label === NEW_PROFILE_LABEL || profile.label === profile.email) {
     patch.label = found.name || found.email;
   }
-  if (found.photo) {
+  if (needAvatar) {
     const avatar = await profileAvatar(ses, found.photo);
     if (avatar) patch.avatar = avatar;
   }
@@ -9412,6 +9588,30 @@ function registerAccountIpc() {
     call(async () => withSnapshot(await accountService().deleteAccount(payload))),
   );
   ipcMain.handle("account:services", () => call(() => accountService().services()));
+  // Foto de perfil: o arquivo é escolhido aqui, no diálogo; a casca não manda caminho nem bytes.
+  ipcMain.handle("account:avatar-change", (event) =>
+    call(async () => {
+      if (!accountService().isLoggedIn())
+        return withSnapshot({ ok: false, error: "Entre na sua conta Agzos primeiro." });
+      const ctx = ctxOfEvent(event);
+      const picked = await dialog.showOpenDialog(ctx?.window ?? undefined, {
+        title: "Escolher a foto de perfil",
+        properties: ["openFile"],
+        filters: [{ name: "Imagens", extensions: ["png", "jpg", "jpeg"] }],
+      });
+      const file = picked.canceled ? null : picked.filePaths[0];
+      if (!file) return withSnapshot({ ok: false, canceled: true });
+      const info = fs.statSync(file);
+      if (!info.isFile() || info.size > AVATAR_INPUT_MAX_BYTES) {
+        return withSnapshot({ ok: false, error: "Escolha uma imagem de até 10 MB." });
+      }
+      const image = nativeImage.createFromBuffer(fs.readFileSync(file));
+      return withSnapshot(await accountService().changeAvatar(image));
+    }),
+  );
+  ipcMain.handle("account:avatar-remove", () =>
+    call(async () => withSnapshot(await accountService().removeAvatar())),
+  );
   ipcMain.handle("account:picker-pref", (_event, { showOnStart } = {}) => {
     database?.setMeta("profilePicker", { showOnStart: showOnStart !== false });
     broadcastAccount();
@@ -9572,6 +9772,9 @@ app.whenReady().then(() => {
   if (!launchPwa) {
     openSystemFiles([...pendingSystemFiles, ...filesOfArgv(process.argv)]);
     pendingSystemFiles.length = 0;
+    // 5.0.1: links http(s) do "Abrir com" (Windows e Linux) e os guardados do open-url (Mac).
+    openSystemLinks([...pendingSystemUrls, ...urlsOfArgv(process.argv)]);
+    pendingSystemUrls.length = 0;
   }
   // Navegador aberto por um link do app de um PWA (4.8.3): vai para uma guia quando a
   // casca carregar.
@@ -9584,6 +9787,8 @@ app.whenReady().then(() => {
   }
   // Windows instalado: versão em "Programas e Recursos" depois do OTA.
   setTimeout(() => syncWindowsInstall(), 5000).unref();
+  // Linux instalado: "Abrir com" do gerenciador de arquivos (5.0.1).
+  setTimeout(() => syncLinuxDesktopEntry(), 5000).unref();
   // Apps de PWA no Mac montados por outra versão: refeitos depois do início.
   if (agzosAppBundle) setTimeout(() => void refreshMacPwaApps(), 4000).unref();
   setInterval(
@@ -9605,8 +9810,11 @@ app.whenReady().then(() => {
       if (openPwaWindow(id)) return;
       console.error(`Agzos: atalho de PWA ${id} sem app salvo; a janela do app não abriu.`);
     }
+    // "Abrir com" de um link ou arquivo (5.0.1): cada um numa guia da janela em foco.
+    const urls = urlsOfArgv(argv);
     const files = filesOfArgv(argv, { cwd: workingDirectory });
-    if (files.length) {
+    if (urls.length || files.length) {
+      openSystemLinks(urls);
       openSystemFiles(files);
       return;
     }
@@ -9662,6 +9870,8 @@ app.on("before-quit", (event) => {
 app.on("will-quit", () => {
   // 4.5: nenhum túnel sobrevive ao app.
   tunnels.stopAll();
+  // 5.0: nenhum yt-dlp sobrevive ao app (cancela os downloads em andamento).
+  ytdlpService.stopAll();
   // 4.7: temporários do PDF Tools não sobrevivem ao app.
   pdfTools?.cleanupStale();
   // Saída normal: janelas gravadas e o marcador de execução sai.

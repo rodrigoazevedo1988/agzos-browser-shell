@@ -1,0 +1,55 @@
+/* Foto da Conta Agzos: avatar com overlay de troca/remoção (agzos://conta e barra). */
+.acct-photo {
+  position: relative;
+  flex: none;
+  border-radius: 50%;
+}
+.acct-photo > .acct-avatar {
+  width: 100%;
+  height: 100%;
+}
+.acct-photo-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 50%;
+  background: oklch(0 0 0 / 55%);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.acct-photo:hover .acct-photo-overlay,
+.acct-photo:focus-within .acct-photo-overlay,
+.acct-photo.is-busy .acct-photo-overlay {
+  opacity: 1;
+}
+.acct-photo-overlay button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(1 0 0 / 92%);
+  color: oklch(0.2 0 0);
+  cursor: pointer;
+}
+.acct-photo-overlay button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.acct-photo-overlay button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+.acct-photo-overlay svg {
+  width: 14px;
+  height: 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .acct-photo-overlay {
+    transition: none;
+  }
+}

@@ -41,6 +41,22 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX recovery_codes_user ON recovery_codes(user_id);
     `,
   },
+  {
+    // Foto de perfil em tabela própria: a linha de users sai em toda autenticação, e
+    // um BLOB ali carregaria a imagem a cada requisição. version só cresce (é o relógio
+    // em ms, ou a versão anterior + 1), então uma foto trocada ou apagada nunca reaparece
+    // com o número de uma antiga num outro aparelho.
+    version: 2,
+    sql: `
+      CREATE TABLE avatars (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        mime TEXT NOT NULL,
+        data BLOB NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 export function openDatabase(file: string): Database {

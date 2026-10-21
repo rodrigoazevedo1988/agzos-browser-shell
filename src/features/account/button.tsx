@@ -1,13 +1,12 @@
 import { UserRound } from "lucide-react";
 
 import "./account.css";
-import { ProfileAvatar } from "./avatar";
+import { PersonAvatar, ProfileAvatar } from "./avatar";
 import type { AccountState, GoogleProfile } from "./bridge";
-import { initialsOf } from "./model";
 
 /**
- * Botão da conta na barra: sem login, um ícone; logado, as iniciais; numa janela de
- * perfil Google, a foto/cor do perfil (para saber em qual conta está). Abre agzos://conta.
+ * Botão da conta na barra: sem login, um ícone; logado, a foto (ou as iniciais); numa janela
+ * de perfil Google, a foto/cor do perfil (para saber em qual conta está). Abre agzos://conta.
  */
 export function AccountButton({
   state,
@@ -36,9 +35,7 @@ export function AccountButton({
       {windowProfile ? (
         <ProfileAvatar profile={windowProfile} size={22} />
       ) : state.loggedIn ? (
-        <span className="acct-avatar acct-avatar-self" style={{ width: 22, height: 22 }}>
-          {initialsOf(state.name || state.email)}
-        </span>
+        <PersonAvatar photo={state.avatar} label={state.name || state.email} size={22} />
       ) : (
         <UserRound aria-hidden="true" />
       )}

@@ -13,6 +13,7 @@ import { AppMenu } from "@/features/settings/menu";
 import { SitePanel } from "@/features/site/panel";
 import { TranslationBubble } from "@/features/translate/bubble";
 import { TranslatePagePanel } from "@/features/translate/page-panel";
+import { YtdlpMenu } from "@/features/ytdlp/menu";
 
 import { CommandPalette } from "../ui/command-palette";
 import { FolderMenu } from "../ui/folder-dropdown";
@@ -50,7 +51,9 @@ export type PanelSpec =
   | { kind: "colors"; key?: string; props: ComponentProps<typeof ColorToolsPanel> }
   /** Tradução: popup do ícone da barra de URL e bolha do trecho selecionado. */
   | { kind: "translate"; key?: string; props: ComponentProps<typeof TranslatePagePanel> }
-  | { kind: "translation"; key?: string; props: ComponentProps<typeof TranslationBubble> };
+  | { kind: "translation"; key?: string; props: ComponentProps<typeof TranslationBubble> }
+  /** 5.0: yt-dlp (qualidade do vídeo ou instalação do binário). */
+  | { kind: "ytdlp"; key?: string; props: ComponentProps<typeof YtdlpMenu> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -95,5 +98,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <TranslatePagePanel key={key} {...spec.props} />;
     case "translation":
       return <TranslationBubble key={key} {...spec.props} />;
+    case "ytdlp":
+      return <YtdlpMenu key={key} {...spec.props} />;
   }
 }

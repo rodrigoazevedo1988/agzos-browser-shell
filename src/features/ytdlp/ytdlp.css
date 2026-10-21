@@ -1,0 +1,47 @@
+/* 5.0: menu do yt-dlp (popup da barra). Usa o vidro dos painéis (.key-panel). */
+.key-panel.ytdlp-panel {
+  position: fixed;
+  z-index: 40;
+  width: min(300px, calc(100vw - 16px));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.ytdlp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ytdlp-head strong,
+.ytdlp-head small {
+  display: block;
+}
+.ytdlp-head small {
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.ytdlp-options {
+  display: grid;
+  gap: 4px;
+}
+.ytdlp-options button {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.ytdlp-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+.ytdlp-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--destructive, #d43420);
+}
+.ytdlp-button.known {
+  color: var(--primary);
+}

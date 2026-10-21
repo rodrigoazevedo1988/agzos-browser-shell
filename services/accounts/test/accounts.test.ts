@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { API_PREFIX, createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
+import { AVATAR_MAX_BYTES, avatarTypeOf, avatarUploadProblem } from "../src/avatar.ts";
 import {
   newRecoveryCode,
   normalizeEmail,
@@ -40,7 +41,31 @@ function setup(config = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return { status: response.status, body: (await response.json()) as Record<string, any> };
   };
-  return { db, call, advance: (ms: number) => (clock += ms) };
+  // Corpo binário (foto de perfil): bytes crus com o Content-Type do tipo da imagem.
+  const raw = async (
+    method: string,
+    route: string,
+    bytes: Uint8Array | null,
+    {
+      token,
+      ip = "10.0.0.1",
+      type = "image/png",
+      headers = {},
+    }: { token?: string; ip?: string; type?: string | null; headers?: Record<string, string> } = {},
+  ) => {
+    const init: RequestInit = {
+      method,
+      headers: {
+        "X-Agzos-Client": "agzos-browser/test",
+        ...(type ? { "Content-Type": type } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      ...(bytes ? { body: bytes } : {}),
+    };
+    return app.handle(new Request(`http://127.0.0.1${API_PREFIX}${route}`, init), ip);
+  };
+  return { db, call, raw, advance: (ms: number) => (clock += ms) };
 }
 
 const PASSWORD = "senha-forte-123";
@@ -320,5 +345,143 @@ describe("contas", () => {
     expect(text.status).toBe(415);
     expect((await call("GET", "/health")).status).toBe(200);
     expect((await call("GET", "/nada")).status).toBe(404);
+  });
+});
+
+// Foto de perfil: bytes mínimos com a assinatura certa (o servidor só confere o início).
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46]);
+const WEBP = new Uint8Array([
+  ...new TextEncoder().encode("RIFF"),
+  4,
+  0,
+  0,
+  0,
+  ...new TextEncoder().encode("WEBPVP8 "),
+]);
+
+describe("foto de perfil: regras", () => {
+  it("reconhece o tipo pela assinatura, não pelo nome", () => {
+    expect(avatarTypeOf(PNG)).toBe("image/png");
+    expect(avatarTypeOf(JPEG)).toBe("image/jpeg");
+    expect(avatarTypeOf(WEBP)).toBe("image/webp");
+    expect(avatarTypeOf(new TextEncoder().encode("GIF89a..."))).toBeNull();
+    expect(avatarTypeOf(new Uint8Array())).toBeNull();
+  });
+  it("aceita só PNG, JPEG e WebP, com o tipo declarado igual ao conteúdo", () => {
+    expect(avatarUploadProblem("image/png", PNG)).toBeNull();
+    expect(avatarUploadProblem("image/jpeg; charset=x", JPEG)).toBeNull();
+    expect(avatarUploadProblem("image/gif", PNG)?.code).toBe("bad_type");
+    expect(avatarUploadProblem(null, PNG)?.code).toBe("bad_type");
+    expect(avatarUploadProblem("image/png", JPEG)?.code).toBe("bad_image");
+    expect(avatarUploadProblem("image/png", new Uint8Array())?.code).toBe("bad_request");
+    const huge = new Uint8Array(AVATAR_MAX_BYTES + 1);
+    huge.set(PNG);
+    expect(avatarUploadProblem("image/png", huge)?.code).toBe("too_large");
+  });
+});
+
+describe("foto de perfil: API", () => {
+  it("envia, lê de volta e aparece em /me e no login", async () => {
+    const { call, raw } = setup();
+    const created = await signup(call);
+    const token = created.body["token"] as string;
+    expect(created.body["avatarVersion"]).toBeNull();
+    const sent = await raw("PUT", "/avatar", PNG, { token });
+    expect(sent.status).toBe(200);
+    const version = ((await sent.json()) as { avatarVersion: number }).avatarVersion;
+    expect(version).toEqual(expect.any(Number));
+    const photo = await raw("GET", "/avatar", null, { token });
+    expect(photo.status).toBe(200);
+    expect(photo.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await photo.arrayBuffer())).toEqual(PNG);
+    const me = await call("GET", "/me", undefined, { token });
+    expect(me.body["avatarVersion"]).toBe(version);
+    expect(me.body["user"]).not.toHaveProperty("avatar");
+    const login = await call("POST", "/login", { email: "ana@example.com", password: PASSWORD });
+    expect(login.body["avatarVersion"]).toBe(version);
+  });
+
+  it("troca a foto com versão nova e apaga com versão nula", async () => {
+    const { call, raw, advance } = setup();
+    const token = (await signup(call)).body["token"] as string;
+    const first = (await (await raw("PUT", "/avatar", PNG, { token })).json()) as {
+      avatarVersion: number;
+    };
+    advance(1000);
+    const second = (await (
+      await raw("PUT", "/avatar", JPEG, { token, type: "image/jpeg" })
+    ).json()) as {
+      avatarVersion: number;
+    };
+    expect(second.avatarVersion).toBeGreaterThan(first.avatarVersion);
+    const swapped = await raw("GET", "/avatar", null, { token });
+    expect(swapped.headers.get("content-type")).toBe("image/jpeg");
+    const removed = await raw("DELETE", "/avatar", null, { token, type: null });
+    expect(removed.status).toBe(200);
+    expect(((await removed.json()) as { avatarVersion: unknown }).avatarVersion).toBeNull();
+    expect((await raw("GET", "/avatar", null, { token })).status).toBe(404);
+    advance(1000);
+    // Foto nova depois de apagar: a versão não volta a um número usado antes.
+    const again = (await (await raw("PUT", "/avatar", PNG, { token })).json()) as {
+      avatarVersion: number;
+    };
+    expect(again.avatarVersion).toBeGreaterThan(second.avatarVersion);
+  });
+
+  it("recusa conteúdo que não é a imagem declarada, tipo errado e corpo grande", async () => {
+    const { call, raw } = setup();
+    const token = (await signup(call)).body["token"] as string;
+    const fake = await raw("PUT", "/avatar", JPEG, { token });
+    expect(fake.status).toBe(400);
+    expect(((await fake.json()) as { error: { code: string } }).error.code).toBe("bad_image");
+    const gif = await raw("PUT", "/avatar", PNG, { token, type: "image/gif" });
+    expect(gif.status).toBe(400);
+    const big = new Uint8Array(AVATAR_MAX_BYTES + 1);
+    big.set(PNG);
+    const tooBig = await raw("PUT", "/avatar", big, { token });
+    expect(tooBig.status).toBe(413);
+    const noType = await raw("PUT", "/avatar", PNG, { token, type: null });
+    expect(noType.status).toBe(400);
+    expect((await raw("GET", "/avatar", null, { token })).status).toBe(404);
+  });
+
+  it("exige sessão e o header do cliente", async () => {
+    const { call, raw } = setup();
+    const token = (await signup(call)).body["token"] as string;
+    expect((await raw("PUT", "/avatar", PNG)).status).toBe(401);
+    expect((await raw("GET", "/avatar", null)).status).toBe(401);
+    expect((await raw("DELETE", "/avatar", null)).status).toBe(401);
+    expect(
+      (await raw("PUT", "/avatar", PNG, { token, headers: { "X-Agzos-Client": "" } })).status,
+    ).toBe(403);
+    expect(
+      (await raw("PUT", "/avatar", PNG, { token, headers: { Origin: "https://evil.example" } }))
+        .status,
+    ).toBe(403);
+  });
+
+  it("limita trocas por conta (30 por hora)", async () => {
+    const { call, raw } = setup();
+    const token = (await signup(call)).body["token"] as string;
+    for (let i = 0; i < 30; i += 1) {
+      expect((await raw("PUT", "/avatar", PNG, { token })).status).toBe(200);
+    }
+    expect((await raw("PUT", "/avatar", PNG, { token })).status).toBe(429);
+    expect((await raw("DELETE", "/avatar", null, { token, type: null })).status).toBe(429);
+    expect((await raw("GET", "/avatar", null, { token })).status).toBe(200);
+  });
+
+  it("apaga a foto junto com a conta e registra a migração 2", async () => {
+    const { db, call, raw } = setup();
+    const token = (await signup(call)).body["token"] as string;
+    await raw("PUT", "/avatar", PNG, { token });
+    const count = () => (db.query("SELECT COUNT(*) AS n FROM avatars").get() as { n: number }).n;
+    expect(count()).toBe(1);
+    const gone = await call("DELETE", "/account", { password: PASSWORD }, { token });
+    expect(gone.status).toBe(200);
+    expect(count()).toBe(0);
+    const versions = db.query("SELECT version FROM schema_migrations ORDER BY version").all();
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }]);
   });
 });

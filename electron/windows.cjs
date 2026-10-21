@@ -63,12 +63,23 @@ function parseRecords(value) {
 function fitBounds(bounds, workAreas) {
   const rect = validBounds(bounds);
   if (!rect || !Array.isArray(workAreas)) return null;
-  const visible = workAreas.some((area) => {
+  let best = null;
+  let bestArea = 0;
+  for (const area of workAreas) {
     const width = Math.min(rect.x + rect.width, area.x + area.width) - Math.max(rect.x, area.x);
     const height = Math.min(rect.y + rect.height, area.y + area.height) - Math.max(rect.y, area.y);
-    return width >= MIN_VISIBLE.width && height >= MIN_VISIBLE.height;
-  });
-  return visible ? rect : null;
+    if (width >= MIN_VISIBLE.width && height >= MIN_VISIBLE.height && width * height > bestArea) {
+      best = area;
+      bestArea = width * height;
+    }
+  }
+  if (!best) return null;
+  // Janela salva num monitor maior volta cabendo na área útil (notebook 1360×768 a 125%).
+  const width = Math.min(rect.width, best.width);
+  const height = Math.min(rect.height, best.height);
+  const x = Math.min(Math.max(rect.x, best.x), best.x + best.width - width);
+  const y = Math.min(Math.max(rect.y, best.y), best.y + best.height - height);
+  return { ...rect, x, y, width, height };
 }
 
 /** Janela nova ao lado da atual (como no Chrome), sem sair da tela. */

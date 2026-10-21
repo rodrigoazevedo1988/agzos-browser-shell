@@ -7,6 +7,20 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.1",
+    date: "2026-10-21",
+    items: [
+      "Novo: baixe vídeos do YouTube, X, Instagram, Facebook, TikTok e de todos os sites que o yt-dlp aceita, com um clique na barra de ferramentas ou no clique direito sobre o vídeo.",
+      "Novo: foto no perfil da Conta Agzos. Ela fica salva na conta e aparece em todos os seus dispositivos.",
+      "Novo: o seletor de contas do início ficou maior, no estilo do Chrome, com as fotos dos perfis, e o navegador avisa quando uma conta Google é conectada num perfil.",
+      "Novo: zoom com Ctrl + roda do mouse (⌘ + roda no Mac) e com o gesto de pinça do trackpad.",
+      'Novo: "Abrir com Agzos Browser" no menu de contexto do Windows e o navegador entre os apps de "Abrir com" no Windows, Mac e Linux.',
+      'Melhorado: a barra lateral e a barra de ferramentas se ajustam a telas menores, como notebooks de 1360×768; o que não cabe vai para o menu "Mais".',
+      "Corrigido: na captura da página inteira, cabeçalhos e elementos fixos se repetiam e ficavam por cima do conteúdo.",
+      "Corrigido: fechar o DevTools com o terminal aberto do mesmo lado deixava uma área preta presa na tela. Agora só o DevTools fecha e o terminal continua aberto.",
+    ],
+  },
+  {
     version: "5.0.0",
     date: "2026-10-19",
     items: [

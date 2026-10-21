@@ -1,6 +1,7 @@
 import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
 import type { DesktopV48 } from "./desktop-v48";
 import type { DesktopTranslate, TranslateTabEvent } from "@/features/translate/bridge";
+import type { DesktopYtdlp } from "@/features/ytdlp/bridge";
 import type { DesktopFormFill, FormFillTabEvent } from "@/features/key/form-fill";
 import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
@@ -135,6 +136,8 @@ export type DownloadRecord = {
   type?: DownloadFileType;
   tags?: string[];
   moveTo?: string | null;
+  /** 5.0: quem baixou ("ytdlp" para os vídeos; vazio para os da web). */
+  source?: string;
 };
 
 export type DownloadAction = "pause" | "resume" | "cancel" | "open" | "show" | "remove";
@@ -479,7 +482,7 @@ export type WidevineStatus = {
 };
 
 /** Pontes de cada versão que ficam em arquivos à parte (só pelo tamanho). */
-type DesktopExtras = DesktopV47 & DesktopV48 & DesktopTranslate & DesktopFormFill;
+type DesktopExtras = DesktopV47 & DesktopV48 & DesktopTranslate & DesktopFormFill & DesktopYtdlp;
 
 export type DesktopBridge = DesktopExtras & {
   attachTab(

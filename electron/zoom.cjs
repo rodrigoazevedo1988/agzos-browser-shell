@@ -21,4 +21,27 @@ function zoomHostOf(url) {
   }
 }
 
-module.exports = { ZOOM_STEPS, nextZoom, zoomHostOf };
+/**
+ * Avisos "zoom-changed" com o mesmo sentido que chegam dentro deste intervalo (ms) são o
+ * mesmo passo de Ctrl+roda: o Electron 44 avisa cada roda de mouse duas vezes, no mesmo
+ * instante. Roda de mouse de verdade não chega assim tão junto.
+ */
+const WHEEL_ZOOM_REPEAT_MS = 10;
+
+/**
+ * Filtro por página: devolve true só para o primeiro aviso de cada passo. A pinça do
+ * trackpad não passa por aqui (não gera zoom-changed; o preload manda o gesto).
+ */
+function createWheelZoomGate(now = Date.now) {
+  let last = null;
+  return (direction) => {
+    const time = now();
+    if (last && last.direction === direction && time - last.time < WHEEL_ZOOM_REPEAT_MS) {
+      return false;
+    }
+    last = { direction, time };
+    return true;
+  };
+}
+
+module.exports = { ZOOM_STEPS, WHEEL_ZOOM_REPEAT_MS, createWheelZoomGate, nextZoom, zoomHostOf };

@@ -578,8 +578,9 @@ function installGestures() {
     (event) => {
       if (event.ctrlKey) {
         if (!config.pinch || event.deltaMode !== 0) return;
-        // Ctrl+roda de mouse (passos inteiros grandes) é do Chromium; pinça vem em deltas finos.
-        if (Math.abs(event.deltaY) >= 50 && Number.isInteger(event.deltaY)) return;
+        // Ctrl+roda de mouse (passos inteiros, de qualquer tamanho) é do Chromium, que avisa
+        // zoom-changed; pinça vem em deltas fracionários. Assim cada passo sai de um lugar só.
+        if (Number.isInteger(event.deltaY)) return;
         // Página que trata a pinça (mapas, editores) fica com ela.
         setTimeout(() => {
           if (event.defaultPrevented) return;

@@ -135,6 +135,12 @@ function isGoogleUrl(url) {
   }
 }
 
+/** Domínio de cookie ("accounts.google.com", ".google.com") de um site do Google? */
+function isGoogleCookieDomain(domain) {
+  if (typeof domain !== "string") return false;
+  return GOOGLE_HOST_RE.test(domain.trim().replace(/^\./, ""));
+}
+
 /**
  * Lista no meta. `database` precisa de getMeta/setMeta (db.cjs). `newId` e `now` trocam
  * nos testes.
@@ -244,6 +250,7 @@ module.exports = {
   PARTITION_PREFIX,
   PROFILE_ID_RE,
   createProfileStore,
+  isGoogleCookieDomain,
   isGoogleUrl,
   parseListAccounts,
   parseProfiles,

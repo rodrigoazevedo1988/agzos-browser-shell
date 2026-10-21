@@ -23,12 +23,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import "./account.css";
-import { ProfileAvatar } from "./avatar";
+import { AccountPhotoEditor, ProfileAvatar } from "./avatar";
+import { GoogleAccounts } from "./profiles";
 import type { AccountBridge, AccountState, AgzosService, GoogleProfile } from "./bridge";
 import {
   PROFILE_COLORS,
   emailProblem,
-  initialsOf,
   passwordProblem,
   passwordStrength,
   planLabel,
@@ -598,9 +598,7 @@ function LoggedIn({
     <div className="acct-shell">
       <aside className="acct-side">
         <div className="acct-me">
-          <span className="acct-avatar acct-avatar-self" style={{ width: 44, height: 44 }}>
-            {initialsOf(state.name || state.email)}
-          </span>
+          <AccountPhotoEditor bridge={bridge} state={state} size={44} onNotice={onNotice} />
           <div>
             <strong>{state.name}</strong>
             <span>{state.email}</span>
@@ -878,200 +876,6 @@ function PasswordAction({
         </div>
       )}
     </section>
-  );
-}
-
-// --- Contas Google ---
-
-function GoogleAccounts({
-  bridge,
-  state,
-  onNotice,
-}: {
-  bridge: AccountBridge;
-  state: AccountState;
-  onNotice: Notice;
-}) {
-  const [adding, setAdding] = useState(false);
-  const add = () => {
-    setAdding(true);
-    void bridge
-      .addProfile()
-      .then((result) => {
-        if (!result.ok) onNotice(result.error);
-        else onNotice("Entre na conta Google na janela nova.");
-      })
-      .finally(() => setAdding(false));
-  };
-  return (
-    <>
-      <div className="acct-head">
-        <div>
-          <h2 className="acct-title">Contas Google</h2>
-          <p className="acct-muted">
-            Cada conta é um perfil isolado: cookies, logins e dados separados, numa janela própria.
-          </p>
-        </div>
-        <Button type="button" onClick={add} disabled={adding}>
-          <Plus /> Adicionar conta Google
-        </Button>
-      </div>
-      {state.profiles.length === 0 ? (
-        <section className="acct-card acct-empty">
-          <Users aria-hidden="true" />
-          <p>Nenhuma conta Google ainda. Adicione quantas quiser: trabalho, pessoal, clientes…</p>
-        </section>
-      ) : (
-        <ul className="acct-profiles">
-          {state.profiles.map((profile) => (
-            <ProfileCard key={profile.id} bridge={bridge} profile={profile} onNotice={onNotice} />
-          ))}
-        </ul>
-      )}
-      <label className="acct-check acct-card">
-        <input
-          type="checkbox"
-          checked={state.pickerOnStart}
-          onChange={(event) => void bridge.setPickerOnStart(event.target.checked)}
-        />
-        Mostrar “Escolha uma conta” ao iniciar o navegador
-      </label>
-    </>
-  );
-}
-
-function ProfileCard({
-  bridge,
-  profile,
-  onNotice,
-}: {
-  bridge: AccountBridge;
-  profile: GoogleProfile;
-  onNotice: Notice;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [label, setLabel] = useState(profile.label);
-  const [removing, setRemoving] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const rename = (event: FormEvent) => {
-    event.preventDefault();
-    void bridge.updateProfile(profile.id, { label }).then(() => setEditing(false));
-  };
-  const detect = useCallback(() => {
-    setBusy(true);
-    void bridge
-      .detectProfile(profile.id)
-      .then((result) =>
-        onNotice(
-          result.ok ? "Conta detectada." : "Não achamos uma conta Google logada neste perfil.",
-        ),
-      )
-      .finally(() => setBusy(false));
-  }, [bridge, profile.id, onNotice]);
-
-  return (
-    <li className="acct-card acct-profile" data-profile={profile.id}>
-      <div className="acct-profile-head">
-        <ProfileAvatar profile={profile} size={44} />
-        <div className="acct-profile-text">
-          {editing ? (
-            <form onSubmit={rename} className="acct-row">
-              <Input
-                autoFocus
-                maxLength={60}
-                value={label}
-                aria-label="Nome do perfil"
-                onChange={(event) => setLabel(event.target.value)}
-              />
-              <Button type="submit" size="icon" aria-label="Salvar nome">
-                <Check />
-              </Button>
-            </form>
-          ) : (
-            <>
-              <strong>{profile.label}</strong>
-              <span>{profile.email || "Conta ainda não conectada"}</span>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="acct-swatches" role="radiogroup" aria-label="Cor do perfil">
-        {PROFILE_COLORS.map((color) => (
-          <button
-            key={color}
-            type="button"
-            role="radio"
-            aria-checked={profile.color === color}
-            aria-label={`Cor ${color}`}
-            style={{ background: color }}
-            onClick={() => void bridge.updateProfile(profile.id, { color })}
-          />
-        ))}
-      </div>
-      {removing ? (
-        <div className="acct-confirm">
-          <p>Remover este perfil apaga cookies, logins e dados dele neste computador.</p>
-          <div className="acct-row">
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() =>
-                void bridge.removeProfile(profile.id).then(() => onNotice("Perfil removido."))
-              }
-            >
-              <Trash2 /> Remover
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setRemoving(false)}>
-              Cancelar
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="acct-row acct-actions">
-          <Button type="button" onClick={() => void bridge.openProfile(profile.id)}>
-            <ExternalLink /> Abrir
-          </Button>
-          {!profile.email && (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void bridge.signInProfile(profile.id)}
-              >
-                Entrar no Google
-              </Button>
-              <Button type="button" variant="ghost" disabled={busy} onClick={detect}>
-                <RefreshCw /> Detectar
-              </Button>
-            </>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Renomear"
-            title="Renomear"
-            onClick={() => {
-              setLabel(profile.label);
-              setEditing(!editing);
-            }}
-          >
-            <Pencil />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Remover"
-            title="Remover"
-            onClick={() => setRemoving(true)}
-          >
-            <Trash2 />
-          </Button>
-        </div>
-      )}
-    </li>
   );
 }
 

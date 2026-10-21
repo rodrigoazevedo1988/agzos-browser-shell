@@ -52,6 +52,7 @@ export type CommandId =
   | "page.capture-full"
   | "page.reader"
   | "page.translate"
+  | "ytdlp.download"
   | "notes.toggle"
   | "ports.open"
   | "scratchpad.open"
@@ -175,6 +176,8 @@ export type CommandContext = {
     togglePageTheme: (tabId: number) => void;
     /** Tradução: traduz a página da guia ou volta ao original. */
     translatePage: (tabId: number) => void;
+    /** 5.0: baixar o vídeo da guia com o yt-dlp (popup de qualidade). */
+    openYtdlp: (tabId: number) => void;
     /** 4.8: DevTools encaixado da guia (abrir/fechar, Console, seletor, modo dispositivo). */
     devtools: (tabId: number, action: "toggle" | "console" | "inspect" | "device") => void;
     /** 4.8: flag devtools ligada (Configurações → Recursos). */
@@ -793,6 +796,14 @@ export const commands: Command[] = [
     enabled: onDesktopPage,
     visible: ({ desktop }) => desktop !== null,
     run: ({ ui }, tabId) => ui.translatePage(tabId),
+  },
+  // 5.0: yt-dlp (página, vídeo ou link). Desligado pela flag `ytdlp` some do menu nativo.
+  {
+    id: "ytdlp.download",
+    label: "Baixar vídeo com yt-dlp",
+    enabled: ({ desktop }) => desktop !== null,
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ ui }, tabId) => ui.openYtdlp(tabId),
   },
   {
     id: "notes.toggle",

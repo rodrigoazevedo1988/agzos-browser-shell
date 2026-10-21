@@ -201,9 +201,12 @@ export function createPinchTracker() {
   };
 }
 
-/** Roda de mouse com Ctrl (passos inteiros grandes) não é pinça: o Chromium já trata. */
+/**
+ * Roda de mouse com Ctrl (passos inteiros, de qualquer tamanho) não é pinça: o Chromium já
+ * trata e avisa zoom-changed. A pinça do trackpad vem em deltas fracionários.
+ */
 export function isPinchWheel(deltaY: number, deltaMode: number) {
-  return deltaMode === 0 && (Math.abs(deltaY) < 50 || !Number.isInteger(deltaY));
+  return deltaMode === 0 && !Number.isInteger(deltaY);
 }
 
 /** Pontos do traço → direções ("UD", "DR"…), juntando repetidas. */

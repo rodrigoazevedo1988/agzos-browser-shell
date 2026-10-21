@@ -13,6 +13,8 @@ const FLAG_DEFAULTS = Object.freeze({
   kiosk: false,
   // 4.8.3: no macOS cada PWA instalado vira um app próprio (ícone no Dock, Cmd+Tab).
   pwa_mac_apps: true,
+  // 5.0: download de vídeos com o yt-dlp (barra, menu de contexto e Ferramentas).
+  ytdlp: true,
 });
 
 const FLAG_NAMES = Object.keys(FLAG_DEFAULTS);

@@ -19,6 +19,25 @@ RequestExecutionLevel user
 !define APP_EXE "AgzosBrowser.exe"
 !define UNINSTALLER "Desinstalar Agzos Browser.exe"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgzosBrowser"
+; "Abrir com" e Programas padrão (5.0.1). Tudo por usuário (HKCU\Software\Classes e
+; HKCU\Software\Clients), o desinstalador remove cada chave daqui.
+!define HANDLER_PROGID "AgzosBrowserHTML"
+!define URL_PROGID "AgzosBrowserURL"
+!define CLIENT_KEY "Software\Clients\StartMenuInternet\AgzosBrowser"
+!define CAPS_KEY "${CLIENT_KEY}\Capabilities"
+!define APPLICATIONS_KEY "Software\Classes\Applications\${APP_EXE}"
+!define VERB_KEY "Software\Classes\*\shell\AgzosOpen"
+
+; Tipos que o app aceita no "Abrir com" (cada um vira OpenWithProgids e SupportedTypes).
+!macro REG_FILE_TYPE EXT
+  WriteRegNone HKCU "Software\Classes\${EXT}\OpenWithProgids" "${HANDLER_PROGID}" ""
+  WriteRegStr HKCU "${APPLICATIONS_KEY}\SupportedTypes" "${EXT}" ""
+  WriteRegStr HKCU "${CAPS_KEY}\FileAssociations" "${EXT}" "${HANDLER_PROGID}"
+!macroend
+
+!macro UNREG_FILE_TYPE EXT
+  DeleteRegValue HKCU "Software\Classes\${EXT}\OpenWithProgids" "${HANDLER_PROGID}"
+!macroend
 
 Name "${APP_NAME}"
 OutFile "${OUT}"
@@ -85,6 +104,42 @@ Section "Agzos Browser" SecMain
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" "$0"
+
+  ; "Abrir com" (5.0.1): o app aparece nos arquivos listados e em Programas padrão.
+  WriteRegStr HKCU "Software\Classes\${HANDLER_PROGID}" "" "Agzos Browser"
+  WriteRegStr HKCU "Software\Classes\${HANDLER_PROGID}\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+  WriteRegStr HKCU "Software\Classes\${HANDLER_PROGID}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
+  WriteRegStr HKCU "Software\Classes\${URL_PROGID}" "" "Agzos Browser"
+  WriteRegStr HKCU "Software\Classes\${URL_PROGID}\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+  WriteRegStr HKCU "Software\Classes\${URL_PROGID}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
+  WriteRegStr HKCU "${APPLICATIONS_KEY}" "FriendlyAppName" "${APP_NAME}"
+  WriteRegStr HKCU "${APPLICATIONS_KEY}\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+  WriteRegStr HKCU "${APPLICATIONS_KEY}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
+  !insertmacro REG_FILE_TYPE ".html"
+  !insertmacro REG_FILE_TYPE ".htm"
+  !insertmacro REG_FILE_TYPE ".xhtml"
+  !insertmacro REG_FILE_TYPE ".svg"
+  !insertmacro REG_FILE_TYPE ".pdf"
+  !insertmacro REG_FILE_TYPE ".webp"
+  !insertmacro REG_FILE_TYPE ".png"
+  !insertmacro REG_FILE_TYPE ".jpg"
+  !insertmacro REG_FILE_TYPE ".txt"
+  !insertmacro REG_FILE_TYPE ".md"
+  !insertmacro REG_FILE_TYPE ".json"
+  WriteRegStr HKCU "${CAPS_KEY}" "ApplicationName" "${APP_NAME}"
+  WriteRegStr HKCU "${CAPS_KEY}" "ApplicationDescription" "Navegador da Agzos"
+  WriteRegStr HKCU "${CAPS_KEY}\URLAssociations" "http" "${URL_PROGID}"
+  WriteRegStr HKCU "${CAPS_KEY}\URLAssociations" "https" "${URL_PROGID}"
+  WriteRegStr HKCU "Software\RegisteredApplications" "${APP_NAME}" "${CAPS_KEY}"
+  WriteRegStr HKCU "${CLIENT_KEY}" "" "${APP_NAME}"
+  WriteRegStr HKCU "${CLIENT_KEY}\shell\open\command" "" '"$INSTDIR\${APP_EXE}"'
+  WriteRegStr HKCU "${CLIENT_KEY}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
+  ; Verbo do clique direito em qualquer arquivo (sem submenu).
+  WriteRegStr HKCU "${VERB_KEY}" "" "Abrir com ${APP_NAME}"
+  WriteRegStr HKCU "${VERB_KEY}" "Icon" '"$INSTDIR\${APP_EXE}",0'
+  WriteRegStr HKCU "${VERB_KEY}\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+  ; O Explorer relê as associações sem reiniciar (SHCNE_ASSOCCHANGED).
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 SectionEnd
 
 Function un.onInit
@@ -95,6 +150,26 @@ Section "Uninstall"
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
+  ; "Abrir com" e Programas padrão (5.0.1). OpenWithProgids é de outros apps também: só
+  ; tiramos o valor do Agzos.
+  DeleteRegKey HKCU "Software\Classes\${HANDLER_PROGID}"
+  DeleteRegKey HKCU "Software\Classes\${URL_PROGID}"
+  DeleteRegKey HKCU "${APPLICATIONS_KEY}"
+  DeleteRegKey HKCU "${CLIENT_KEY}"
+  DeleteRegKey HKCU "${VERB_KEY}"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "${APP_NAME}"
+  !insertmacro UNREG_FILE_TYPE ".html"
+  !insertmacro UNREG_FILE_TYPE ".htm"
+  !insertmacro UNREG_FILE_TYPE ".xhtml"
+  !insertmacro UNREG_FILE_TYPE ".svg"
+  !insertmacro UNREG_FILE_TYPE ".pdf"
+  !insertmacro UNREG_FILE_TYPE ".webp"
+  !insertmacro UNREG_FILE_TYPE ".png"
+  !insertmacro UNREG_FILE_TYPE ".jpg"
+  !insertmacro UNREG_FILE_TYPE ".txt"
+  !insertmacro UNREG_FILE_TYPE ".md"
+  !insertmacro UNREG_FILE_TYPE ".json"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ; Só a pasta do programa (fixa, sem página de escolha). O perfil em %APPDATA% fica.
   ${If} ${FileExists} "$INSTDIR\${APP_EXE}"
     RMDir /r "$INSTDIR"

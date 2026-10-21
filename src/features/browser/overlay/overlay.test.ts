@@ -110,6 +110,7 @@ describe("chrome-overlay.cjs", () => {
         "colors",
         "translate",
         "translation",
+        "ytdlp",
       ].sort(),
     );
   });

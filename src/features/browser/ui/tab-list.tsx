@@ -245,6 +245,20 @@ function lastOther(tabs: Tab[], id: number) {
 
 export function TabStrip(props: ListProps) {
   const { drop, dragProps } = useTabDrag(false, props.onMoveTab);
+  const scroller = useRef<HTMLDivElement | null>(null);
+  // 5.0.1: com muitas abas a fileira rola por dentro (os botões de nova aba ficam à mão) e a
+  // aba ativa volta à vista ao trocar. Não usa scrollIntoView: ele rolaria o pai também.
+  useEffect(() => {
+    const box = scroller.current;
+    const tab = box?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!box || !tab) return;
+    const boxRect = box.getBoundingClientRect();
+    const tabRect = tab.getBoundingClientRect();
+    const left = tabRect.left - boxRect.left + box.scrollLeft;
+    const right = left + tabRect.width;
+    if (left < box.scrollLeft) box.scrollLeft = left;
+    else if (right > box.scrollLeft + box.clientWidth) box.scrollLeft = right - box.clientWidth;
+  }, [props.activeId]);
   return (
     <div
       {...dragProps}
@@ -255,11 +269,26 @@ export function TabStrip(props: ListProps) {
       onKeyDown={(event) => tabsKeyDown(event, false, props.handlers.onClose)}
       // Duplo clique no espaço vazio da barra abre uma aba nova.
       onDoubleClick={(event) => {
-        if (event.target === event.currentTarget) props.onNewTab();
+        const target = event.target as HTMLElement;
+        if (target === event.currentTarget || target.classList.contains("tabs-scroll")) {
+          props.onNewTab();
+        }
       }}
     >
-      {props.leading}
-      {renderTabs(props, drop)}
+      <div
+        ref={scroller}
+        className="tabs-scroll"
+        // Roda do mouse sobre a fileira anda de lado (só quando há o que rolar).
+        onWheel={(event) => {
+          const box = event.currentTarget;
+          if (box.scrollWidth <= box.clientWidth || Math.abs(event.deltaY) < Math.abs(event.deltaX))
+            return;
+          box.scrollLeft += event.deltaY;
+        }}
+      >
+        {props.leading}
+        {renderTabs(props, drop)}
+      </div>
       <Button
         variant="ghost"
         size="icon"

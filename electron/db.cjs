@@ -68,6 +68,12 @@ const MIGRATIONS = [
     ALTER TABLE downloads ADD COLUMN last_modified TEXT NOT NULL DEFAULT '';
     ALTER TABLE downloads ADD COLUMN url_chain TEXT NOT NULL DEFAULT '[]'`,
   },
+  {
+    // 5.0: quem baixou (yt-dlp) — o gerenciador não refaz esses downloads como arquivo da web.
+    version: 6,
+    name: "downloads_source",
+    sql: "ALTER TABLE downloads ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+  },
 ];
 
 // Como o Chrome: o histórico guarda 90 dias.
@@ -166,8 +172,8 @@ function openDatabase(file) {
   const selectSetting = db.prepare("SELECT value FROM site_settings WHERE host = ? AND key = ?");
   const deleteSetting = db.prepare("DELETE FROM site_settings WHERE host = ? AND key = ?");
   const insertDownload = db.prepare(
-    `INSERT INTO downloads (url, filename, path, mime, total_bytes, received_bytes, state, started_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO downloads (url, filename, path, mime, total_bytes, received_bytes, state, started_at, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const updateDownload = db.prepare(
     `UPDATE downloads SET filename = ?, path = ?, total_bytes = ?, received_bytes = ?, state = ?,
@@ -415,7 +421,7 @@ function openDatabase(file) {
         .prepare(
           `SELECT id, url, filename, path, mime, total_bytes AS totalBytes,
              received_bytes AS receivedBytes, state, started_at AS startedAt, ended_at AS endedAt,
-             tags, etag, last_modified AS lastModified, url_chain AS urlChain
+             tags, etag, last_modified AS lastModified, url_chain AS urlChain, source
            FROM downloads ORDER BY id DESC LIMIT ?`,
         )
         .all(DOWNLOAD_LIMIT)
@@ -431,6 +437,7 @@ function openDatabase(file) {
         record.receivedBytes ?? 0,
         DOWNLOAD_STATES.includes(record.state) ? record.state : "progressing",
         record.startedAt ?? Date.now(),
+        String(record.source ?? "").slice(0, 32),
       );
       return Number(result.lastInsertRowid);
     },

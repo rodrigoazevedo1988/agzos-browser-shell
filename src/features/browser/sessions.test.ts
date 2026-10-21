@@ -167,6 +167,14 @@ describe("windows.cjs", () => {
     expect(windows.fitBounds({ x: 2500, y: 80, width: 1200, height: 800 }, screen)).toBeNull();
     expect(windows.fitBounds({ x: 0, y: 0, width: 50, height: 20 }, screen)).toBeNull();
     expect(windows.fitBounds(null, screen)).toBeNull();
+    // Salva num monitor maior, volta cabendo no notebook (1360×768 a 125%).
+    const notebook = [{ x: 0, y: 0, width: 1088, height: 566 }];
+    expect(windows.fitBounds({ x: 200, y: 100, width: 1440, height: 960 }, notebook)).toEqual({
+      x: 0,
+      y: 0,
+      width: 1088,
+      height: 566,
+    });
   });
 
   it("janela nova em cascata, sem sair da tela", () => {

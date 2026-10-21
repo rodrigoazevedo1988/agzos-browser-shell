@@ -23,8 +23,9 @@ const pageCapture = require(path.join(process.cwd(), "electron", "page-capture.c
   planStrips: (total: number, viewport: number, maxStrips?: number) => number[];
   fitHeight: (total: number, scale: number) => { height: number; truncated: boolean };
   measureSource: () => string;
-  hideFixedSource: () => string;
+  fixedSource: (phase: "first" | "next" | "last") => string;
   restoreSource: () => string;
+  scrollSource: (y: number) => string;
   capturePageStrips: (options: {
     run: (code: string) => Promise<unknown>;
     shot: (rect: unknown) => Promise<{ isEmpty: () => boolean; toDataURL: () => string }>;
@@ -55,18 +56,26 @@ describe("4.9.7: captura da página inteira", () => {
     expect(pageCapture.CAPTURE_WORLD).toBe(4136);
     const all = [
       pageCapture.measureSource(),
-      pageCapture.hideFixedSource(),
+      pageCapture.fixedSource("next"),
       pageCapture.restoreSource(),
     ].join("\n");
     expect(all).not.toContain("innerHTML");
     expect(all).not.toContain("createElement");
-    expect(pageCapture.hideFixedSource()).toContain(
-      'setProperty("visibility", "hidden", "important")',
-    );
+    expect(pageCapture.measureSource()).toContain('"scroll-behavior", "auto", "important"');
+    expect(pageCapture.fixedSource("next")).toContain("shadowRoot");
+    expect(pageCapture.fixedSource("next")).toContain('const phase = "next"');
+    expect(pageCapture.fixedSource("bogus" as "next")).toContain('const phase = "next"');
     expect(pageCapture.restoreSource()).toContain("removeProperty");
+    expect(pageCapture.restoreSource()).toContain("state.fixed");
   });
 
-  it("rola, esconde os fixos depois da 1ª faixa e restaura no fim mesmo com erro", async () => {
+  it("scroll sem suavidade e espera de imagens preguiçosas dentro de um teto", () => {
+    expect(pageCapture.scrollSource(1000)).toContain('top: 1000, behavior: "instant"');
+    expect(pageCapture.scrollSource(1000)).toContain("img.complete");
+  });
+
+  /** Página falsa: mede 2500 px, telas de 1000; `stall` faz a última rolagem não andar. */
+  const fakePage = (stall = false) => {
     const calls: string[] = [];
     let scroll = 0;
     const run = async (code: string) => {
@@ -75,34 +84,81 @@ describe("4.9.7: captura da página inteira", () => {
         return { total: 2500, start: 40, clip: { x: 0, y: 0, width: 800, height: 1000 }, scale: 1 };
       }
       if (code.includes('behavior: "instant"') && code.includes("done(Math.round")) {
-        const match = /top: (\d+)/.exec(code);
-        scroll = Number(match?.[1] ?? 0);
-        calls.push(`scroll ${scroll}`);
+        const requested = Number(/top: (\d+)/.exec(code)?.[1] ?? 0);
+        scroll = stall && requested === 1500 ? 1000 : requested;
+        calls.push(`scroll ${requested}`);
         return scroll;
       }
-      if (code.includes('"hidden", "important"')) {
-        calls.push("hide");
+      const phase = /const phase = "(\w+)"/.exec(code)?.[1];
+      if (phase) {
+        calls.push(`fixed ${phase}`);
         return 2;
       }
       calls.push("restore");
       return true;
     };
     const shot = async () => ({ isEmpty: () => false, toDataURL: () => `data:${scroll}` });
-    const result = await pageCapture.capturePageStrips({ run, shot });
-    expect(calls).toEqual(["measure", "scroll 0", "scroll 1000", "hide", "scroll 1500", "restore"]);
+    return { calls, run, shot };
+  };
+
+  it("fixos do topo só na 1ª faixa, de baixo só na última, e restaura no fim", async () => {
+    const page = fakePage();
+    const result = await pageCapture.capturePageStrips({ run: page.run, shot: page.shot });
+    expect(page.calls).toEqual([
+      "measure",
+      "scroll 0",
+      "fixed first",
+      "scroll 1000",
+      "fixed next",
+      "scroll 1500",
+      "fixed last",
+      "restore",
+    ]);
     expect(result?.size).toEqual({ width: 800, height: 2500 });
     expect(result?.layers.map((layer) => layer.y)).toEqual([0, 1000, 1500]);
+  });
 
+  it("página que cabe numa tela não mexe nos fixos", async () => {
+    const calls: string[] = [];
+    const run = async (code: string) => {
+      if (code.includes("getElementsByTagName") && code.includes("overflowY")) {
+        calls.push("measure");
+        return { total: 800, start: 0, clip: { x: 0, y: 0, width: 800, height: 1000 }, scale: 1 };
+      }
+      if (code.includes("const phase")) calls.push("fixed");
+      if (code.includes("state.fixed")) {
+        calls.push("restore");
+        return true;
+      }
+      return 0;
+    };
+    const result = await pageCapture.capturePageStrips({
+      run,
+      shot: async () => ({ isEmpty: () => false, toDataURL: () => "data:" }),
+    });
+    expect(calls).toEqual(["measure", "restore"]);
+    expect(result?.layers).toHaveLength(1);
+  });
+
+  it("para quando a página não rola mais e usa essa faixa como a última", async () => {
+    const page = fakePage(true);
+    const result = await pageCapture.capturePageStrips({ run: page.run, shot: page.shot });
+    expect(page.calls.slice(-3)).toEqual(["scroll 1500", "fixed last", "restore"]);
+    expect(result?.layers.map((layer) => layer.y)).toEqual([0, 1000, 1000]);
+  });
+
+  it("restaura o estilo mesmo quando a foto falha", async () => {
+    const page = fakePage();
     const failing = await pageCapture
       .capturePageStrips({
-        run,
+        run: page.run,
         shot: async () => {
           throw new Error("x");
         },
       })
       .catch(() => "erro");
     expect(failing).toBe("erro");
-    expect(calls[calls.length - 1]).toBe("restore");
+    expect(page.calls).toEqual(["measure", "scroll 0", "fixed first", "restore"]);
   });
 });
 

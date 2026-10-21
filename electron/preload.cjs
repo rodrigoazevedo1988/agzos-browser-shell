@@ -320,6 +320,13 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
     ipcRenderer.invoke("translate:menu-target", { code, label }),
   onTranslateAction: subscribe("agzos:translate-action"),
   onPdfProgress: subscribe("agzos:pdf-progress"),
+  // 5.0: yt-dlp (electron/ytdlp.cjs). O binário e os processos ficam no main.
+  ytdlpStatus: () => ipcRenderer.invoke("ytdlp:status"),
+  ytdlpInstall: () => ipcRenderer.invoke("ytdlp:install"),
+  ytdlpPick: () => ipcRenderer.invoke("ytdlp:pick"),
+  ytdlpStart: (payload) => ipcRenderer.invoke("ytdlp:start", payload),
+  onYtdlpOpen: subscribe("agzos:ytdlp-open"),
+  onYtdlpError: subscribe("agzos:ytdlp-error"),
 });
 
 // Conta Agzos e contas Google (electron/agzos-account.cjs): o token nunca passa por aqui.
@@ -334,6 +341,8 @@ contextBridge.exposeInMainWorld("agzosAccount", {
   regenerateCodes: (payload) => ipcRenderer.invoke("account:regenerate-codes", payload),
   deleteAccount: (payload) => ipcRenderer.invoke("account:delete", payload),
   services: () => ipcRenderer.invoke("account:services"),
+  changeAvatar: () => ipcRenderer.invoke("account:avatar-change"),
+  removeAvatar: () => ipcRenderer.invoke("account:avatar-remove"),
   setPickerOnStart: (showOnStart) => ipcRenderer.invoke("account:picker-pref", { showOnStart }),
   windowProfile: () => ipcRenderer.invoke("account:window-profile"),
   startupPicker: () => ipcRenderer.invoke("account:startup-picker"),

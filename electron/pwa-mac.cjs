@@ -193,8 +193,9 @@ async function buildMacPwaApp({ source, target, marker, icns, run, fs, identity 
     for (const [key, type, value] of plistEdits(marker)) {
       await run("/usr/bin/plutil", ["-replace", key, `-${type}`, value, plist]);
     }
-    // O PWA não aparece no "Abrir com" do Finder (só o navegador).
+    // O PWA não aparece no "Abrir com" do Finder nem como app de links (só o navegador).
     await run("/usr/bin/plutil", ["-remove", "CFBundleDocumentTypes", plist]).catch(() => {});
+    await run("/usr/bin/plutil", ["-remove", "CFBundleURLTypes", plist]).catch(() => {});
     const resources = path.posix.join(tmp, "Contents", "Resources");
     fs.writeFileSync(path.posix.join(resources, `${ICON_NAME}.icns`), icns);
     fs.writeFileSync(path.posix.join(resources, MARKER_FILE), JSON.stringify(marker, null, 2));

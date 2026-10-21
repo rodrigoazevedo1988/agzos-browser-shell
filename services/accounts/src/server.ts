@@ -20,8 +20,9 @@ const app = createApp({ db, config: { allowedOrigins } });
 const server = Bun.serve({
   port,
   hostname: host,
-  // Corpo maior que isso nem chega ao handler (o handler também confere: 16 KB).
-  maxRequestBodySize: 64 * 1024,
+  // Corpo maior que isso nem chega ao handler. JSON é conferido em 16 KB; a foto de perfil
+  // (PUT /avatar, até 512 KB) tem o próprio limite no handler.
+  maxRequestBodySize: 600 * 1024,
   fetch(request, srv) {
     const forwarded = trustProxy ? request.headers.get("x-real-ip")?.trim() : null;
     const ip = forwarded || srv.requestIP(request)?.address || "unknown";

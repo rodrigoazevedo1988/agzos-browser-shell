@@ -59,6 +59,7 @@ function context(state: BrowserState = initialState, desktop = false) {
     devtools: vi.fn(),
     devtoolsEnabled: () => true,
     devtoolsSide: vi.fn(),
+    openYtdlp: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
