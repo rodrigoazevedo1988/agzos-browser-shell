@@ -153,6 +153,7 @@ export function useYtdlpShell({
           url: target.url,
           quality,
           private: target.private,
+          tabId: target.tabId,
         });
         if (result.ok) {
           close();

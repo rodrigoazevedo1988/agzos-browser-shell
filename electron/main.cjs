@@ -3097,6 +3097,15 @@ const ytdlpService = ytdlp.createYtdlpService({
   },
   emit: (channel, payload) => broadcast(channel, payload),
   enabled: () => featureFlags().ytdlp,
+  // 5.0.2: o próprio Electron é o runtime de JS que o YouTube exige (ELECTRON_RUN_AS_NODE).
+  jsRuntime: process.execPath,
+  // Cookies só da guia da janela que pediu (a sessão dela: perfil, Session Tab ou anônima).
+  cookiesFor: async (ctx, tabId) => {
+    const entry = tabId != null ? ctx?.views?.get(tabId) : null;
+    const contents = entry?.view?.webContents;
+    if (!contents || contents.isDestroyed()) return null;
+    return contents.session.cookies.get({});
+  },
 });
 
 // 4.5: requisições capturadas para o API Scratchpad, avisadas à janela da guia.

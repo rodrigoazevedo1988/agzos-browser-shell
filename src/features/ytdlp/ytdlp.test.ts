@@ -16,7 +16,12 @@ const ytdlp = require("../../../electron/ytdlp.cjs") as {
     outDir: string;
     quality?: string;
     ffmpeg?: string | null;
+    jsRuntime?: string | null;
+    cookies?: string | null;
   }) => string[] | null;
+  cookieDomainsOf: (url: string) => string[];
+  friendlyError: (message: string) => string;
+  netscapeCookies: (cookies: unknown[], domains: string[]) => string | null;
   checksumOf: (sums: string, asset: string) => string | null;
   cleanUrl: (value: unknown) => string | null;
   createProgress: () => {
@@ -31,11 +36,17 @@ const ytdlp = require("../../../electron/ytdlp.cjs") as {
     status: () => { binary: string | null; ffmpeg: boolean; managed: boolean };
     install: () => Promise<{ ok: boolean; error?: string; path?: string }>;
     pick: (file: string) => { ok: boolean; error?: string };
-    start: (options: { url: string; quality?: string; private?: boolean }) => {
+    start: (options: {
+      url: string;
+      quality?: string;
+      private?: boolean;
+      tabId?: number;
+      owner?: unknown;
+    }) => Promise<{
       ok: boolean;
       error?: string;
       id?: number;
-    };
+    }>;
     cancel: (id: number) => boolean;
     stopAll: () => void;
     activeCount: () => number;
@@ -297,10 +308,105 @@ function setup(extra: Record<string, unknown> = {}) {
   return { dir, videos, bin, child, spawn, downloads, emit, service };
 }
 
+describe("yt-dlp 5.0.2: YouTube, cookies e UTF-8", () => {
+  it("argv leva o runtime de JS (deno ou o Electron como node) e o arquivo de cookies", () => {
+    const args = ytdlp.buildArgs({
+      url: "https://www.youtube.com/watch?v=a",
+      outDir: "/tmp/v",
+      jsRuntime: "/opt/Agzos/agzos",
+      cookies: "/tmp/c/cookies.txt",
+    })!;
+    expect(args.join(" ")).toContain("--js-runtimes deno --js-runtimes node:/opt/Agzos/agzos");
+    expect(args.join(" ")).toContain("--cookies /tmp/c/cookies.txt");
+    expect(args.slice(-2)).toEqual(["--", "https://www.youtube.com/watch?v=a"]);
+    const plain = ytdlp.buildArgs({ url: "https://a.com/v", outDir: "/tmp/v" })!;
+    expect(plain).not.toContain("--js-runtimes");
+    expect(plain).not.toContain("--cookies");
+  });
+
+  it("domínios dos cookies seguem o site e os apelidos (youtu.be, fb.watch, twitter/x)", () => {
+    expect(ytdlp.cookieDomainsOf("https://m.youtube.com/watch?v=a")).toEqual(["youtube.com"]);
+    expect(ytdlp.cookieDomainsOf("https://youtu.be/a")).toEqual(["youtu.be", "youtube.com"]);
+    expect(ytdlp.cookieDomainsOf("https://fb.watch/x")).toEqual(["fb.watch", "facebook.com"]);
+    expect(ytdlp.cookieDomainsOf("https://twitter.com/u/status/1")).toEqual([
+      "twitter.com",
+      "x.com",
+    ]);
+    expect(ytdlp.cookieDomainsOf("https://www.globo.com.br/v")).toEqual(["globo.com.br"]);
+  });
+
+  it("arquivo Netscape só com os cookies do site, sem tab/quebra de linha", () => {
+    const text = ytdlp.netscapeCookies(
+      [
+        {
+          domain: ".youtube.com",
+          name: "SID",
+          value: "a\tb",
+          path: "/",
+          secure: true,
+          httpOnly: true,
+          expirationDate: 1900000000.5,
+        },
+        {
+          domain: "www.youtube.com",
+          hostOnly: true,
+          name: "PREF",
+          value: "x",
+          path: "/",
+          secure: false,
+        },
+        { domain: ".google.com", name: "NID", value: "n", path: "/" },
+        { domain: ".notyoutube.com", name: "Z", value: "z", path: "/" },
+      ],
+      ["youtube.com"],
+    )!;
+    const lines = text.trim().split("\n");
+    expect(lines[0]).toBe("# Netscape HTTP Cookie File");
+    expect(lines).toContain("#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1900000000\tSID\tab");
+    expect(lines).toContain("www.youtube.com\tFALSE\t/\tFALSE\t0\tPREF\tx");
+    expect(text).not.toContain("NID");
+    expect(text).not.toContain("notyoutube");
+    expect(ytdlp.netscapeCookies([], ["youtube.com"])).toBeNull();
+  });
+
+  it("erros conhecidos viram texto claro", () => {
+    expect(
+      ytdlp.friendlyError("[youtube] a: Sign in to confirm you’re not a bot. Use --cookies"),
+    ).toMatch(/YouTube pediu login/);
+    expect(ytdlp.friendlyError("Requested format is not available")).toMatch(/Vídeo \(melhor\)/);
+    expect(ytdlp.friendlyError("algo novo")).toBe("algo novo");
+  });
+
+  it("processo roda em UTF-8, com o Electron como node, e apaga os cookies no fim", async () => {
+    const owner = { id: "janela" };
+    const cookiesFor = vi.fn(async () => [
+      { domain: ".youtube.com", name: "SID", value: "s", path: "/", secure: true },
+    ]);
+    const { child, spawn, service } = setup({ jsRuntime: "/opt/agzos", cookiesFor });
+    await service.start({ url: "https://www.youtube.com/watch?v=a", tabId: 7, owner });
+    expect(cookiesFor).toHaveBeenCalledWith(owner, 7, "https://www.youtube.com/watch?v=a");
+    const [, args, options] = spawn.mock.calls[0] as unknown as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    expect(options.env).toMatchObject({
+      PYTHONUTF8: "1",
+      PYTHONIOENCODING: "utf-8",
+      ELECTRON_RUN_AS_NODE: "1",
+    });
+    const cookieFile = args[args.indexOf("--cookies") + 1]!;
+    expect(fs.statSync(cookieFile).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(cookieFile, "utf8")).toContain("\tSID\ts");
+    child.emit("close", 1);
+    expect(fs.existsSync(path.dirname(cookieFile))).toBe(false);
+  });
+});
+
 describe("yt-dlp: serviço", () => {
-  it("download completo: progresso no gerenciador e arquivo final", () => {
+  it("download completo: progresso no gerenciador e arquivo final", async () => {
     const { child, spawn, downloads, service, videos, bin } = setup();
-    const result = service.start({ url: "https://youtu.be/abc", quality: "best" });
+    const result = await service.start({ url: "https://youtu.be/abc", quality: "best" });
     expect(result).toEqual({ ok: true, id: 1 });
     expect(spawn).toHaveBeenCalledTimes(1);
     const [binary, args, options] = spawn.mock.calls[0] as unknown as [
@@ -334,12 +440,12 @@ describe("yt-dlp: serviço", () => {
     expect(service.activeCount()).toBe(0);
   });
 
-  it("cancelar mata o processo e remove os parciais do próprio job", () => {
+  it("cancelar mata o processo e remove os parciais do próprio job", async () => {
     const { child, downloads, service, videos } = setup();
     fs.mkdirSync(videos, { recursive: true });
     const file = path.join(videos, "Parcial [x].mp4");
     fs.writeFileSync(`${file}.part`, "partial");
-    service.start({ url: "https://vimeo.com/1", quality: "720" });
+    await service.start({ url: "https://vimeo.com/1", quality: "720" });
     child.stdout.emit("data", Buffer.from(`[download] Destination: ${file}\n`));
     expect(downloads.startExternal).toHaveBeenCalled();
     const stopped = service.cancel(1);
@@ -350,12 +456,12 @@ describe("yt-dlp: serviço", () => {
     expect(fs.existsSync(`${file}.part`)).toBe(false);
   });
 
-  it("caractere UTF-8 partido entre dois pedaços não quebra o caminho do arquivo", () => {
+  it("caractere UTF-8 partido entre dois pedaços não quebra o caminho do arquivo", async () => {
     const { child, downloads, service, videos } = setup();
     const file = path.join(videos, "Coração [z].mp4");
     fs.mkdirSync(videos, { recursive: true });
     fs.writeFileSync(file, "video");
-    service.start({ url: "https://vimeo.com/2", quality: "best" });
+    await service.start({ url: "https://vimeo.com/2", quality: "best" });
     const bytes = Buffer.from(`[download] Destination: ${file}\n`);
     const cut = bytes.indexOf(Buffer.from("ç")) + 1;
     child.stdout.emit("data", bytes.subarray(0, cut));
@@ -364,9 +470,9 @@ describe("yt-dlp: serviço", () => {
     expect(downloads.handles[0]!.finish).toHaveBeenCalledWith("completed", file);
   });
 
-  it("saída 0 sem arquivo no disco não vira 'concluído'", () => {
+  it("saída 0 sem arquivo no disco não vira 'concluído'", async () => {
     const { child, downloads, service, videos } = setup();
-    service.start({ url: "https://vimeo.com/3", quality: "best" });
+    await service.start({ url: "https://vimeo.com/3", quality: "best" });
     child.stdout.emit(
       "data",
       Buffer.from(`[download] Destination: ${path.join(videos, "sumiu.mp4")}\n`),
@@ -375,9 +481,9 @@ describe("yt-dlp: serviço", () => {
     expect(downloads.handles[0]!.finish).toHaveBeenCalledWith("interrupted");
   });
 
-  it("falha do yt-dlp vira 'interrompido' e avisa a janela com a mensagem", () => {
+  it("falha do yt-dlp vira 'interrompido' e avisa a janela com a mensagem", async () => {
     const { child, downloads, emit, service } = setup();
-    service.start({ url: "https://tiktok.com/@a/video/1", quality: "best" });
+    await service.start({ url: "https://tiktok.com/@a/video/1", quality: "best" });
     child.stderr.emit("data", Buffer.from("ERROR: [TikTok] unavailable\n"));
     child.emit("close", 1);
     expect(downloads.handles[0]!.finish).toHaveBeenCalledWith("interrupted");
@@ -387,16 +493,19 @@ describe("yt-dlp: serviço", () => {
     });
   });
 
-  it("recusa URL ruim, qualidade inexistente e falta de binário sem abrir processo", () => {
+  it("recusa URL ruim, qualidade inexistente e falta de binário sem abrir processo", async () => {
     const { spawn, service } = setup();
-    expect(service.start({ url: "file:///etc/passwd" })).toEqual({ ok: false, error: "url" });
-    expect(service.start({ url: "https://a.com", quality: "8k" })).toEqual({
+    expect(await service.start({ url: "file:///etc/passwd" })).toEqual({ ok: false, error: "url" });
+    expect(await service.start({ url: "https://a.com", quality: "8k" })).toEqual({
       ok: false,
       error: "quality",
     });
     expect(spawn).not.toHaveBeenCalled();
     const none = setup({ getMeta: () => null, isExecutable: () => false, env: { PATH: "" } });
-    expect(none.service.start({ url: "https://a.com" })).toEqual({ ok: false, error: "missing" });
+    expect(await none.service.start({ url: "https://a.com" })).toEqual({
+      ok: false,
+      error: "missing",
+    });
     expect(none.service.status().binary).toBeNull();
   });
 

@@ -7,6 +7,15 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.2",
+    date: "2026-10-21",
+    items: [
+      "Corrigido: baixar vídeo do YouTube com o yt-dlp dava erro. O navegador agora entrega ao yt-dlp o runtime de JavaScript que o YouTube exige e os cookies da própria guia, então vídeos que pedem login (YouTube, Instagram, Facebook, X) também baixam.",
+      'Corrigido: no Windows, vídeos com acento no título podiam terminar como "interrompido" mesmo baixados.',
+      "Melhorado: os erros do yt-dlp aparecem em português e dizem o que fazer, por exemplo entrar na conta do site na guia.",
+    ],
+  },
+  {
     version: "5.0.1",
     date: "2026-10-21",
     items: [

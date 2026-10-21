@@ -8,7 +8,9 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { StringDecoder } = require("node:string_decoder");
+const { registrableDomain } = require("./page-theme.cjs");
 
 const RELEASE_BASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
 const SUMS_NAME = "SHA2-256SUMS";
@@ -167,7 +169,14 @@ function formatArgsOf(quality, ffmpeg) {
  * argv do yt-dlp para uma URL. Sem shell: cada item é um argumento. A URL vai por último,
  * depois de "--", para nunca ser lida como opção. Devolve null se a qualidade não existe.
  */
-function buildArgs({ url, outDir, quality = "best", ffmpeg = null }) {
+function buildArgs({
+  url,
+  outDir,
+  quality = "best",
+  ffmpeg = null,
+  jsRuntime = null,
+  cookies = null,
+}) {
   const format = formatArgsOf(quality, Boolean(ffmpeg));
   if (!format || typeof url !== "string" || !outDir) return null;
   // "%" na pasta é máscara do yt-dlp: escapa só ela; o nome vem do próprio yt-dlp.
@@ -186,8 +195,77 @@ function buildArgs({ url, outDir, quality = "best", ffmpeg = null }) {
     template,
   ];
   if (ffmpeg) args.push("--ffmpeg-location", ffmpeg);
+  // YouTube exige um runtime de JS para os desafios do player. O deno do usuário vale se
+  // existir; senão o próprio Electron roda como node (ELECTRON_RUN_AS_NODE no ambiente).
+  if (jsRuntime) args.push("--js-runtimes", "deno", "--js-runtimes", `node:${jsRuntime}`);
+  // Cookies da guia (arquivo temporário): login no YouTube, Instagram, Facebook, X…
+  if (cookies) args.push("--cookies", cookies);
   args.push("--", url);
   return args;
+}
+
+// Sites que usam os cookies de outro domínio (link curto ou domínio antigo).
+const COOKIE_ALIASES = {
+  "youtu.be": ["youtube.com"],
+  "fb.watch": ["facebook.com"],
+  "twitter.com": ["x.com"],
+  "x.com": ["twitter.com"],
+};
+
+/** Domínios registráveis cujos cookies o yt-dlp precisa para a URL. */
+function cookieDomainsOf(url) {
+  const host = hostOfUrl(url);
+  const base = host ? registrableDomain(host) : null;
+  if (!base) return [];
+  return [...new Set([base, ...(COOKIE_ALIASES[base] ?? [])])];
+}
+
+const cookieField = (value) => String(value ?? "").replace(/[\t\r\n]/g, "");
+
+/**
+ * Cookies do Electron → arquivo Netscape (o formato do --cookies). Só os dos domínios
+ * pedidos; os de sessão vão com validade 0.
+ */
+function netscapeCookies(cookies, domains) {
+  const wanted = (domains ?? []).map((domain) => String(domain).toLowerCase());
+  const lines = ["# Netscape HTTP Cookie File", ""];
+  for (const cookie of Array.isArray(cookies) ? cookies : []) {
+    const raw = cookieField(cookie?.domain).toLowerCase();
+    const bare = raw.replace(/^\./, "");
+    if (!bare || !cookie?.name) continue;
+    if (!wanted.some((domain) => bare === domain || bare.endsWith(`.${domain}`))) continue;
+    const domain = cookie.hostOnly ? bare : `.${bare}`;
+    const expiry = Number.isFinite(cookie.expirationDate) ? Math.floor(cookie.expirationDate) : 0;
+    lines.push(
+      [
+        `${cookie.httpOnly ? "#HttpOnly_" : ""}${domain}`,
+        cookie.hostOnly ? "FALSE" : "TRUE",
+        cookieField(cookie.path) || "/",
+        cookie.secure ? "TRUE" : "FALSE",
+        String(Math.max(0, expiry)),
+        cookieField(cookie.name),
+        cookieField(cookie.value),
+      ].join("\t"),
+    );
+  }
+  return lines.length > 2 ? `${lines.join("\n")}\n` : null;
+}
+
+/** Erro do yt-dlp → texto curto para o usuário, quando há um conhecido. */
+function friendlyError(message) {
+  const text = String(message ?? "");
+  if (/confirm you.?re not a bot|Sign in to confirm/i.test(text))
+    return "O YouTube pediu login. Entre na sua conta do YouTube nesta guia e tente de novo.";
+  if (/login required|log in|logged-in|cookies/i.test(text))
+    return "Este site pede login. Entre na sua conta nesta guia e tente de novo.";
+  if (/private video|Video unavailable|This video is unavailable/i.test(text))
+    return "O vídeo é privado ou não está disponível.";
+  if (/Unsupported URL/i.test(text)) return "O yt-dlp não reconhece vídeo neste link.";
+  if (/Requested format is not available/i.test(text))
+    return 'Essa qualidade não existe para este vídeo. Tente "Vídeo (melhor)".';
+  if (/HTTP Error 429|Too Many Requests/i.test(text))
+    return "O site limitou os downloads por agora. Tente de novo em alguns minutos.";
+  return text;
 }
 
 const numberOrNull = (text) => {
@@ -318,6 +396,9 @@ function createYtdlpService({
   enabled = () => true,
   now = Date.now,
   fsImpl = fs,
+  jsRuntime = null,
+  cookiesFor = async () => null,
+  tempDir = () => os.tmpdir(),
 }) {
   // id do download → job (processo vivo).
   const jobs = new Map();
@@ -377,10 +458,38 @@ function createYtdlpService({
     }
   }
 
+  /** Cookies da guia num arquivo temporário (pasta 0700, arquivo 0600); null sem cookies. */
+  async function writeCookies(url, owner, tabId) {
+    let text = null;
+    try {
+      text = netscapeCookies(await cookiesFor(owner, tabId, url), cookieDomainsOf(url));
+    } catch {
+      text = null;
+    }
+    if (!text) return null;
+    try {
+      const dir = fsImpl.mkdtempSync(path.join(tempDir(), "agzos-ytdlp-"));
+      fsImpl.writeFileSync(path.join(dir, "cookies.txt"), text, { mode: 0o600 });
+      return dir;
+    } catch {
+      return null;
+    }
+  }
+
+  function dropCookies(dir) {
+    if (!dir) return;
+    try {
+      fsImpl.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Pasta temporária: o sistema limpa depois.
+    }
+  }
+
   function settle(job, code) {
     if (job.done) return;
     job.done = true;
     jobs.delete(job.id);
+    dropCookies(job.cookieDir);
     const finished =
       !job.killed && code === 0 && Boolean(job.lastPath) && fsImpl.existsSync(job.lastPath);
     if (!finished) removePartials(job);
@@ -395,7 +504,7 @@ function createYtdlpService({
     job.handle.finish("interrupted");
     emit("agzos:ytdlp-error", {
       id: job.id,
-      message: job.error || "O yt-dlp não conseguiu baixar este link.",
+      message: friendlyError(job.error) || "O yt-dlp não conseguiu baixar este link.",
     });
   }
 
@@ -517,7 +626,13 @@ function createYtdlpService({
     },
 
     /** Inicia o download de uma URL na qualidade pedida. */
-    start({ url, quality = "best", private: isPrivate = false } = {}) {
+    async start({
+      url,
+      quality = "best",
+      private: isPrivate = false,
+      tabId = null,
+      owner = null,
+    } = {}) {
       if (!enabled()) return { ok: false, error: "off" };
       const clean = cleanUrl(url);
       if (!clean) return { ok: false, error: "url" };
@@ -538,8 +653,19 @@ function createYtdlpService({
       } catch {
         return { ok: false, error: "dir" };
       }
-      const args = buildArgs({ url: clean, outDir, quality, ffmpeg });
-      if (!args) return { ok: false, error: "quality" };
+      const cookieDir = await writeCookies(clean, owner, tabId);
+      const args = buildArgs({
+        url: clean,
+        outDir,
+        quality,
+        ffmpeg,
+        jsRuntime,
+        cookies: cookieDir ? path.join(cookieDir, "cookies.txt") : null,
+      });
+      if (!args) {
+        dropCookies(cookieDir);
+        return { ok: false, error: "quality" };
+      }
 
       let child;
       try {
@@ -548,8 +674,17 @@ function createYtdlpService({
           windowsHide: true,
           // Grupo próprio no Mac/Linux: cancelar mata também o ffmpeg.
           detached: platform !== "win32",
+          env: {
+            ...env,
+            // Saída em UTF-8 em todo sistema (no Windows viria no code page e quebraria
+            // o caminho de títulos com acento).
+            PYTHONUTF8: "1",
+            PYTHONIOENCODING: "utf-8",
+            ...(jsRuntime ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+          },
         });
       } catch {
+        dropCookies(cookieDir);
         return { ok: false, error: "spawn" };
       }
       const host = hostOfUrl(clean) || "site";
@@ -564,6 +699,7 @@ function createYtdlpService({
         error: "",
         killed: false,
         done: false,
+        cookieDir,
       };
       job.handle = downloads.startExternal({
         url: clean,
@@ -618,11 +754,14 @@ function registerYtdlpIpc(ipcMain, service, { ctxOf = () => null, pick = async (
     return file ? service.pick(file) : { ok: false };
   });
   ipcMain.handle("ytdlp:start", (event, payload = {}) => {
-    if (!ctxOf(event)) return { ok: false, error: "window" };
+    const owner = ctxOf(event);
+    if (!owner) return { ok: false, error: "window" };
     return service.start({
+      owner,
       url: payload.url,
       quality: payload.quality,
       private: Boolean(payload.private),
+      tabId: Number.isSafeInteger(payload.tabId) ? payload.tabId : null,
     });
   });
 }
@@ -637,13 +776,16 @@ module.exports = {
   buildArgs,
   checksumOf,
   cleanUrl,
+  cookieDomainsOf,
   createProgress,
   createYtdlpService,
   findFfmpeg,
   findYtdlp,
   formatArgsOf,
+  friendlyError,
   isKnownVideoHost,
   looksLikeYtdlp,
+  netscapeCookies,
   parseOutputLine,
   parseProgressLine,
   quickCheck,

@@ -32,6 +32,7 @@ export type DesktopYtdlp = {
     url: string;
     quality: YtdlpQuality;
     private: boolean;
+    tabId?: number;
   }): Promise<YtdlpResult>;
   /** Clique direito num vídeo ou link ("Baixar vídeo com yt-dlp"). */
   onYtdlpOpen(callback: (payload: YtdlpOpenPayload) => void): () => void;
