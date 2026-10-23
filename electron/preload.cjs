@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 function subscribe(channel) {
   return (callback) => {
@@ -26,7 +26,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   navigate: (id, url) => ipcRenderer.invoke("tab:navigate", { id, url }),
   goBack: (id) => ipcRenderer.invoke("tab:back", { id }),
   goForward: (id) => ipcRenderer.invoke("tab:forward", { id }),
-  reload: (id, ignoreCache = false) => ipcRenderer.invoke("tab:reload", { id, ignoreCache }),
+  reload: (id, ignoreCache = false, emptyCache = false) =>
+    ipcRenderer.invoke("tab:reload", { id, ignoreCache, emptyCache }),
   snapshotTab: (id) => ipcRenderer.invoke("tab:snapshot", { id }),
   captureTab: (id) => ipcRenderer.invoke("tab:capture", { id }),
   zoom: (id, direction) => ipcRenderer.invoke("tab:zoom", { id, direction }),
@@ -223,6 +224,14 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   captureTake: (mode) => ipcRenderer.invoke("capture:take", { mode }),
   captureCopy: (dataUrl) => ipcRenderer.invoke("capture:copy", { dataUrl }),
   captureSave: (dataUrl) => ipcRenderer.invoke("capture:save", { dataUrl }),
+  // 5.0.3: Agzos Imagem (electron/image-studio.cjs).
+  imagemOpenDialog: () => ipcRenderer.invoke("imagem:open-dialog"),
+  imagemRead: (grant) => ipcRenderer.invoke("imagem:read", { grant }),
+  imagemStage: (dataUrl, name) => ipcRenderer.invoke("imagem:stage", { dataUrl, name }),
+  imagemEditFile: () => ipcRenderer.invoke("imagem:edit-file"),
+  imagemSaveProject: (text, name) => ipcRenderer.invoke("imagem:save-project", { text, name }),
+  imagemOpenProject: () => ipcRenderer.invoke("imagem:open-project"),
+  imagemExport: (bytes, name) => ipcRenderer.invoke("imagem:export", { bytes, name }),
   scratchpadCapture: (id, on) => ipcRenderer.invoke("scratchpad:capture", { id, on }),
   scratchpadSend: (request, tabId) => ipcRenderer.invoke("scratchpad:send", { request, tabId }),
   onNetCapture: subscribe("agzos:net-capture"),
@@ -303,6 +312,23 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onDevtools: subscribe("agzos:devtools"),
   onDevtoolsRequest: subscribe("agzos:devtools-request"),
   onPdfOpen: subscribe("agzos:pdf-open"),
+  // 5.0.3: editor de texto (electron/editor-files.cjs). O caminho de um arquivo arrastado vem
+  // do webUtils (o File do navegador não traz mais o caminho).
+  editorOpen: () => ipcRenderer.invoke("editor:open"),
+  editorRead: (file) => ipcRenderer.invoke("editor:read", { file }),
+  editorStat: (file) => ipcRenderer.invoke("editor:stat", { file }),
+  editorSave: (payload) => ipcRenderer.invoke("editor:save", payload),
+  editorSaveAs: (payload) => ipcRenderer.invoke("editor:save-as", payload),
+  editorWatch: (file) => ipcRenderer.invoke("editor:watch", { file }),
+  editorUnwatch: (file) => ipcRenderer.invoke("editor:unwatch", { file }),
+  onEditorChanged: subscribe("agzos:editor-changed"),
+  filePathOf: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
   // Tradução da página e de trechos (electron/translate-service.cjs).
   translatePage: (id, options) => ipcRenderer.invoke("translate:page", { id, options }),
   translateCancel: (id) => ipcRenderer.invoke("translate:cancel", { id }),
@@ -322,7 +348,8 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   onPdfProgress: subscribe("agzos:pdf-progress"),
   // 5.0: yt-dlp (electron/ytdlp.cjs). O binário e os processos ficam no main.
   ytdlpStatus: () => ipcRenderer.invoke("ytdlp:status"),
-  ytdlpInstall: () => ipcRenderer.invoke("ytdlp:install"),
+  ytdlpInstall: (payload) => ipcRenderer.invoke("ytdlp:install", payload),
+  ytdlpDetails: (id) => ipcRenderer.invoke("ytdlp:details", id),
   ytdlpPick: () => ipcRenderer.invoke("ytdlp:pick"),
   ytdlpStart: (payload) => ipcRenderer.invoke("ytdlp:start", payload),
   onYtdlpOpen: subscribe("agzos:ytdlp-open"),
@@ -353,4 +380,20 @@ contextBridge.exposeInMainWorld("agzosAccount", {
   removeProfile: (id) => ipcRenderer.invoke("profiles:remove", { id }),
   detectProfile: (id) => ipcRenderer.invoke("profiles:detect", { id }),
   onState: subscribe("agzos:account"),
+});
+
+// 5.1: biblioteca de vídeo e áudio (agzos://videos, agzos://musica). Só caminhos e URLs do
+// protocolo agzos-media://; o arquivo em si é lido pelo <video>/<audio>, nunca pelo renderer.
+const mediaToken = ipcRenderer.sendSync("media:token");
+contextBridge.exposeInMainWorld("agzosMedia", {
+  roots: () => ipcRenderer.invoke("media:roots"),
+  list: (dir, kind) => ipcRenderer.invoke("media:list", { dir, kind }),
+  // Síncrono: o token veio uma vez no carregamento; o main recusa o que não é mídia.
+  url: (path) =>
+    typeof path === "string" && (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path))
+      ? `agzos-media://${mediaToken}/${encodeURIComponent(path)}`
+      : null,
+  subtitle: (path) => ipcRenderer.invoke("media:subtitle", { path }),
+  pickFolder: () => ipcRenderer.invoke("media:pick-folder"),
+  onOpen: subscribe("agzos:media-open"),
 });

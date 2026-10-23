@@ -132,7 +132,7 @@ export function useYtdlpShell({
   useEffect(
     () =>
       desktop?.onYtdlpError((payload) => {
-        setNotice(`Download com yt-dlp falhou: ${payload.message}`);
+        setNotice(`Download com yt-dlp falhou: ${payload.message} Copie os detalhes em Downloads.`);
       }),
     [desktop, setNotice],
   );
@@ -171,21 +171,30 @@ export function useYtdlpShell({
     [close, desktop, refresh, setNotice, target],
   );
 
-  const install = useCallback(async () => {
-    if (!desktop) return;
-    setInstalling(true);
-    setError(null);
-    try {
-      const result = await desktop.ytdlpInstall();
-      if (result.ok) setNotice("yt-dlp instalado. Escolha a qualidade do vídeo.");
-      else setError(ytdlpErrorText(result.error));
-    } catch {
-      setError(ytdlpErrorText("download"));
-    } finally {
-      setInstalling(false);
-      void refresh();
-    }
-  }, [desktop, refresh, setNotice]);
+  /** prefer: "Usar o yt-dlp do Agzos" (grava o gerenciado como o escolhido). */
+  const install = useCallback(
+    async (prefer = false) => {
+      if (!desktop) return;
+      setInstalling(true);
+      setError(null);
+      try {
+        const result = await desktop.ytdlpInstall({ prefer });
+        if (result.ok)
+          setNotice(
+            prefer
+              ? "Agora o Agzos usa o yt-dlp dele."
+              : "yt-dlp instalado. Escolha a qualidade do vídeo.",
+          );
+        else setError(ytdlpErrorText(result.error));
+      } catch {
+        setError(ytdlpErrorText("download"));
+      } finally {
+        setInstalling(false);
+        void refresh();
+      }
+    },
+    [desktop, refresh, setNotice],
+  );
 
   const pick = useCallback(async () => {
     if (!desktop) return;
@@ -233,6 +242,9 @@ export function useYtdlpShell({
             known: isKnownVideoHost(target.url),
             installed: Boolean(status?.binary),
             managed: Boolean(status?.managed),
+            version: status?.version ?? null,
+            stale: Boolean(status?.stale),
+            onUseManaged: () => void install(true),
             ffmpeg: Boolean(status?.ffmpeg),
             installing,
             busy,

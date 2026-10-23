@@ -13,6 +13,10 @@ export type YtdlpMenuProps = {
   known: boolean;
   installed: boolean;
   managed: boolean;
+  /** Versão do binário (AAAA.MM.DD); null quando não dá para ler. */
+  version: string | null;
+  /** Escolhido pelo usuário ou do PATH e com mais de 60 dias. */
+  stale: boolean;
   ffmpeg: boolean;
   installing: boolean;
   busy: boolean;
@@ -20,6 +24,7 @@ export type YtdlpMenuProps = {
   onStart: (quality: YtdlpQuality) => void;
   onInstall: () => void;
   onPick: () => void;
+  onUseManaged: () => void;
   onClose: () => void;
 };
 
@@ -74,6 +79,22 @@ export function YtdlpMenu(props: YtdlpMenuProps) {
             </p>
           )}
           {props.known && <p className="ytdlp-note">Site com vídeo: o yt-dlp atende direto.</p>}
+          {props.stale && (
+            <div className="ytdlp-note" role="status">
+              <p>
+                O yt-dlp deste computador é de {props.version ?? "uma versão antiga"}. Sites como o
+                YouTube mudam a cada poucas semanas e os downloads falham com versões antigas.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={props.installing}
+                onClick={props.onUseManaged}
+              >
+                {props.installing ? "Instalando…" : "Usar o yt-dlp do Agzos"}
+              </Button>
+            </div>
+          )}
           {props.managed && (
             <Button variant="ghost" size="sm" disabled={props.installing} onClick={props.onInstall}>
               {props.installing ? "Atualizando…" : "Atualizar yt-dlp"}

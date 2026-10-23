@@ -40,6 +40,8 @@ export const SCRATCHPAD_URL = "agzos://scratchpad";
 export const DOWNLOADS_URL = "agzos://downloads";
 export const PDF_URL = "agzos://pdf";
 export const PDF_HELP_URL = "agzos://ajuda/pdf-tools";
+/** 5.0.3: Agzos Imagem; com grant (?grant=…) abre a imagem que a casca pediu. */
+export const IMAGEM_URL = "agzos://imagem";
 export const homeEntry: Entry = { title: "Nova aba", url: HOME_URL, kind: "home" };
 export const CLOSED_TABS_LIMIT = 20;
 /** Workspace de toda guia sem `workspaceId` (o primeiro, que não pode ser apagado). */

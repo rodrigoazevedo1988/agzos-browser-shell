@@ -12,6 +12,8 @@ import {
 } from "./store/state";
 import { newTabSession } from "./types";
 import { ACCOUNT_URL } from "@/features/account/model";
+import { VIDEOS_URL } from "@/features/media/video/model";
+import { MUSIC_URL } from "@/features/media/audio/model";
 
 /** Id de uma sessão nova (partição "persist:agzos-session-<id>"). */
 function newSessionId() {
@@ -36,6 +38,7 @@ export type CommandId =
   | "page.pip"
   | "settings.open"
   | "account.open"
+  | "music.open"
   | "help.whats-new"
   | "tabs.hibernate-others"
   | "tab.new-private"
@@ -61,6 +64,8 @@ export type CommandId =
   | "colors.eyedropper"
   | "colors.panel"
   | "pdf.open"
+  | "imagem.open"
+  | "videos.open"
   | "page-theme.toggle"
   | "tab.new-right"
   | "tab.reopen-closed"
@@ -109,6 +114,7 @@ export type CommandId =
   | "ai.toggle"
   | "terminal.toggle"
   | "file.open"
+  | "editor.open"
   | "dial.open"
   | "history.open"
   | "bookmarks.manager"
@@ -173,11 +179,15 @@ export type CommandContext = {
     eyedropper: (tabId: number) => void;
     toggleColors: () => void;
     openPdfTools: () => void;
+    /** 5.0.3: Agzos Imagem (agzos://imagem), vazio ou com a imagem de um grant. */
+    openImagem: (grant?: string | null) => void;
     togglePageTheme: (tabId: number) => void;
     /** Tradução: traduz a página da guia ou volta ao original. */
     translatePage: (tabId: number) => void;
     /** 5.0: baixar o vídeo da guia com o yt-dlp (popup de qualidade). */
     openYtdlp: (tabId: number) => void;
+    /** 5.0.3: editor de texto e código (agzos://editor), numa guia nova. */
+    openEditor: () => void;
     /** 4.8: DevTools encaixado da guia (abrir/fechar, Console, seletor, modo dispositivo). */
     devtools: (tabId: number, action: "toggle" | "console" | "inspect" | "device") => void;
     /** 4.8: flag devtools ligada (Configurações → Recursos). */
@@ -321,13 +331,11 @@ export const commands: Command[] = [
     shortcuts: [{ key: "r" }, { key: "f5", mod: false }],
     run: ({ ui }, tabId) => ui.reload(tabId),
   },
+  // 5.0.3: Ctrl+Shift+R, Ctrl+F5, Shift+F5 (e ⌘⇧R no Mac): recarrega sem usar o cache.
   {
     id: "tab.reload-hard",
-    label: "Recarregar sem cache",
-    shortcuts: [
-      { key: "r", shift: true },
-      { key: "f5", shift: true, mod: false },
-    ],
+    label: "Recarregar ignorando o cache",
+    shortcuts: [{ key: "r", shift: true }, { key: "f5" }, { key: "f5", shift: true, mod: false }],
     run: ({ desktop, ui }, tabId) =>
       desktop ? void desktop.reload(tabId, true) : ui.reload(tabId),
   },
@@ -504,6 +512,17 @@ export const commands: Command[] = [
       dispatch({
         type: "nav/open-internal",
         entry: { title: "Conta Agzos", url: ACCOUNT_URL, kind: "internal" },
+      }),
+  },
+  {
+    // 5.1: Músicas (agzos://musica): biblioteca de áudio das pastas do computador.
+    id: "music.open",
+    label: "Músicas",
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Músicas", url: MUSIC_URL, kind: "internal" },
       }),
   },
   {
@@ -752,6 +771,23 @@ export const commands: Command[] = [
     run: ({ ui }) => ui.openPdfTools(),
   },
   {
+    id: "imagem.open",
+    label: "Agzos Imagem",
+    shortcuts: [{ key: "i", alt: true, mod: true }],
+    run: ({ ui }) => ui.openImagem(null),
+  },
+  {
+    // 5.1: biblioteca de vídeos (pastas do computador): só no app.
+    id: "videos.open",
+    label: "Vídeos",
+    visible: ({ desktop }) => desktop !== null,
+    run: ({ dispatch }) =>
+      dispatch({
+        type: "nav/open-internal",
+        entry: { title: "Vídeos", url: VIDEOS_URL, kind: "internal" },
+      }),
+  },
+  {
     id: "page-theme.toggle",
     label: "Tema da página: Dark ou Lightning",
     enabled: onDesktopPage,
@@ -842,6 +878,12 @@ export const commands: Command[] = [
     enabled: ({ desktop }) => desktop !== null,
     visible: ({ desktop }) => desktop !== null,
     run: ({ desktop }) => void desktop?.filesPick(),
+  },
+  // 5.0.3: editor de texto e código (Monaco). Abrir arquivos de texto pelo sistema também vai para ele.
+  {
+    id: "editor.open",
+    label: "Editor de texto",
+    run: ({ ui }) => ui.openEditor(),
   },
   {
     id: "dial.open",

@@ -16,6 +16,7 @@ const ytdlp = require("../../../electron/ytdlp.cjs") as {
     outDir: string;
     quality?: string;
     ffmpeg?: string | null;
+    deno?: boolean;
     jsRuntime?: string | null;
     cookies?: string | null;
   }) => string[] | null;
@@ -244,6 +245,9 @@ describe("yt-dlp: binário e instalação", () => {
   });
 });
 
+/** Espera as continuações assíncronas do serviço (próxima tentativa, checagens). */
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function fakeChild() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -286,8 +290,11 @@ function setup(extra: Record<string, unknown> = {}) {
   const videos = path.join(dir, "Videos");
   const bin = path.join(dir, "fake-yt-dlp");
   fs.writeFileSync(bin, "");
-  const child = fakeChild();
-  const spawn = vi.fn(() => child);
+  // Uma criança por tentativa: a cadeia de novas tentativas abre um processo novo cada vez.
+  const children = [fakeChild(), fakeChild(), fakeChild(), fakeChild()];
+  const child = children[0]!;
+  let spawned = 0;
+  const spawn = vi.fn(() => children[spawned++]!);
   const downloads = fakeDownloads();
   const emit = vi.fn();
   const service = ytdlp.createYtdlpService({
@@ -305,7 +312,7 @@ function setup(extra: Record<string, unknown> = {}) {
     isExecutable: (file: string) => file === bin,
     ...extra,
   });
-  return { dir, videos, bin, child, spawn, downloads, emit, service };
+  return { dir, videos, bin, child, children, spawn, downloads, emit, service };
 }
 
 describe("yt-dlp 5.0.2: YouTube, cookies e UTF-8", () => {
@@ -313,6 +320,7 @@ describe("yt-dlp 5.0.2: YouTube, cookies e UTF-8", () => {
     const args = ytdlp.buildArgs({
       url: "https://www.youtube.com/watch?v=a",
       outDir: "/tmp/v",
+      deno: true,
       jsRuntime: "/opt/Agzos/agzos",
       cookies: "/tmp/c/cookies.txt",
     })!;
@@ -482,10 +490,21 @@ describe("yt-dlp: serviço", () => {
   });
 
   it("falha do yt-dlp vira 'interrompido' e avisa a janela com a mensagem", async () => {
-    const { child, downloads, emit, service } = setup();
+    const { children, spawn, downloads, emit, service } = setup();
     await service.start({ url: "https://tiktok.com/@a/video/1", quality: "best" });
-    child.stderr.emit("data", Buffer.from("ERROR: [TikTok] unavailable\n"));
-    child.emit("close", 1);
+    children[0]!.stderr.emit("data", Buffer.from("ERROR: [TikTok] unavailable\n"));
+    children[0]!.emit("close", 1);
+    // 5.0.3: erro de site comum tenta de novo (Referer/UA e depois formato) antes de desistir.
+    await flush();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    children[1]!.stderr.emit("data", Buffer.from("ERROR: [TikTok] unavailable\n"));
+    children[1]!.emit("close", 1);
+    await flush();
+    expect(spawn).toHaveBeenCalledTimes(3);
+    children[2]!.stderr.emit("data", Buffer.from("ERROR: [TikTok] unavailable\n"));
+    children[2]!.emit("close", 1);
+    await flush();
+    expect(spawn).toHaveBeenCalledTimes(3);
     expect(downloads.handles[0]!.finish).toHaveBeenCalledWith("interrupted");
     expect(emit).toHaveBeenCalledWith("agzos:ytdlp-error", {
       id: 1,
@@ -506,7 +525,7 @@ describe("yt-dlp: serviço", () => {
       ok: false,
       error: "missing",
     });
-    expect(none.service.status().binary).toBeNull();
+    expect((await none.service.status()).binary).toBeNull();
   });
 
   it("instala só com o SHA-256 do release, em <userData>/bin, executável", async () => {

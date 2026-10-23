@@ -3,6 +3,9 @@
 // depois de "--" e o progresso sai pelo gerenciador de downloads (downloads.cjs).
 // Binário: o escolhido pelo usuário (meta ytdlpPath), o PATH e <userData>/bin. Sem nenhum,
 // "Instalar" baixa o asset oficial do GitHub e confere o SHA2-256SUMS do mesmo release.
+// 5.0.3: atualização do binário gerenciado (uma checagem por dia), cadeia de tentativas
+// quando um site recusa, mídia tocada na página como plano B, diagnóstico copiável e a prova
+// do Electron como runtime de JS.
 // Funções puras no topo; o serviço recebe tudo por injeção (spawn, fetch, banco, downloads).
 
 const crypto = require("node:crypto");
@@ -13,11 +16,21 @@ const { StringDecoder } = require("node:string_decoder");
 const { registrableDomain } = require("./page-theme.cjs");
 
 const RELEASE_BASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
+const RELEASE_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
 const SUMS_NAME = "SHA2-256SUMS";
 const MAX_INSTALL_BYTES = 120 * 1024 * 1024;
 const MAX_URL_LENGTH = 2048;
 const MAX_JOBS = 4;
+const MAX_ATTEMPTS = 4;
+const LOG_LINES = 80;
+const REPORTS_KEPT = 20;
 const PROGRESS_TAG = "AGZOSYTDLP";
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = DAY_MS;
+const STALE_DAYS = 60;
+// Mundo isolado da leitura de mídia da página (4131 a 4135 são de outros recursos).
+const MEDIA_WORLD_ID = 4136;
+const YT_CLIENTS_ARG = "youtube:player_client=default,tv,web_safari,mweb,web_embedded";
 
 // Sites que o yt-dlp atende sempre (a barra destaca o botão neles).
 const KNOWN_HOSTS = [
@@ -52,7 +65,7 @@ const EXTRA_DIRS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
 
 /**
  * Onde procurar um executável: o caminho escolhido, o PATH, as pastas comuns e a pasta do
- * app (<userData>/bin), nessa ordem. `name` é o executável (yt-dlp ou ffmpeg).
+ * app (<userData>/bin), nessa ordem. `name` é o executável (yt-dlp, ffmpeg ou deno).
  */
 function candidatesOf(name, { configured = null, env = {}, platform, userData = "" }) {
   const sep = platform === "win32" ? ";" : ":";
@@ -76,10 +89,15 @@ function findYtdlp(options, isExecutable) {
   return ytdlpCandidates(options).find((file) => isExecutable(file)) ?? null;
 }
 
-/** ffmpeg no PATH (ou nas pastas comuns); sem ele o yt-dlp não junta vídeo e áudio. */
-function findFfmpeg({ env = {}, platform }, isExecutable) {
-  const name = platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+/** Executável no PATH (ou nas pastas comuns). */
+function findExecutable(baseName, { env = {}, platform }, isExecutable) {
+  const name = platform === "win32" ? `${baseName}.exe` : baseName;
   return candidatesOf(name, { env, platform }).find((file) => isExecutable(file)) ?? null;
+}
+
+/** ffmpeg no PATH (ou nas pastas comuns); sem ele o yt-dlp não junta vídeo e áudio. */
+function findFfmpeg(options, isExecutable) {
+  return findExecutable("ffmpeg", options, isExecutable);
 }
 
 /** Arquivo escolhido pelo usuário: precisa se chamar yt-dlp (com ou sem versão). */
@@ -134,6 +152,9 @@ function isKnownVideoHost(value) {
   return KNOWN_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+const isYoutubeHost = (host) =>
+  /(^|\.)youtube\.com$/.test(host) || host === "youtu.be" || host.endsWith(".youtu.be");
+
 /** Checagem rápida antes de qualquer processo: { ok, known } ou { ok: false, error: "url" }. */
 function quickCheck(value) {
   const url = cleanUrl(value);
@@ -166,6 +187,26 @@ function formatArgsOf(quality, ffmpeg) {
 }
 
 /**
+ * Formato da última tentativa (plano d). Vídeo com ffmpeg: "b/bv*+ba/best" (720 e 1080 mantêm
+ * o teto da qualidade escolhida); sem ffmpeg: "b". Áudio não tem fallback (devolve null).
+ */
+function fallbackFormatOf(quality, ffmpeg) {
+  if (quality.startsWith("audio")) return null;
+  if (!ffmpeg) return ["-f", "b"];
+  const cap = quality === "720" ? "[height<=720]" : quality === "1080" ? "[height<=1080]" : "";
+  const format = cap ? `b${cap}/bv*${cap}+ba/b` : "b/bv*+ba/best";
+  return ["-f", format, "--merge-output-format", "mp4"];
+}
+
+/** Pasta de cabeçalhos/UA só vale com valor limpo (sem controles, tamanho razoável). */
+function cleanHeaderValue(value, max = 300) {
+  const text = String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim();
+  return text && text.length <= max ? text : null;
+}
+
+/**
  * argv do yt-dlp para uma URL. Sem shell: cada item é um argumento. A URL vai por último,
  * depois de "--", para nunca ser lida como opção. Devolve null se a qualidade não existe.
  */
@@ -175,10 +216,16 @@ function buildArgs({
   quality = "best",
   ffmpeg = null,
   jsRuntime = null,
+  deno = false,
   cookies = null,
+  format = null,
+  extraArgs = [],
+  referer = null,
+  userAgent = null,
+  impersonate = false,
 }) {
-  const format = formatArgsOf(quality, Boolean(ffmpeg));
-  if (!format || typeof url !== "string" || !outDir) return null;
+  const formatArgs = format ?? formatArgsOf(quality, Boolean(ffmpeg));
+  if (!formatArgs || typeof url !== "string" || !outDir) return null;
   // "%" na pasta é máscara do yt-dlp: escapa só ela; o nome vem do próprio yt-dlp.
   const template = path.join(outDir.replace(/%/g, "%%"), "%(title)s [%(id)s].%(ext)s");
   const args = [
@@ -188,18 +235,25 @@ function buildArgs({
     "--no-colors",
     "--progress-template",
     `download:${PROGRESS_TAG}|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s`,
-    ...format,
+    ...formatArgs,
     "--trim-filenames",
     "180",
     "-o",
     template,
   ];
   if (ffmpeg) args.push("--ffmpeg-location", ffmpeg);
-  // YouTube exige um runtime de JS para os desafios do player. O deno do usuário vale se
-  // existir; senão o próprio Electron roda como node (ELECTRON_RUN_AS_NODE no ambiente).
-  if (jsRuntime) args.push("--js-runtimes", "deno", "--js-runtimes", `node:${jsRuntime}`);
+  // Runtime de JS para os desafios do YouTube: o deno do sistema e/ou o próprio Electron como
+  // node (ELECTRON_RUN_AS_NODE no ambiente, só depois da prova de que funciona).
+  if (deno) args.push("--js-runtimes", "deno");
+  if (jsRuntime) args.push("--js-runtimes", `node:${jsRuntime}`);
   // Cookies da guia (arquivo temporário): login no YouTube, Instagram, Facebook, X…
   if (cookies) args.push("--cookies", cookies);
+  if (impersonate) args.push("--impersonate", "chrome");
+  const cleanReferer = cleanUrl(referer);
+  if (cleanReferer) args.push("--add-headers", `Referer:${cleanReferer}`);
+  const agent = cleanHeaderValue(userAgent);
+  if (agent) args.push("--user-agent", agent);
+  args.push(...extraArgs);
   args.push("--", url);
   return args;
 }
@@ -251,23 +305,375 @@ function netscapeCookies(cookies, domains) {
   return lines.length > 2 ? `${lines.join("\n")}\n` : null;
 }
 
+/* ---------- Erros: classificação, texto para o usuário e plano de nova tentativa ---------- */
+
+/** Motivos que nenhuma nova tentativa resolve (com a mensagem para o usuário). */
+function terminalMessageOf(text) {
+  if (/\bDRM\b|DRM protected|drm-protected/i.test(text))
+    return "Este vídeo tem DRM e não pode ser baixado.";
+  if (
+    /(?:not\s+)?available in your country|blocked (?:it )?in your country|geo[- ]?restrict|geo[- ]?block/i.test(
+      text,
+    )
+  )
+    return "Este vídeo não está disponível no seu país (bloqueio regional).";
+  if (
+    /will begin in|premieres in|live event has not started|upcoming live|not started yet/i.test(
+      text,
+    )
+  )
+    return "A transmissão ainda não começou. Tente depois do horário marcado.";
+  if (/private video|members[- ]only|This video is private|Join this channel/i.test(text))
+    return "O vídeo é privado ou exclusivo para membros.";
+  if (/private video|Video unavailable|This video is unavailable/i.test(text))
+    return "O vídeo é privado ou não está disponível.";
+  if (/has been removed|removed by the uploader/i.test(text)) return "O vídeo foi removido.";
+  if (/HTTP Error 429|Too Many Requests/i.test(text))
+    return "O site limitou os downloads por agora. Tente de novo em alguns minutos.";
+  return null;
+}
+
+/** O que o texto do erro significa para a cadeia de tentativas. */
+function classifyError(text, host = "") {
+  const message = String(text ?? "");
+  const yt = isYoutubeHost(String(host)) || /\[youtube/i.test(message);
+  return {
+    terminal: terminalMessageOf(message),
+    unsupported: /Unsupported URL/i.test(message),
+    yt,
+    ytSpecific:
+      /confirm you.?re not a bot|Sign in|nsig|PO Token|player|HTTP Error 403|Forbidden|Requested format is not available|confirm your age|age[- ]restricted/i.test(
+        message,
+      ),
+    format: /Requested format is not available|No video formats found|requested format/i.test(
+      message,
+    ),
+  };
+}
+
 /** Erro do yt-dlp → texto curto para o usuário, quando há um conhecido. */
 function friendlyError(message) {
   const text = String(message ?? "");
+  if (/confirm your age|age[- ]restricted/i.test(text))
+    return "Este vídeo tem restrição de idade. Entre na sua conta do YouTube nesta guia e tente de novo.";
+  const terminal = terminalMessageOf(text);
+  if (terminal) return terminal;
   if (/confirm you.?re not a bot|Sign in to confirm/i.test(text))
     return "O YouTube pediu login. Entre na sua conta do YouTube nesta guia e tente de novo.";
   if (/login required|log in|logged-in|cookies/i.test(text))
     return "Este site pede login. Entre na sua conta nesta guia e tente de novo.";
-  if (/private video|Video unavailable|This video is unavailable/i.test(text))
-    return "O vídeo é privado ou não está disponível.";
   if (/Unsupported URL/i.test(text)) return "O yt-dlp não reconhece vídeo neste link.";
   if (/Requested format is not available/i.test(text))
     return 'Essa qualidade não existe para este vídeo. Tente "Vídeo (melhor)".';
-  if (/HTTP Error 429|Too Many Requests/i.test(text))
-    return "O site limitou os downloads por agora. Tente de novo em alguns minutos.";
   return text;
 }
 
+const STEP_LABEL = {
+  "yt-clients": "clientes do YouTube",
+  "site-headers": "Referer, navegador e UA da guia",
+  "no-cookies": "sem cookies",
+  format: "formato alternativo",
+  media: "mídia tocada na página",
+};
+
+/**
+ * Próximo passo depois de uma tentativa que falhou, ou null. Ordem: clientes do YouTube (só
+ * para erros do YouTube), Referer/UA/impersonação (outros sites), sem cookies, formato. Cada
+ * passo entra uma vez e os anteriores continuam valendo. Sem o plano B de mídia, um
+ * "Unsupported URL" vira a mídia que a página tocou.
+ */
+function nextAttempt({
+  text = "",
+  host = "",
+  applied = [],
+  attempts = 1,
+  cookies = false,
+  video = false,
+}) {
+  if (attempts >= MAX_ATTEMPTS) return null;
+  const c = classifyError(text, host);
+  if (c.terminal) return null;
+  const has = (id) => applied.includes(id);
+  const step = (id) => ({ id, label: STEP_LABEL[id] });
+  if (c.unsupported) return has("media") ? null : step("media");
+  if (c.yt && c.ytSpecific && !has("yt-clients")) return step("yt-clients");
+  if (!c.yt && !has("site-headers")) return step("site-headers");
+  if (cookies && !has("no-cookies")) return step("no-cookies");
+  if (video && !has("format")) return step("format");
+  return null;
+}
+
+/** Opções de uma tentativa a partir dos passos já aplicados (acumulados). */
+function attemptOptionsOf(applied = [], { quality = "best", ffmpeg = false, referer, userAgent }) {
+  const has = (id) => applied.includes(id);
+  return {
+    extraArgs: has("yt-clients") ? ["--extractor-args", YT_CLIENTS_ARG] : [],
+    format: has("format") ? fallbackFormatOf(quality, ffmpeg) : null,
+    referer: has("site-headers") ? referer || null : null,
+    userAgent: has("site-headers") ? userAgent || null : null,
+    // Só o pedido: quem decide se o navegador impersonado existe é o serviço (uma vez).
+    impersonate: has("site-headers"),
+    cookies: !has("no-cookies"),
+  };
+}
+
+/* ---------- Versões, atualização e runtime ---------- */
+
+/** Versão do yt-dlp (AAAA.MM.DD, às vezes com .HHMMSS) a partir da saída de --version. */
+function parseVersion(text) {
+  const match = /(\d{4}\.\d{2}\.\d{2}(?:\.\d+)?)/.exec(String(text ?? ""));
+  return match ? match[1] : null;
+}
+
+/** Tag do release mais recente (JSON da API do GitHub). */
+function tagOf(json) {
+  try {
+    return parseVersion(JSON.parse(String(json ?? ""))?.tag_name);
+  } catch {
+    return null;
+  }
+}
+
+function versionDateOf(version) {
+  const match = /^(\d{4})\.(\d{2})\.(\d{2})/.exec(String(version ?? ""));
+  if (!match) return null;
+  const time = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isFinite(time) ? time : null;
+}
+
+/** Idade da versão em dias (null sem versão reconhecível). */
+function versionAgeDays(version, now) {
+  const time = versionDateOf(version);
+  if (time === null) return null;
+  return Math.floor((now - time) / DAY_MS);
+}
+
+/** Versão de usuário (escolhida ou do PATH) com mais de `days` dias. */
+function isStaleVersion(version, now, days = STALE_DAYS) {
+  const age = versionAgeDays(version, now);
+  return age !== null && age > days;
+}
+
+/**
+ * Checa o release só no binário gerenciado, no máximo uma vez por intervalo. Relógio que voltou
+ * também conta como vencido.
+ */
+function shouldCheckRelease({ managed, checkedAt, now, intervalMs = CHECK_INTERVAL_MS }) {
+  if (!managed) return false;
+  const last = Number(checkedAt);
+  if (!Number.isFinite(last) || last <= 0) return true;
+  if (now < last) return true;
+  return now - last >= intervalMs;
+}
+
+/** Atualiza só quando as duas versões são conhecidas e diferentes. */
+function needsUpdate(installed, latest) {
+  const a = parseVersion(installed);
+  const b = parseVersion(latest);
+  return Boolean(a && b && a !== b);
+}
+
+/** O `--version` de um node válido: "v22.23.4". */
+function isNodeVersionOutput(text) {
+  return /^v\d+\.\d+\.\d+/m.test(String(text ?? "").trim());
+}
+
+/** Saída de --list-impersonate-targets: há um alvo "chrome" disponível (curl_cffi). */
+function hasImpersonateTarget(text, name = "chrome") {
+  const wanted = new RegExp(`^\\s*${name}\\b`, "i");
+  return String(text ?? "")
+    .split(/\r?\n/)
+    .some((line) => wanted.test(line) && !/unavailable/i.test(line));
+}
+
+/* ---------- Mídia da página (plano B para sites que o yt-dlp não reconhece) ---------- */
+
+const MEDIA_PROBE_SOURCE = `(() => {
+  const found = [];
+  const seen = new Set();
+  const add = (url, playing) => {
+    if (typeof url !== "string" || !/^https?:/i.test(url) || seen.has(url) || found.length >= 20) return;
+    seen.add(url);
+    found.push({ url, playing: Boolean(playing) });
+  };
+  for (const media of document.querySelectorAll("video, audio")) {
+    const playing = !media.paused && !media.ended;
+    add(media.currentSrc || media.src, playing);
+    for (const source of media.querySelectorAll("source[src]")) add(source.src, playing);
+  }
+  return found;
+})()`;
+
+/** Tipo do recurso pelo MIME e pelo caminho; segmentos (.ts, .m4s) não contam. */
+function mediaKind(url, contentType = "") {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return null;
+  const type = String(contentType ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (type === "application/vnd.apple.mpegurl" || type === "application/x-mpegurl") return "hls";
+  if (type === "application/dash+xml") return "dash";
+  if (type === "video/mp2t" || type === "video/iso.segment") return null;
+  let pathname;
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (/\.(ts|m4s|m4f|cmfv|cmfa)$/.test(pathname)) return null;
+  if (/^video\//.test(type)) return "video";
+  if (/^audio\//.test(type)) return "audio";
+  if (pathname.endsWith(".m3u8")) return "hls";
+  if (pathname.endsWith(".mpd")) return "dash";
+  if (/\.(mp4|webm|mov|m4v|mkv)$/.test(pathname)) return "video";
+  if (/\.(m4a|mp3|ogg|oga|opus|aac|wav)$/.test(pathname)) return "audio";
+  return null;
+}
+
+/** Chave do recurso: origem + caminho (sem a query, que muda a cada carregamento). */
+function resourceKeyOf(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/** Valor de um cabeçalho de resposta (objeto do webRequest: nomes e valores em array). */
+function headerValueOf(headers, name) {
+  if (!headers || typeof headers !== "object") return "";
+  const wanted = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() !== wanted) continue;
+    const value = headers[key];
+    return String(Array.isArray(value) ? (value[0] ?? "") : (value ?? ""));
+  }
+  return "";
+}
+
+/**
+ * Respostas de mídia por guia (webContentsId), limitadas: `perTab` URLs por guia e `tabs`
+ * guias (a mais antiga sai). Mesma URL sem query substitui a antiga.
+ */
+function createMediaLog({ perTab = 30, tabs = 100 } = {}) {
+  const logs = new Map();
+  const note = (id, url, contentType = "", at = Date.now()) => {
+    if (!Number.isSafeInteger(id) || id < 0) return false;
+    if (typeof url !== "string" || url.length > MAX_URL_LENGTH || !/^https?:\/\//i.test(url))
+      return false;
+    const kind = mediaKind(url, contentType);
+    if (!kind) return false;
+    let list = logs.get(id);
+    if (list) {
+      logs.delete(id);
+    } else {
+      list = [];
+      if (logs.size >= tabs) logs.delete(logs.keys().next().value);
+    }
+    logs.set(id, list);
+    const key = resourceKeyOf(url);
+    const index = list.findIndex((item) => item.key === key);
+    if (index >= 0) list.splice(index, 1);
+    list.push({ url, kind, key, at });
+    if (list.length > perTab) list.splice(0, list.length - perTab);
+    return true;
+  };
+  return {
+    /** Chamado pelo onHeadersReceived da session (main.cjs), só com o que o webRequest traz. */
+    noteResponse(details, at) {
+      if (!details) return false;
+      return note(
+        details.webContentsId,
+        details.url,
+        headerValueOf(details.responseHeaders, "content-type"),
+        at,
+      );
+    },
+    note,
+    /** Mais recente primeiro. */
+    list(id) {
+      return (logs.get(id) ?? []).slice().reverse();
+    },
+    forget(id) {
+      logs.delete(id);
+    },
+  };
+}
+
+const KIND_SCORE = { hls: 100, dash: 90, video: 60, audio: 30 };
+
+/**
+ * Candidatos de mídia para o yt-dlp, do melhor para o pior: manifesto (m3u8/mpd) antes de
+ * arquivo; o que a página está tocando (dom) ganha; mesmo site da página ganha um pouco.
+ * blob: e data: não entram. Devolve { url, kind }.
+ */
+function rankMediaCandidates(entries, { pageUrl = "", max = 3 } = {}) {
+  const pageSite = registrableDomain(hostOfUrl(pageUrl));
+  const best = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const url = cleanUrl(entry?.url);
+    if (!url) continue;
+    const kind =
+      entry.kind && KIND_SCORE[entry.kind]
+        ? entry.kind
+        : (mediaKind(url, entry.contentType ?? "") ?? (entry.source === "dom" ? "video" : null));
+    if (!kind || !KIND_SCORE[kind]) continue;
+    let score = KIND_SCORE[kind];
+    if (entry.source === "dom") score += 15;
+    if (entry.playing) score += 10;
+    if (pageSite && registrableDomain(hostOfUrl(url)) === pageSite) score += 5;
+    const key = resourceKeyOf(url);
+    const at = Number(entry.at) || 0;
+    const current = best.get(key);
+    if (!current || score > current.score || (score === current.score && at > current.at)) {
+      best.set(key, { url, kind, score, at });
+    }
+  }
+  return [...best.values()]
+    .sort((a, b) => b.score - a.score || b.at - a.at)
+    .slice(0, max)
+    .map(({ url, kind }) => ({ url, kind }));
+}
+
+/* ---------- Diagnóstico ---------- */
+
+/** Linha de saída sem o que não pode sair (cabeçalhos de cookie/autorização, tokens na URL). */
+function redactLine(line) {
+  const text = String(line ?? "").slice(0, 500);
+  if (/\b(cookie|set-cookie|authorization|proxy-authorization)\b\s*[:=]/i.test(text))
+    return "[linha omitida: cabeçalho sensível]";
+  return text.replace(
+    /([?&][^=&\s]*(?:token|sig|signature|key|auth|session|cookie|hmac)[^=&\s]*=)[^&\s]+/gi,
+    "$1***",
+  );
+}
+
+/** Texto copiável: versão, sistema, tentativas e as últimas linhas (já sem segredos). */
+function diagnosticsText(report) {
+  const lines = [
+    "Diagnóstico do Agzos (yt-dlp)",
+    `Quando: ${report.when}`,
+    `yt-dlp: ${report.version ?? "versão não identificada"} (${report.origin})`,
+    `Sistema: ${report.platform} · Electron ${report.electron ?? "?"}`,
+    `Runtime de JS: ${report.runtime} · ffmpeg: ${report.ffmpeg ? "sim" : "não"}`,
+    `Site: ${report.host || "?"} · Qualidade: ${report.quality} · Resultado: ${report.state}`,
+  ];
+  if (report.message) lines.push(`Erro: ${report.message}`);
+  lines.push("", "Tentativas:");
+  if (!report.attempts.length) lines.push("(nenhuma)");
+  report.attempts.forEach((attempt, index) => {
+    const error = attempt.error ? ` · ${attempt.error}` : "";
+    lines.push(`${index + 1}. ${attempt.label} → saída ${attempt.exit}${error}`);
+  });
+  lines.push("", "Últimas linhas:");
+  lines.push(...(report.lines.length ? report.lines : ["(sem saída)"]));
+  return lines.join("\n");
+}
+
+/* ---------- Progresso, saída e arquivos ---------- */
+
+/** Progresso (--progress-template) → números, ou null se não for dela. */
 const numberOrNull = (text) => {
   if (text === undefined || text === "" || text === "NA" || text === "None") return null;
   const value = Number(text);
@@ -366,17 +772,55 @@ function defaultExecutable(file) {
   }
 }
 
+/** Promessa com prazo: quem não responde a tempo vira null (nunca trava o download). */
+function withTimeout(promise, ms) {
+  let timer = null;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([Promise.resolve(promise).catch(() => null), late]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
+/**
+ * Executa um programa com argv (sem shell) e devolve { ok, stdout, stderr }. `execFile` é o do
+ * child_process; o serviço nunca quebra por causa de um processo que não roda.
+ */
+function execCapture(execFile) {
+  return (file, args, { timeout = 20000, env = {} } = {}) =>
+    new Promise((resolve) => {
+      try {
+        execFile(
+          file,
+          args,
+          { timeout, windowsHide: true, maxBuffer: 1024 * 1024, env },
+          (error, stdout, stderr) =>
+            resolve({ ok: !error, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }),
+        );
+      } catch {
+        resolve({ ok: false, stdout: "", stderr: "" });
+      }
+    });
+}
+
 /**
  * Serviço do yt-dlp. Dependências (todas opcionais nos testes):
  *  spawn, execFile       child_process
  *  userDataDir()         pasta de dados do app (bin/ fica dentro)
  *  platform, arch, env, home
- *  getMeta(key) / setMeta(key, value)   meta "ytdlpPath"
+ *  getMeta(key) / setMeta(key, value)   metas ytdlpPath, ytdlpCheckedAt, ytdlpNodeProbe
  *  downloads.startExternal({...})       gerenciador (lista, progresso, cancelar)
  *  routeFor({url, filename, mime})      { dir, tags } da regra de downloads
  *  fetchImpl(url)                       Response (fetch) para instalar
  *  emit(channel, payload)               aviso para todas as janelas (erros)
  *  enabled()                            flag ytdlp
+ *  jsRuntime                            caminho do Electron (node) a provar
+ *  probeKey                             versão do Electron: a prova roda uma vez por versão
+ *  capture(file, args, {timeout, env})  execCapture(execFile): --version, impersonação
+ *  latestTag()                          tag do release mais recente (null se não souber)
+ *  tabAgentFor(owner, tabId)            { userAgent, pageUrl } da guia
+ *  mediaFor(owner, tabId)               [{ url, playing, source, kind, at }] da página
  */
 function createYtdlpService({
   spawn,
@@ -385,7 +829,6 @@ function createYtdlpService({
   platform = process.platform,
   arch = process.arch,
   env = process.env,
-  home = "",
   getMeta = () => null,
   setMeta = () => {},
   downloads,
@@ -397,12 +840,24 @@ function createYtdlpService({
   now = Date.now,
   fsImpl = fs,
   jsRuntime = null,
+  probeKey = "",
   cookiesFor = async () => null,
   tempDir = () => os.tmpdir(),
+  capture = null,
+  latestTag = null,
+  tabAgentFor = () => null,
+  mediaFor = null,
 }) {
-  // id do download → job (processo vivo).
+  // id do download → job (processo vivo ou tentativa em andamento).
   const jobs = new Map();
+  // Diagnóstico de downloads terminados (o botão "Copiar detalhes" lê daqui).
+  const reports = new Map();
+  const versions = new Map();
+  const impersonation = new Map();
   let installing = false;
+  let service = null;
+  // Runtime de JS: começa como o Electron; `probeRuntime` confirma (ou tira) depois.
+  let nodeRuntime = jsRuntime || null;
 
   const managedPath = () => path.join(userDataDir(), "bin", binaryNameOf(platform));
   const binaryPath = () => {
@@ -418,6 +873,46 @@ function createYtdlpService({
     );
   };
   const ffmpegPath = () => findFfmpeg({ env, platform }, isExecutable);
+  const denoPath = () => findExecutable("deno", { env, platform }, isExecutable);
+
+  const mtimeOf = (file) => {
+    try {
+      return fsImpl.statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Versão do binário (cache por caminho e data de modificação). */
+  async function versionOf(file) {
+    const mtime = mtimeOf(file);
+    if (!file || mtime === null || !capture) return null;
+    const hit = versions.get(file);
+    if (hit && hit.mtime === mtime) return hit.version;
+    const result = await capture(file, ["--version"], { timeout: 30000, env: utf8Env() });
+    const version = result?.ok ? parseVersion(result.stdout) : null;
+    if (version) versions.set(file, { mtime, version });
+    return version;
+  }
+
+  /** O binário conhece o alvo "chrome" (curl_cffi)? Consultado uma vez por versão do arquivo. */
+  async function canImpersonate(file) {
+    const mtime = mtimeOf(file);
+    if (!file || mtime === null || !capture) return false;
+    const hit = impersonation.get(file);
+    if (hit && hit.mtime === mtime) return hit.ok;
+    const result = await capture(file, ["--list-impersonate-targets"], {
+      timeout: 30000,
+      env: utf8Env(),
+    });
+    const ok = Boolean(result?.ok) && hasImpersonateTarget(`${result.stdout}\n${result.stderr}`);
+    impersonation.set(file, { mtime, ok });
+    return ok;
+  }
+
+  function utf8Env(extra = {}) {
+    return { ...env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", ...extra };
+  }
 
   async function fetchBytes(url) {
     const response = await fetchImpl(url, { cache: "no-store" });
@@ -485,15 +980,95 @@ function createYtdlpService({
     }
   }
 
-  function settle(job, code) {
+  /** Atualização do binário gerenciado: checa o release no máximo uma vez por dia. */
+  async function refreshManaged(binary) {
+    if (!latestTag || !binary) return;
+    const managed = binary === managedPath();
+    if (!shouldCheckRelease({ managed, checkedAt: getMeta("ytdlpCheckedAt"), now: now() })) return;
+    // Marca antes: falha de rede não vira uma checagem a cada download.
+    setMeta("ytdlpCheckedAt", now());
+    const latest = await withTimeout(latestTag(), 8000);
+    if (!latest) return;
+    const installed = await versionOf(binary);
+    if (!needsUpdate(installed, latest)) return;
+    await service.install();
+  }
+
+  /** Pega o próximo trecho de mídia que a página tocou (null se não há). */
+  async function pickMedia(job) {
+    if (!mediaFor) return null;
+    const entries = await withTimeout(mediaFor(job.owner, job.tabId), 5000);
+    const ranked = rankMediaCandidates(entries ?? [], { pageUrl: job.pageUrl || job.url });
+    return ranked.find((item) => item.url !== job.url) ?? null;
+  }
+
+  /** argv da próxima tentativa (com o que já foi aplicado). */
+  async function prepareArgs(job) {
+    const opts = attemptOptionsOf(job.applied, {
+      quality: job.quality,
+      ffmpeg: Boolean(job.ffmpeg),
+      referer: job.pageUrl,
+      userAgent: job.userAgent,
+    });
+    const impersonate = opts.impersonate ? await canImpersonate(job.binary) : false;
+    return buildArgs({
+      url: job.url,
+      outDir: job.outDir,
+      quality: job.quality,
+      ffmpeg: job.ffmpeg,
+      jsRuntime: job.node,
+      deno: job.deno,
+      cookies: job.cookiesOn && job.cookieDir ? path.join(job.cookieDir, "cookies.txt") : null,
+      format: opts.format,
+      extraArgs: opts.extraArgs,
+      referer: opts.referer,
+      userAgent: opts.userAgent,
+      impersonate,
+    });
+  }
+
+  function spawnChild(job, args) {
+    return spawn(job.binary, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      // Grupo próprio no Mac/Linux: cancelar mata também o ffmpeg.
+      detached: platform !== "win32",
+      env: utf8Env(job.node ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    });
+  }
+
+  function remember(job, state) {
+    const text = diagnosticsText({
+      when: new Date(now()).toISOString(),
+      version: job.version,
+      origin: job.origin,
+      platform: `${platform} ${arch}`,
+      electron: process.versions?.electron ?? null,
+      runtime: job.node ? "Electron como node" : job.deno ? "deno" : "nenhum",
+      ffmpeg: Boolean(job.ffmpeg),
+      host: job.host,
+      quality: job.quality,
+      state,
+      message: job.error,
+      attempts: job.attempts,
+      lines: job.lines,
+    });
+    reports.delete(job.id);
+    reports.set(job.id, text);
+    if (reports.size > REPORTS_KEPT) reports.delete(reports.keys().next().value);
+  }
+
+  /** Fim do download: uma vez só. Cancelado, concluído ou interrompido (com aviso). */
+  function settle(job, state) {
     if (job.done) return;
     job.done = true;
     jobs.delete(job.id);
     dropCookies(job.cookieDir);
-    const finished =
-      !job.killed && code === 0 && Boolean(job.lastPath) && fsImpl.existsSync(job.lastPath);
+    job.cookieDir = null;
+    const finished = state === "completed";
     if (!finished) removePartials(job);
-    if (job.killed) {
+    remember(job, state);
+    if (state === "cancelled") {
       job.handle.finish("cancelled");
       return;
     }
@@ -508,12 +1083,26 @@ function createYtdlpService({
     });
   }
 
+  function resetAttempt(job) {
+    job.progress = createProgress();
+    job.created = new Set();
+    job.lastPath = "";
+    job.error = "";
+    job.attemptText = "";
+  }
+
   function onLine(job, line) {
     const progress = parseProgressLine(line);
     if (progress) {
       const sum = job.progress.feed(progress);
       job.handle.update({ receivedBytes: sum.received, totalBytes: sum.total });
       return;
+    }
+    const kept = redactLine(line);
+    job.lines.push(kept);
+    if (job.lines.length > LOG_LINES) job.lines.splice(0, job.lines.length - LOG_LINES);
+    if (/^(ERROR|WARNING):/.test(kept.trim()) && job.attemptText.length < 4000) {
+      job.attemptText += `${kept.trim()}\n`;
     }
     const output = parseOutputLine(line);
     if (!output) return;
@@ -558,7 +1147,120 @@ function createYtdlpService({
     stream.buffer = "";
   }
 
-  /** Para o download: mata o processo; o "close" marca como cancelado e limpa os parciais. */
+  /** Fim de uma tentativa: sucesso, cancelamento, ou o próximo passo da cadeia. */
+  async function finishAttempt(job, attempt, child, out, err, code) {
+    if (attempt.closed) return;
+    attempt.closed = true;
+    if (job.child === child) job.child = null;
+    flush(job, out);
+    flush(job, err);
+    if (job.done) return;
+    const firstError = job.attemptText.split("\n").find((line) => line.startsWith("ERROR:"));
+    job.attempts.push({
+      label: attempt.label,
+      exit: code,
+      error: firstError ? firstError.slice(0, 300) : "",
+    });
+    if (job.killed) {
+      settle(job, "cancelled");
+      return;
+    }
+    if (code === 0 && job.lastPath && fsImpl.existsSync(job.lastPath)) {
+      settle(job, "completed");
+      return;
+    }
+    // Saída 0 sem arquivo, ou o processo nem abriu: não há o que tentar de novo.
+    if (job.spawnFailed || code === 0) {
+      settle(job, "interrupted");
+      return;
+    }
+    const next = nextAttempt({
+      text: job.attemptText,
+      host: job.host,
+      applied: job.applied,
+      attempts: job.attempts.length,
+      cookies: job.cookiesOn,
+      video: job.video,
+    });
+    if (!next) {
+      settle(job, "interrupted");
+      return;
+    }
+    removePartials(job);
+    resetAttempt(job);
+    if (next.id === "media") {
+      const picked = await pickMedia(job).catch(() => null);
+      if (job.killed) {
+        settle(job, "cancelled");
+        return;
+      }
+      if (!picked) {
+        job.error = "Unsupported URL";
+        settle(job, "interrupted");
+        return;
+      }
+      job.url = picked.url;
+      job.applied.push("media", "site-headers");
+    } else {
+      job.applied.push(next.id);
+      if (next.id === "no-cookies") {
+        job.cookiesOn = false;
+        dropCookies(job.cookieDir);
+        job.cookieDir = null;
+      }
+    }
+    await launch(job, next.label);
+  }
+
+  /** Abre a próxima tentativa do job (uma spawn por tentativa). */
+  async function launch(job, label) {
+    let args = null;
+    try {
+      args = await prepareArgs(job);
+    } catch {
+      args = null;
+    }
+    if (job.killed) {
+      settle(job, "cancelled");
+      return;
+    }
+    if (!args) {
+      settle(job, "interrupted");
+      return;
+    }
+    job.handle.update({ receivedBytes: 0, totalBytes: 0 });
+    let child;
+    try {
+      child = spawnChild(job, args);
+    } catch {
+      job.error = "Não foi possível abrir o yt-dlp.";
+      job.spawnFailed = true;
+      settle(job, "interrupted");
+      return;
+    }
+    job.attemptLabel = label ?? "normal";
+    attach(job, child);
+  }
+
+  /** Liga a saída e o fim do processo a uma tentativa. */
+  function attach(job, child) {
+    const attempt = { label: job.attemptLabel ?? "normal", closed: false };
+    job.child = child;
+    const out = { decoder: new StringDecoder("utf8"), buffer: "" };
+    const err = { decoder: new StringDecoder("utf8"), buffer: "" };
+    child.stdout?.on("data", (chunk) => consume(job, out, chunk));
+    child.stderr?.on("data", (chunk) => consume(job, err, chunk));
+    child.on("error", () => {
+      job.error = job.error || "Não foi possível abrir o yt-dlp.";
+      job.spawnFailed = true;
+      void finishAttempt(job, attempt, child, out, err, -1);
+    });
+    child.on("close", (code) => {
+      void finishAttempt(job, attempt, child, out, err, code);
+    });
+  }
+
+  /** Para o download: mata o processo; a cadeia para e o "close" marca como cancelado. */
   function stop(job) {
     if (job.done) return false;
     job.killed = true;
@@ -566,22 +1268,28 @@ function createYtdlpService({
     return true;
   }
 
-  return {
-    /** Estado para a barra e o menu: caminhos, se é o instalado e se há ffmpeg. */
-    status() {
+  service = {
+    /** Estado para a barra e o menu: caminhos, versão, se é o instalado e se há ffmpeg. */
+    async status() {
       const binary = binaryPath();
+      const managed = Boolean(binary) && binary === managedPath();
+      const version = binary ? await versionOf(binary) : null;
       return {
         enabled: enabled(),
         binary,
-        managed: Boolean(binary) && binary === managedPath(),
+        managed,
         ffmpeg: Boolean(ffmpegPath()),
         installing,
         jobs: jobs.size,
+        version,
+        // Binário escolhido ou do PATH com mais de 60 dias: a casca oferece o do Agzos.
+        stale: !managed && isStaleVersion(version, now()),
+        ageDays: versionAgeDays(version, now()),
       };
     },
 
     /** Baixa o yt-dlp oficial, confere o SHA2-256SUMS do mesmo release e instala. */
-    async install() {
+    async install({ prefer = false } = {}) {
       if (!enabled()) return { ok: false, error: "off" };
       if (installing) return { ok: false, error: "busy" };
       const asset = assetNameOf(platform, arch);
@@ -607,6 +1315,9 @@ function createYtdlpService({
             return { ok: false, error: "in-use" };
           throw error;
         }
+        versions.delete(target);
+        // "Usar o yt-dlp do Agzos": o caminho gravado passa a ser o gerenciado.
+        if (prefer) setMeta("ytdlpPath", target);
         return { ok: true, path: target };
       } catch {
         return { ok: false, error: "download" };
@@ -622,7 +1333,33 @@ function createYtdlpService({
         return { ok: false, error: "invalid" };
       if (!looksLikeYtdlp(file) || !isExecutable(file)) return { ok: false, error: "invalid" };
       setMeta("ytdlpPath", file);
+      versions.delete(file);
       return { ok: true, binary: file };
+    },
+
+    /**
+     * Prova o Electron como runtime de JS (`<execPath> --version` com ELECTRON_RUN_AS_NODE). Uma
+     * vez por versão do Electron (meta ytdlpNodeProbe); se falhar, o runtime some e vale o deno.
+     */
+    async probeRuntime() {
+      if (!jsRuntime) {
+        nodeRuntime = null;
+        return null;
+      }
+      if (!capture) return nodeRuntime;
+      const cached = getMeta("ytdlpNodeProbe");
+      if (cached && typeof cached === "object" && cached.key === probeKey) {
+        nodeRuntime = cached.ok ? jsRuntime : null;
+        return nodeRuntime;
+      }
+      const result = await capture(jsRuntime, ["--version"], {
+        timeout: 15000,
+        env: utf8Env({ ELECTRON_RUN_AS_NODE: "1" }),
+      });
+      const ok = Boolean(result?.ok) && isNodeVersionOutput(result.stdout);
+      setMeta("ytdlpNodeProbe", { key: probeKey, ok });
+      nodeRuntime = ok ? jsRuntime : null;
+      return nodeRuntime;
     },
 
     /** Inicia o download de uma URL na qualidade pedida. */
@@ -653,54 +1390,54 @@ function createYtdlpService({
       } catch {
         return { ok: false, error: "dir" };
       }
+      // Antes do download: o binário gerenciado se atualiza no máximo uma vez por dia.
+      await refreshManaged(binary).catch(() => {});
+      const agent = tabAgentFor(owner, tabId) ?? {};
       const cookieDir = await writeCookies(clean, owner, tabId);
-      const args = buildArgs({
-        url: clean,
-        outDir,
-        quality,
-        ffmpeg,
-        jsRuntime,
-        cookies: cookieDir ? path.join(cookieDir, "cookies.txt") : null,
-      });
-      if (!args) {
-        dropCookies(cookieDir);
-        return { ok: false, error: "quality" };
-      }
-
-      let child;
-      try {
-        child = spawn(binary, args, {
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-          // Grupo próprio no Mac/Linux: cancelar mata também o ffmpeg.
-          detached: platform !== "win32",
-          env: {
-            ...env,
-            // Saída em UTF-8 em todo sistema (no Windows viria no code page e quebraria
-            // o caminho de títulos com acento).
-            PYTHONUTF8: "1",
-            PYTHONIOENCODING: "utf-8",
-            ...(jsRuntime ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
-          },
-        });
-      } catch {
-        dropCookies(cookieDir);
-        return { ok: false, error: "spawn" };
-      }
-      const host = hostOfUrl(clean) || "site";
       const job = {
         id: 0,
-        child,
+        child: null,
+        binary: binaryPath() ?? binary,
+        url: clean,
+        host: hostOfUrl(clean),
+        pageUrl: cleanUrl(agent.pageUrl) || clean,
+        userAgent: cleanHeaderValue(agent.userAgent),
+        owner,
+        tabId,
+        quality,
+        video: !quality.startsWith("audio"),
+        ffmpeg,
+        node: nodeRuntime,
+        deno: Boolean(denoPath()),
         outDir,
         handle: null,
         progress: createProgress(),
         created: new Set(),
         lastPath: "",
         error: "",
+        attemptText: "",
+        attemptLabel: "normal",
+        attempts: [],
+        applied: [],
+        lines: [],
         killed: false,
         done: false,
+        spawnFailed: false,
         cookieDir,
+        cookiesOn: Boolean(cookieDir),
+        version: await versionOf(binary),
+        origin: managedPath() === binary ? "instalado pelo Agzos" : "escolhido ou do sistema",
       };
+      let child;
+      try {
+        const args = await prepareArgs(job);
+        if (!args) throw new Error("quality");
+        child = spawnChild(job, args);
+      } catch (error) {
+        dropCookies(cookieDir);
+        return { ok: false, error: error?.message === "quality" ? "quality" : "spawn" };
+      }
+      const host = job.host || "site";
       job.handle = downloads.startExternal({
         url: clean,
         filename: `${quality.startsWith("audio") ? "Áudio" : "Vídeo"} de ${host}`,
@@ -712,20 +1449,13 @@ function createYtdlpService({
       });
       job.id = job.handle.id;
       jobs.set(job.id, job);
-      const out = { decoder: new StringDecoder("utf8"), buffer: "" };
-      const err = { decoder: new StringDecoder("utf8"), buffer: "" };
-      child.stdout?.on("data", (chunk) => consume(job, out, chunk));
-      child.stderr?.on("data", (chunk) => consume(job, err, chunk));
-      child.on("error", () => {
-        job.error = job.error || "Não foi possível abrir o yt-dlp.";
-        settle(job, -1);
-      });
-      child.on("close", (code) => {
-        flush(job, out);
-        flush(job, err);
-        settle(job, code);
-      });
+      attach(job, child);
       return { ok: true, id: job.id };
+    },
+
+    /** Diagnóstico copiável de um download do yt-dlp (null se não há mais). */
+    details(id) {
+      return reports.get(Number(id)) ?? null;
     },
 
     /** Cancela um download do yt-dlp (o gerenciador chama pelo id). */
@@ -741,13 +1471,19 @@ function createYtdlpService({
 
     /** Só para os testes e o diagnóstico. */
     activeCount: () => jobs.size,
+    /** Runtime de JS em uso agora (o Electron, se a prova passou). */
+    nodeRuntime: () => nodeRuntime,
   };
+  return service;
 }
 
 /** Registra os canais `ytdlp:*` (só a casca, por janela). */
 function registerYtdlpIpc(ipcMain, service, { ctxOf = () => null, pick = async () => null } = {}) {
   ipcMain.handle("ytdlp:status", (event) => (ctxOf(event) ? service.status() : null));
-  ipcMain.handle("ytdlp:install", (event) => (ctxOf(event) ? service.install() : { ok: false }));
+  ipcMain.handle("ytdlp:install", (event, payload) =>
+    ctxOf(event) ? service.install({ prefer: Boolean(payload?.prefer) }) : { ok: false },
+  );
+  ipcMain.handle("ytdlp:details", (event, id) => (ctxOf(event) ? service.details(id) : null));
   ipcMain.handle("ytdlp:pick", async (event) => {
     if (!ctxOf(event)) return { ok: false };
     const file = await pick(event);
@@ -771,25 +1507,48 @@ module.exports = {
   QUALITY_KEYS,
   PROGRESS_TAG,
   MAX_JOBS,
+  MAX_ATTEMPTS,
+  LOG_LINES,
+  MEDIA_WORLD_ID,
+  MEDIA_PROBE_SOURCE,
   assetNameOf,
+  attemptOptionsOf,
   binaryNameOf,
   buildArgs,
   checksumOf,
+  classifyError,
   cleanUrl,
   cookieDomainsOf,
+  createMediaLog,
   createProgress,
   createYtdlpService,
+  diagnosticsText,
+  execCapture,
+  fallbackFormatOf,
   findFfmpeg,
   findYtdlp,
   formatArgsOf,
   friendlyError,
+  hasImpersonateTarget,
+  headerValueOf,
   isKnownVideoHost,
+  isNodeVersionOutput,
+  isStaleVersion,
   looksLikeYtdlp,
+  mediaKind,
+  needsUpdate,
   netscapeCookies,
+  nextAttempt,
   parseOutputLine,
   parseProgressLine,
+  parseVersion,
   quickCheck,
+  rankMediaCandidates,
+  redactLine,
   registerYtdlpIpc,
+  shouldCheckRelease,
   sha256Of,
+  tagOf,
+  versionAgeDays,
   ytdlpCandidates,
 };

@@ -722,10 +722,13 @@ export function browserReducer(state: BrowserState, action: BrowserAction): Brow
         history: [...tab.history.slice(0, tab.index + 1), action.entry],
         index: tab.index + 1,
       }));
+      // 5.0.3: navegar sai da tela de "guia travada" (a página nova reanima a guia).
       return {
         ...next,
         address: action.entry.url,
         addressEdited: false,
+        crashed: withoutId(state.crashed, state.activeId),
+        crashReasons: withoutKey(state.crashReasons, state.activeId),
         requestedUrl: { id: state.activeId, url: action.entry.url },
       };
     }

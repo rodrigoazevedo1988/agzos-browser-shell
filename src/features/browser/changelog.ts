@@ -7,6 +7,19 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.3",
+    date: "2026-10-23",
+    items: [
+      'Novo: Agzos Vídeos (agzos://videos). Navegue pelas pastas do computador como na Netflix, com destaques, "Continuar assistindo", favoritos e um player completo: legendas, velocidade, Picture-in-Picture e próximo episódio.',
+      "Novo: Agzos Músicas (agzos://musica), no estilo do Spotify em vermelho: biblioteca por pastas, capas dos arquivos, playlists, fila, visualizador e teclas de mídia do sistema.",
+      "Novo: editor de texto e código (agzos://editor) com o mesmo motor do VS Code. Modo bloco de notas para texto simples e cores vivas para código e Markdown, com visualização ao vivo do .md.",
+      "Novo: Agzos Imagem (agzos://imagem), um editor no estilo do Canva com camadas, textos, formas, filtros, modelos prontos e as cores da Agzos.",
+      'Novo: recarregar ignorando o cache (Ctrl+Shift+R, Ctrl+F5 ou Shift+clique no botão). Com o DevTools aberto, o clique direito no botão Recarregar oferece "Esvaziar o cache e recarregar".',
+      'Melhorado: o yt-dlp se atualiza sozinho, tenta outros caminhos quando um download falha e, em sites que ele não conhece, baixa o vídeo que a página está tocando. Em Downloads, "Copiar detalhes" mostra o motivo de uma falha.',
+      "Corrigido: digitar outro endereço na barra de uma guia já aberta às vezes não carregava a página, principalmente depois de um erro ou de uma guia travada.",
+    ],
+  },
+  {
     version: "5.0.2",
     date: "2026-10-21",
     items: [

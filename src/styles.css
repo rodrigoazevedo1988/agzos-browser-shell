@@ -2584,7 +2584,7 @@ button {
     padding: 0;
   }
   .browser-window {
-    min-height: 100vh;
+    height: 100vh;
     border: 0;
     border-radius: 0;
   }
@@ -2594,8 +2594,9 @@ button {
   .browser-tab {
     width: 150px;
   }
+  /* A área da página ocupa o que sobra (barra de favoritos e avisos inclusos). */
   .workspace {
-    height: calc(100vh - 110px);
+    min-height: 0;
   }
   .ai-sidebar {
     position: absolute;

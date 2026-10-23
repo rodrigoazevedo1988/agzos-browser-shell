@@ -120,6 +120,8 @@ const STATE_SECTIONS = [
   "notes",
   // 4.7: ColorTools (histórico e paletas).
   "colors",
+  // 5.1: biblioteca de vídeo e áudio (recentes, favoritos, pastas).
+  "media",
 ];
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 

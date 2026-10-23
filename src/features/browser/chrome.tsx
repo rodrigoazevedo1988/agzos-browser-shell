@@ -87,6 +87,7 @@ import { NotesPanel } from "@/features/notes/panel";
 import { READER_FONT, ReaderView } from "@/features/reader/view";
 import { ScratchpadPage } from "@/features/scratchpad/page";
 import { DownloadsManager } from "@/features/downloads/manager";
+import { editorUrlOf, isEditorUrl, newEditorSession } from "@/features/editor/url";
 import { createDownloadsApi } from "@/features/downloads/api";
 import { PdfHelpPage } from "@/features/pdf/help";
 import { comboLabel, comboOfHotkey } from "./feature-prefs";
@@ -109,6 +110,7 @@ import { paletteItems } from "./palette-items";
 import { engineOf } from "./engines";
 import { STRIP_MENU, TAB_MENU, buildMenu } from "./menus";
 import { resolveInput } from "./omnibox-input";
+import { reloadOptionsOf, type ReloadMode } from "./reload";
 import { defaultHistoryStore } from "./persistence/history-store";
 import { useVault } from "./persistence/use-vault";
 import { usePersistence } from "./persistence/use-persistence";
@@ -131,6 +133,7 @@ import {
   DOWNLOADS_URL,
   PDF_URL,
   PDF_HELP_URL,
+  IMAGEM_URL,
   SETTINGS_URL,
   defaultPrefs,
   initialState,
@@ -159,6 +162,8 @@ import { Viewport, type ErrorActions } from "./ui/viewport";
 import { WhatsNew } from "./ui/whats-new";
 import { AccountButton } from "@/features/account/button";
 import { ACCOUNT_URL } from "@/features/account/model";
+import { isVideosUrl } from "@/features/media/video/model";
+import { isMusicUrl } from "@/features/media/audio/model";
 import { AccountPage } from "@/features/account/page";
 import { ProfilePicker } from "@/features/account/picker";
 import { ConnectNotice } from "@/features/account/profiles";
@@ -166,9 +171,26 @@ import { useAgzosAccount } from "@/features/account/use-account";
 import { tabCardOf, useTabPreview } from "./tab-preview";
 import { TabPreviewCard } from "./ui/tab-preview-card";
 
+// 5.0.3: Agzos Imagem (camadas, ajustes e exportação) é um chunk próprio.
+const ImageStudioPage = lazy(() =>
+  import("@/features/image-studio/page").then((module) => ({ default: module.ImageStudioPage })),
+);
+
 // 4.7: PDF Tools (pdf.js, pdf-lib e o OCR) só carrega quando a página abre.
+const EditorPage = lazy(() =>
+  import("@/features/editor/page").then((module) => ({ default: module.EditorPage })),
+);
+
 const PdfToolsPage = lazy(() =>
   import("@/features/pdf/page").then((module) => ({ default: module.PdfToolsPage })),
+);
+// 5.1: biblioteca de vídeos (agzos://videos).
+const VideosPage = lazy(() =>
+  import("@/features/media/video/videos-page").then((module) => ({ default: module.VideosPage })),
+);
+// 5.1: Músicas (agzos://musica), também sob demanda.
+const MusicPage = lazy(() =>
+  import("@/features/media/audio/page").then((module) => ({ default: module.MusicPage })),
 );
 
 type Panel =
@@ -190,7 +212,13 @@ type Panel =
   | "colors"
   | "translate"
   | "translation"
-  | "ytdlp";
+  | "ytdlp"
+  | "reload";
+
+/** Grant do Agzos Imagem na URL agzos://imagem?grant=… (5.0.3). */
+function imageGrantOf(url: string): string | null {
+  return /[?&]grant=([0-9a-f]{32})/.exec(url)?.[1] ?? null;
+}
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -342,6 +370,8 @@ export function AgzosBrowser() {
     activeOnly?: boolean;
   } | null>(null);
   const [toolsAnchor, setToolsAnchor] = useState({ left: 70, top: 160 });
+  // 5.0.3: menu do Recarregar com o DevTools aberto (ancorado no botão).
+  const [reloadAnchor, setReloadAnchor] = useState({ left: 70, top: 60 });
   const refreshExtensions = useCallback(async () => {
     if (!desktop) return;
     const result = await desktop.extensionsList().catch(() => ({ list: [] as ExtensionInfo[] }));
@@ -810,9 +840,9 @@ export function AgzosBrowser() {
   }, []);
 
   const reload = useCallback(
-    (id: number) => {
+    (id: number, hard = false) => {
       flash();
-      if (desktop) void desktop.reload(id);
+      if (desktop) void desktop.reload(id, hard);
     },
     [desktop, flash],
   );
@@ -1001,6 +1031,18 @@ export function AgzosBrowser() {
     [desktop, prefs.pipMode],
   );
 
+  // 5.0.3: endereço na guia ativa. O main recebe a navegação direto (vale também com página
+  // de erro ou guia travada na tela, onde a página da guia não está montada); sem view ainda,
+  // o tab:attach da página carrega o endereço.
+  const navigateActive = useCallback(
+    (entry: Entry) => {
+      const id = stateRef.current.activeId;
+      dispatch({ type: "nav/push", entry });
+      if (desktop && entry.kind === "page") void desktop.navigate(id, entry.url);
+    },
+    [desktop],
+  );
+
   const openUrl = useCallback(
     (url: string, newTab: boolean) => {
       const entry: Entry = { title: hostOf(url) ?? url, url, kind: "page" };
@@ -1009,9 +1051,9 @@ export function AgzosBrowser() {
         return;
       }
       flash();
-      dispatch({ type: "nav/push", entry });
+      navigateActive(entry);
     },
-    [flash],
+    [flash, navigateActive],
   );
 
   // "+" (ou clique direito) na barra lateral: quais painéis aparecem.
@@ -1277,6 +1319,20 @@ export function AgzosBrowser() {
     else openInternal(SETTINGS_URL, "Configurações");
   };
 
+  // 5.0.3: Agzos Imagem. Com grant abre a imagem que a casca pediu (captura, página, menu).
+  const openImagem = useCallback(
+    (grant?: string | null) => {
+      openInternal(grant ? `${IMAGEM_URL}?grant=${grant}` : IMAGEM_URL, "Agzos Imagem");
+    },
+    [openInternal],
+  );
+  // A captura vai para o editor: a casca manda o PNG e o main devolve o grant.
+  const editCapture = async (png: string) => {
+    setCapture(null);
+    const grant = desktop ? await desktop.imagemStage(png, "Captura") : null;
+    if (grant) openImagem(grant);
+  };
+
   // 4.7: downloads, tema da página, ColorTools e PDF Tools (v47-shell.tsx).
   const [pdfRequest, setPdfRequest] = useState<PdfRequest | null>(null);
   const openPdfPage = useCallback(
@@ -1421,6 +1477,12 @@ export function AgzosBrowser() {
       return;
     }
     runCommandRef.current(id, activeTab.id);
+  };
+
+  // 5.0.3: Recarregar (clique direito ou segurar) com o DevTools aberto na guia.
+  const openReloadMenu = (anchor: DOMRect) => {
+    setReloadAnchor({ left: Math.round(anchor.left), top: Math.round(anchor.bottom + 4) });
+    togglePanel("reload");
   };
 
   // 4.6: menu Ferramentas (barra lateral), no visual do app (não é menu nativo).
@@ -1650,9 +1712,12 @@ export function AgzosBrowser() {
       eyedropper: (tabId) => v47.eyedropper(tabId),
       toggleColors: () => v47.toggleColors(),
       openPdfTools: () => openPdfTools(),
+      openImagem: (grant) => openImagem(grant ?? null),
       togglePageTheme: (tabId) => v47.togglePageTheme(tabId),
       translatePage: (tabId) => translate.togglePage(tabId),
       openYtdlp: (tabId) => ytdlp.openTab(tabId, null),
+      openEditor: () =>
+        openInternal(editorUrlOf({ session: newEditorSession() }), "Editor de texto"),
       devtools: (tabId, action) => void v48.run(tabId, action),
       devtoolsEnabled: () => v48.devtoolsEnabled,
       devtoolsSide: (side) => v48.setSide(side),
@@ -1913,9 +1978,9 @@ export function AgzosBrowser() {
         return;
       }
       flash();
-      dispatch({ type: "nav/push", entry });
+      navigateActive(entry);
     },
-    [flash, prefs.engine],
+    [flash, prefs.engine, navigateActive],
   );
 
   function step(delta: -1 | 1) {
@@ -2616,7 +2681,21 @@ export function AgzosBrowser() {
                   onClose: closePanel,
                 },
               }
-            : basePanelSpec;
+            : panel === "reload" && desktop
+              ? {
+                  kind: "reload",
+                  props: {
+                    left: reloadAnchor.left,
+                    top: reloadAnchor.top,
+                    onRun: (mode: ReloadMode) => {
+                      const options = reloadOptionsOf(mode);
+                      flash();
+                      void desktop.reload(activeTab.id, options.ignoreCache, options.emptyCache);
+                    },
+                    onClose: closePanel,
+                  },
+                }
+              : basePanelSpec;
 
   const overlayStatus = useLiveOverlay(desktop, panelSpec, stageClasses, onOverlayDismissed);
   const panelInline = panelSpec !== null && overlayStatus === "inline";
@@ -2746,7 +2825,8 @@ export function AgzosBrowser() {
           isMac={isMac}
           onBack={() => step(-1)}
           onForward={() => step(1)}
-          onReload={() => reload(activeTab.id)}
+          onReload={(hard) => reload(activeTab.id, hard)}
+          onReloadMenu={desktop && v48.isDevtoolsOpen(activeTab.id) ? openReloadMenu : undefined}
           onAddressChange={(value) => dispatch({ type: "address/set", value })}
           onSubmit={openAddress}
           onToggleFavorite={bookmarkPage}
@@ -3077,6 +3157,25 @@ export function AgzosBrowser() {
                         onOpenSettings={() => openSettingsAt("recursos")}
                         onNotice={setNotice}
                       />
+                    ) : isEditorUrl(pageUrl) ? (
+                      <Suspense fallback={<p className="library-empty">Abrindo o editor…</p>}>
+                        {/* key pela URL: cada arquivo (sessão) tem a sua instância do editor. */}
+                        <EditorPage
+                          key={pageUrl}
+                          desktop={desktop}
+                          url={pageUrl}
+                          dark={prefs.dark}
+                          onNotice={setNotice}
+                        />
+                      </Suspense>
+                    ) : pageUrl.startsWith(IMAGEM_URL) ? (
+                      <Suspense fallback={<p className="library-empty">Abrindo o Agzos Imagem…</p>}>
+                        <ImageStudioPage
+                          desktop={desktop}
+                          dark={prefs.dark}
+                          grant={imageGrantOf(pageUrl)}
+                        />
+                      </Suspense>
                     ) : pageUrl === PDF_URL ? (
                       <Suspense fallback={<p className="library-empty">Abrindo o PDF Tools…</p>}>
                         <PdfToolsPage
@@ -3104,6 +3203,19 @@ export function AgzosBrowser() {
                           }))}
                         target={scratchTarget}
                       />
+                    ) : isVideosUrl(pageUrl) ? (
+                      <Suspense fallback={<p className="library-empty">Abrindo Vídeos…</p>}>
+                        <VideosPage url={pageUrl} />
+                      </Suspense>
+                    ) : isMusicUrl(pageUrl) ? (
+                      <Suspense fallback={<p className="library-empty">Abrindo Músicas…</p>}>
+                        <MusicPage
+                          url={pageUrl}
+                          onNotice={setNotice}
+                          crossfade={prefs.features.music.crossfade}
+                          onCrossfade={(seconds) => setFeatures({ music: { crossfade: seconds } })}
+                        />
+                      </Suspense>
                     ) : null
                   }
                   errors={errorActions}
@@ -3208,6 +3320,7 @@ export function AgzosBrowser() {
         <CaptureDialog
           desktop={desktop}
           sources={capture}
+          onEdit={(png) => void editCapture(png)}
           onFullPage={() => void captureFullPage()}
           onClose={() => setCapture(null)}
         />

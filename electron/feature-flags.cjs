@@ -15,6 +15,8 @@ const FLAG_DEFAULTS = Object.freeze({
   pwa_mac_apps: true,
   // 5.0: download de vídeos com o yt-dlp (barra, menu de contexto e Ferramentas).
   ytdlp: true,
+  // 5.0.3: editor de texto e código (agzos://editor); desligado, os arquivos voltam ao agzos-file.
+  editor: true,
 });
 
 const FLAG_NAMES = Object.keys(FLAG_DEFAULTS);

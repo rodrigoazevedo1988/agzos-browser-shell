@@ -35,7 +35,11 @@ export const INTERNAL_PAGES: Record<string, string> = {
   "agzos://scratchpad": "API Scratchpad",
   "agzos://downloads": "Downloads",
   "agzos://pdf": "PDF Tools",
+  "agzos://editor": "Editor de texto",
+  "agzos://videos": "Vídeos",
+  "agzos://musica": "Músicas",
   "agzos://ajuda/pdf-tools": "Ajuda do PDF Tools",
+  "agzos://imagem": "Agzos Imagem",
   "agzos://conta": "Conta Agzos",
 };
 

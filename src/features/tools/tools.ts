@@ -2,11 +2,15 @@ import {
   BookOpen,
   Braces,
   Camera,
+  Clapperboard,
+  ImagePlus,
   Crosshair,
   Download,
+  FileCode,
   FileText,
   Languages,
   Layers,
+  Music2,
   Pipette,
   Network,
   NotebookPen,
@@ -34,7 +38,11 @@ export type ToolId =
   | "extensions.open"
   | "downloads.toggle"
   | "colors.panel"
-  | "pdf.open";
+  | "pdf.open"
+  | "videos.open"
+  | "music.open"
+  | "editor.open"
+  | "imagem.open";
 
 export type Tool = {
   id: ToolId;
@@ -148,6 +156,31 @@ export const TOOLS: Tool[] = [
     hint: "Editar, juntar, comprimir, senha e OCR",
     icon: FileText,
     shortcut: "Ctrl+Alt+P",
+  },
+  {
+    id: "imagem.open",
+    label: "Agzos Imagem",
+    hint: "Camadas, textos, formas, ajustes e exportação",
+    icon: ImagePlus,
+    shortcut: "Ctrl+Alt+I",
+  },
+  {
+    id: "videos.open",
+    label: "Vídeos",
+    hint: "Biblioteca de filmes e séries das suas pastas",
+    icon: Clapperboard,
+  },
+  {
+    id: "music.open",
+    label: "Músicas",
+    hint: "Biblioteca de áudio, playlists e tocando em segundo plano",
+    icon: Music2,
+  },
+  {
+    id: "editor.open",
+    label: "Editor de texto",
+    hint: "Texto, código e Markdown com visualização",
+    icon: FileCode,
   },
 ];
 

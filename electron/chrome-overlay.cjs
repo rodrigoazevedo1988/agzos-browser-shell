@@ -36,6 +36,8 @@ const OVERLAY_KINDS = new Set([
   "translation",
   // 5.0: popup de qualidade do yt-dlp (barra e clique direito).
   "ytdlp",
+  // 5.0.3: menu do Recarregar com o DevTools aberto.
+  "reload",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;

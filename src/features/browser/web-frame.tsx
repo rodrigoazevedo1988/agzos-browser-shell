@@ -33,7 +33,6 @@ function refusesEmbedding(url: string) {
 function NativeView({
   tabId,
   url,
-  requestedUrl,
   dark,
   privateTab,
   sessionId,
@@ -44,7 +43,6 @@ function NativeView({
 }: {
   tabId: number;
   url: string;
-  requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
   /** Session Tab (4.5): a partição própria da guia. */
@@ -61,7 +59,6 @@ function NativeView({
   layout: string;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const lastRequestedRef = useRef<string | null>(requestedUrl ?? url);
   const bridge = desktopBridge();
 
   useEffect(() => {
@@ -75,13 +72,6 @@ function NativeView({
     void bridge?.muteTab(tabId, muted);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
-
-  useEffect(() => {
-    if (!bridge || requestedUrl == null) return;
-    if (lastRequestedRef.current === requestedUrl) return;
-    lastRequestedRef.current = requestedUrl;
-    void bridge.navigate(tabId, requestedUrl);
-  }, [bridge, tabId, requestedUrl]);
 
   useEffect(() => {
     void bridge?.muteTab(tabId, muted);
@@ -117,7 +107,6 @@ export function WebFrame({
   tabId,
   title,
   url,
-  requestedUrl,
   dark,
   privateTab,
   sessionId,
@@ -129,7 +118,6 @@ export function WebFrame({
   tabId: number;
   title: string;
   url: string;
-  requestedUrl?: string | undefined;
   dark: boolean;
   privateTab: boolean;
   sessionId?: string | undefined;
@@ -150,7 +138,6 @@ export function WebFrame({
       <NativeView
         tabId={tabId}
         url={url}
-        requestedUrl={requestedUrl}
         dark={dark}
         privateTab={privateTab}
         sessionId={sessionId}

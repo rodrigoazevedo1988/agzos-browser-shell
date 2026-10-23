@@ -138,6 +138,16 @@ describe("navegação", () => {
     expect(state.requestedUrl).toEqual({ id: 1, url: "c.com" });
   });
 
+  it("5.0.3: navegar tira a guia da tela de travada (a página nova a reanima)", () => {
+    let state = withPages("a.com");
+    state = browserReducer(state, { type: "view/crashed", id: 1, reason: "crashed" });
+    expect(state.crashed).toEqual([1]);
+    state = browserReducer(state, { type: "nav/push", entry: page("b.com") });
+    expect(state.crashed).toEqual([]);
+    expect(state.crashReasons).toEqual({});
+    expect(state.requestedUrl).toEqual({ id: 1, url: "b.com" });
+  });
+
   it("step respeita os limites do histórico", () => {
     const state = withPages("a.com");
     const back = browserReducer(state, { type: "nav/step", delta: -5 });

@@ -65,6 +65,21 @@ export function createLocalStore(storage: StorageLike): BrowserStore {
       return legacy;
     },
     async save(snapshot) {
+      // 5.1: a biblioteca de mídia (section "media") não vem no snapshot da casca: a
+      // gravação dele mantém a que já está guardada.
+      if (snapshot.media === undefined) {
+        let stored: unknown = null;
+        try {
+          stored = JSON.parse(storage.getItem(STATE_KEY) ?? "null");
+        } catch {
+          stored = null;
+        }
+        const media = (stored as { media?: unknown } | null)?.media;
+        if (media !== undefined) {
+          storage.setItem(STATE_KEY, JSON.stringify({ ...snapshot, media }));
+          return;
+        }
+      }
       storage.setItem(STATE_KEY, JSON.stringify(snapshot));
     },
   };

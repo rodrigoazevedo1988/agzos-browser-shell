@@ -2421,6 +2421,125 @@ test("2.0: Ctrl+K abre a busca de comandos na camada; Enter executa", async () =
   }
 });
 
+test("5.0.3: omnibox com site aberto: outro endereço carrega na mesma guia (com a lista aberta, escolhido com a seta ou depois de sair da página)", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/a`);
+    await expect(tabs(window).first()).toContainText("Página A");
+    // Enter direto, com a lista de sugestões aberta.
+    await omnibox(window).fill(`${origin}/b`);
+    await expect(window.locator("#omnibox-suggestions")).toBeVisible();
+    await omnibox(window).press("Enter");
+    await expect(tabs(window).first()).toContainText("Página B");
+    await expect(tabs(window)).toHaveCount(1);
+    // O site muda sozinho (link ou JavaScript) e o mesmo endereço é digitado de novo.
+    await app.evaluate(({ webContents }, target) => {
+      const found = webContents.getAllWebContents().find((item) => item.getURL().endsWith("/b"))!;
+      void found.loadURL(target);
+    }, `${origin}/c`);
+    await expect(tabs(window).first()).toContainText("Página C");
+    await omnibox(window).fill(`${origin}/b`);
+    await expect(window.locator("#omnibox-suggestions")).toBeVisible();
+    // A primeira opção (o próprio endereço) escolhida com a seta.
+    await omnibox(window).press("ArrowDown");
+    await omnibox(window).press("Enter");
+    await expect(tabs(window).first()).toContainText("Página B");
+    expect((await liveViews(app, `${origin}/b`)).length).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("5.0.3: omnibox com página de erro na guia: o endereço digitado carrega", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, "http://127.0.0.1:1/");
+    await expect(window.getByRole("alert", { name: "Erro ao carregar a página" })).toBeVisible();
+    await go(window, `${origin}/b`);
+    await expect(window.getByRole("alert", { name: "Erro ao carregar a página" })).toHaveCount(0);
+    await expect(tabs(window).first()).toContainText("Página B");
+  } finally {
+    await app.close();
+  }
+});
+
+test("5.0.3: omnibox com guia travada: o endereço digitado carrega e tira a tela de travada", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await go(window, `${origin}/a`);
+    await expect(tabs(window).first()).toContainText("Página A");
+    const id = await tabIdOf(window, "Página A");
+    await window.evaluate(
+      (tabId) =>
+        (
+          window as unknown as { agzosDesktop: { killTab(id: number): Promise<void> } }
+        ).agzosDesktop.killTab(tabId),
+      id,
+    );
+    const crashed = window.getByRole("alert", { name: "Guia travada" });
+    await expect(crashed).toBeVisible();
+    await go(window, `${origin}/b`);
+    await expect(crashed).toHaveCount(0);
+    await expect(tabs(window).first()).toContainText("Página B");
+  } finally {
+    await app.close();
+  }
+});
+
+test("5.0.3: recarregar: Shift+clique e menu com o DevTools aberto (clique direito, segurar, F5 no DevTools)", async () => {
+  const { app, window } = await launch(tempProfile());
+  const url = `${origin}/a`;
+  const marker = () => inTab<boolean>(app, url, "window.marcaRecarga === true");
+  try {
+    await go(window, url);
+    await expect(tabs(window).first()).toContainText("Página A");
+    const reloadButton = window.getByRole("button", { name: "Recarregar", exact: true });
+    // Sem DevTools, o clique direito não abre menu nenhum.
+    await reloadButton.click({ button: "right" });
+    await window.waitForTimeout(300);
+    expect(app.windows().some((page) => page.url().endsWith("/overlay.html"))).toBe(false);
+    // Shift+clique recarrega sem o cache: a marca da página some.
+    await inTab(app, url, "window.marcaRecarga = true");
+    await reloadButton.click({ modifiers: ["Shift"] });
+    await expect.poll(marker).toBe(false);
+    // Com o DevTools aberto (F12), clique direito mostra o menu de recarga.
+    await keyInTab(app, url, "F12");
+    await expect(window.locator(".devtools-dock")).toBeVisible();
+    await inTab(app, url, "window.marcaRecarga = true");
+    await reloadButton.click({ button: "right" });
+    const layer = await overlayPage(app);
+    const menu = layer.getByRole("menu", { name: "Recarregar" });
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Recarregar normalmente",
+      "Recarregar ignorando o cache",
+      "Esvaziar o cache e recarregar",
+    ]);
+    await menu.getByRole("menuitem", { name: "Esvaziar o cache e recarregar" }).click();
+    await expect.poll(marker).toBe(false);
+    // Segurar o botão também abre o menu.
+    await inTab(app, url, "window.marcaRecarga = true");
+    const box = await reloadButton.boundingBox();
+    await window.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await window.mouse.down();
+    await window.waitForTimeout(700);
+    await window.mouse.up();
+    await expect(layer.getByRole("menu", { name: "Recarregar" })).toBeVisible();
+    await layer.keyboard.press("Escape");
+    // F5 com o foco no DevTools recarrega a guia inspecionada.
+    await inTab(app, url, "window.marcaRecarga = true");
+    await app.evaluate(({ webContents }, target) => {
+      const page = webContents.getAllWebContents().find((item) => item.getURL() === target)!;
+      const front = page.devToolsWebContents!;
+      front.focus();
+      front.sendInputEvent({ type: "keyDown", keyCode: "F5" });
+      front.sendInputEvent({ type: "keyUp", keyCode: "F5" });
+    }, url);
+    await expect.poll(marker).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
 test("2.0: grupo de guias com nome e cor; recolher esconde as guias", async () => {
   const { app, window } = await launch(tempProfile());
   try {
@@ -3743,7 +3862,8 @@ test("4.1.1: aba renomeada, modo ls lateral, snippets, skills e arquivos abertos
     path.join(folder, ".claude", "skills", "revisar", "SKILL.md"),
     "---\nname: revisar\ndescription: Revisa o código do projeto\n---\n",
   );
-  const { app, window } = await launch(profile);
+  // 5.0.3: com o editor ligado, código abre no agzos://editor; aqui vale o caminho de leitura.
+  const { app, window } = await launch(profile, { AGZOS_FLAGS: "editor=0" });
   const type = async (text: string) => {
     await window.keyboard.type(text);
     await window.keyboard.press("Enter");
@@ -4207,7 +4327,12 @@ test("4.1.1 fix: arquivo aberto pelo sistema (duplo clique, Abrir com) abre numa
   const notes = path.join(folder, "notas.ts");
   fs.writeFileSync(page, "<title>Pagina local</title><h1>Aberta pelo sistema</h1>");
   fs.writeFileSync(notes, "export const nota = 1;\n");
-  const env = { ...process.env, AGZOS_USER_DATA: profile } as Record<string, string>;
+  // 5.0.3: sem o editor, código abre na página de leitura (o editor tem teste próprio).
+  const env = {
+    ...process.env,
+    AGZOS_USER_DATA: profile,
+    AGZOS_FLAGS: "editor=0",
+  } as Record<string, string>;
   // Primeira execução com o arquivo (como o Explorer/gerenciador chama o executável).
   const app = await electron.launch({ args: ["--no-sandbox", root, page], cwd: root, env });
   try {
@@ -4228,6 +4353,28 @@ test("4.1.1 fix: arquivo aberto pelo sistema (duplo clique, Abrir com) abre numa
     });
     await expect.poll(() => liveViews(app, "notas.ts?k=")).toHaveLength(1);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("5.0.3: código aberto pelo sistema vai para o editor (Monaco) e salva no disco", async () => {
+  const profile = tempProfile();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-editor-"));
+  const notes = path.join(folder, "notas.ts");
+  fs.writeFileSync(notes, "export const nota = 1;\n");
+  const env = { ...process.env, AGZOS_USER_DATA: profile } as Record<string, string>;
+  const app = await electron.launch({ args: ["--no-sandbox", root, notes], cwd: root, env });
+  try {
+    const window = await app.firstWindow();
+    await window.locator('.browser-stage[data-ready="true"]').waitFor();
+    const lines = window.locator(".monaco-editor .view-lines");
+    await expect(lines).toContainText("export const nota", { timeout: 30_000 });
+    await lines.click();
+    await window.keyboard.press("ControlOrMeta+End");
+    await window.keyboard.type("// salvo");
+    await window.keyboard.press("ControlOrMeta+S");
+    await expect.poll(() => fs.readFileSync(notes, "utf8")).toContain("// salvo");
   } finally {
     await app.close();
   }

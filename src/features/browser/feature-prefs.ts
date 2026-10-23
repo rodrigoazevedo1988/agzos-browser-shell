@@ -44,6 +44,8 @@ export type FeaturePrefs = {
   shortcuts: Record<FeatureShortcutId, string>;
   /** Tradução de páginas e trechos (src/features/translate/prefs.ts). */
   translate: TranslatePrefs;
+  /** 5.1: Músicas (agzos://musica). `crossfade` = segundos de transição (0 = desligada). */
+  music: { crossfade: number };
 };
 
 export const PDF_MAX_MB = { min: 5, max: 500, initial: 50 } as const;
@@ -62,6 +64,7 @@ export const defaultFeaturePrefs: FeaturePrefs = {
     FEATURE_SHORTCUTS.map((item) => [item.id, item.fallback]),
   ) as Record<FeatureShortcutId, string>,
   translate: defaultTranslatePrefs,
+  music: { crossfade: 0 },
 };
 
 const MODIFIERS = ["mod", "alt", "shift"] as const;
@@ -200,7 +203,17 @@ export function parseFeaturePrefs(value: unknown): FeaturePrefs {
     },
     shortcuts: parsedShortcuts,
     translate: parseTranslatePrefs(raw["translate"]),
+    music: {
+      crossfade: parseCrossfade(isObject(raw["music"]) ? raw["music"]["crossfade"] : undefined),
+    },
   };
+}
+
+/** Transição entre músicas em segundos inteiros, de 0 a 12. */
+export function parseCrossfade(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(Math.min(12, Math.max(0, value)))
+    : 0;
 }
 
 /** Escuro de verdade para um tema "segue o navegador". */

@@ -877,6 +877,7 @@ input[type=color] { width: 28px; height: 28px; border: 0; background: none; padd
   <button data-act="bg" title="Fundo: escuro, claro ou xadrez (B)">Fundo</button>
   <button data-act="info" title="Informações (I)">Info</button>
   <button data-act="canvas" title="Modo canvas: desenhar e anotar (C)">Canvas</button>
+  <button data-act="edit" title="Editar no Agzos Imagem">Editar</button>
   <button data-act="full" title="Tela cheia (F)">⛶</button>
   <button data-act="reset" title="Desfazer giros, zoom e ajustes">Restaurar</button>
 </div>
@@ -1156,6 +1157,8 @@ input[type=color] { width: 28px; height: 28px; border: 0; background: none; padd
       draw();
     },
     export: () => void exportPng(),
+    // 5.0.3: abre o arquivo no Agzos Imagem (o main confere que é a página de um arquivo).
+    edit: () => void ipcRenderer.invoke("imagem:edit-file").catch(() => false),
   };
 
   root.addEventListener("click", (event) => {

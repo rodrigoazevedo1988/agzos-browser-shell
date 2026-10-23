@@ -26,6 +26,7 @@ import {
 import {
   forwardRef,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent,
@@ -35,6 +36,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { RELOAD_LONG_PRESS_MS } from "../reload";
 import { type BarTooltips, useBarTooltips } from "./bar-tooltip";
 import { OmniboxField, type OmniboxFieldProps } from "./omnibox-field";
 
@@ -86,7 +88,10 @@ export type ToolbarProps = {
   isMac: boolean;
   onBack: () => void;
   onForward: () => void;
-  onReload: () => void;
+  /** 5.0.3: Shift+clique recarrega sem o cache. */
+  onReload: (hard: boolean) => void;
+  /** 5.0.3: com o DevTools aberto na guia, clique direito ou segurar abre o menu de recarga. */
+  onReloadMenu?: ((anchor: DOMRect) => void) | undefined;
   onAddressChange: (value: string) => void;
   onSubmit: (value: string) => void;
   onToggleFavorite: () => void;
@@ -127,6 +132,16 @@ export type ToolbarProps = {
 export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
   function Toolbar(props, inputRef) {
     const [copied, setCopied] = useState(false);
+    // 5.0.3: segurar o botão de recarregar abre o menu (o clique que vem depois não recarrega).
+    const longPress = useRef<{ timer: number | null; fired: boolean }>({
+      timer: null,
+      fired: false,
+    });
+    const cancelLongPress = () => {
+      if (longPress.current.timer !== null) window.clearTimeout(longPress.current.timer);
+      longPress.current.timer = null;
+    };
+    useEffect(() => cancelLongPress, []);
     useEffect(() => {
       if (!copied) return;
       const timer = window.setTimeout(() => setCopied(false), 1400);
@@ -179,9 +194,34 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
           <Button
             variant="ghost"
             size="icon"
-            title={`Recarregar (${keys("Ctrl+R")})`}
+            title={`Recarregar (${keys("Ctrl+R")}) · Shift+clique: ignorar o cache`}
             aria-label="Recarregar"
-            onClick={props.onReload}
+            onClick={(event) => {
+              if (longPress.current.fired) {
+                longPress.current.fired = false;
+                return;
+              }
+              props.onReload(event.shiftKey);
+            }}
+            onContextMenu={(event) => {
+              if (!props.onReloadMenu) return;
+              event.preventDefault();
+              props.onReloadMenu(event.currentTarget.getBoundingClientRect());
+            }}
+            onPointerDown={(event) => {
+              const open = props.onReloadMenu;
+              if (!open || event.button !== 0) return;
+              const target = event.currentTarget;
+              cancelLongPress();
+              longPress.current.timer = window.setTimeout(() => {
+                longPress.current.timer = null;
+                longPress.current.fired = true;
+                open(target.getBoundingClientRect());
+              }, RELOAD_LONG_PRESS_MS);
+            }}
+            onPointerUp={cancelLongPress}
+            onPointerLeave={cancelLongPress}
+            onPointerCancel={cancelLongPress}
           >
             <RefreshCw className={cn(props.loading && "spin")} />
           </Button>

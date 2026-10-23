@@ -2,6 +2,7 @@ import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
 import type { DesktopV48 } from "./desktop-v48";
 import type { DesktopTranslate, TranslateTabEvent } from "@/features/translate/bridge";
 import type { DesktopYtdlp } from "@/features/ytdlp/bridge";
+import type { DesktopEditor } from "@/features/editor/bridge";
 import type { DesktopFormFill, FormFillTabEvent } from "@/features/key/form-fill";
 import type { GestureConfig, GestureId } from "@/features/gestures/gestures";
 import type { OverlayPayload } from "./overlay/bridge";
@@ -482,7 +483,12 @@ export type WidevineStatus = {
 };
 
 /** Pontes de cada versão que ficam em arquivos à parte (só pelo tamanho). */
-type DesktopExtras = DesktopV47 & DesktopV48 & DesktopTranslate & DesktopFormFill & DesktopYtdlp;
+type DesktopExtras = DesktopV47 &
+  DesktopV48 &
+  DesktopTranslate &
+  DesktopFormFill &
+  DesktopYtdlp &
+  DesktopEditor;
 
 export type DesktopBridge = DesktopExtras & {
   attachTab(
@@ -514,7 +520,8 @@ export type DesktopBridge = DesktopExtras & {
   navigate(id: number, url: string): Promise<void>;
   goBack(id: number): Promise<void>;
   goForward(id: number): Promise<void>;
-  reload(id: number, ignoreCache?: boolean): Promise<void>;
+  /** 5.0.3: `emptyCache` esvazia o cache HTTP da guia antes de recarregar. */
+  reload(id: number, ignoreCache?: boolean, emptyCache?: boolean): Promise<void>;
   /** Foto em tamanho real da aba visível (fica no lugar dela com painel aberto). */
   snapshotTab(id: number): Promise<string | null>;
   /** Tira a miniatura da aba visível (seletor do Ctrl+Tab). */
@@ -773,6 +780,25 @@ export type DesktopBridge = DesktopExtras & {
   }>;
   captureCopy(dataUrl: string): Promise<boolean>;
   captureSave(dataUrl: string): Promise<{ ok: boolean; path?: string; canceled?: boolean }>;
+  // 5.0.3: Agzos Imagem (agzos://imagem). Fotos chegam como data URL; gravar só no caminho escolhido.
+  imagemOpenDialog(): Promise<
+    | { ok: true; grant: string; name: string; mime: string; dataUrl: string }
+    | { ok: false; canceled?: boolean; error?: string }
+  >;
+  imagemRead(grant: string): Promise<{ name: string; mime: string; dataUrl: string } | null>;
+  imagemStage(dataUrl: string, name?: string): Promise<string | null>;
+  imagemEditFile(): Promise<boolean>;
+  imagemSaveProject(
+    text: string,
+    name: string,
+  ): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+  imagemOpenProject(): Promise<
+    { ok: true; text: string; name: string } | { ok: false; canceled?: boolean; error?: string }
+  >;
+  imagemExport(
+    bytes: Uint8Array,
+    name: string,
+  ): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
   scratchpadCapture(
     id: number,
     on: boolean,

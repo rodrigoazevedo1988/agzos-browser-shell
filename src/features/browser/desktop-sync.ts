@@ -4,6 +4,15 @@ import type { DesktopBridge, DesktopPermissionRequest } from "./desktop";
 import type { BrowserAction } from "./store/reducer";
 import { hostOf, splitShown } from "./store/selectors";
 import type { BrowserState } from "./store/state";
+import {
+  editorTitleOf,
+  isEditorUrl,
+  newEditorSession,
+  withEditorSession,
+} from "@/features/editor/url";
+
+/** 5.1: páginas da biblioteca (agzos://videos e agzos://musica) que o sistema abre com ?file=. */
+const isShellMediaUrl = (url: string) => /^agzos:\/\/(videos|musica)(\?|$)/.test(url);
 
 type Options = {
   desktop: DesktopBridge | null;
@@ -154,11 +163,33 @@ export function useDesktopSync({
         }
       }),
       desktop.onOpenRequest(({ url, from }) =>
-        dispatch({
-          type: "tab/open-page",
-          entry: { title: hostOf(url) ?? url, url, kind: "page" },
-          from,
-        }),
+        // 5.1: arquivo de vídeo/áudio abre nas páginas da biblioteca (casca), não numa guia.
+        // 5.0.3: texto aberto de fora vai para o editor (uma guia por arquivo).
+        isEditorUrl(url)
+          ? dispatch({
+              type: "tab/open-page",
+              entry: {
+                title: editorTitleOf(url),
+                url: withEditorSession(url, newEditorSession),
+                kind: "internal",
+              },
+            })
+          : isShellMediaUrl(url)
+            ? dispatch({
+                type: "nav/open-internal",
+                entry: {
+                  title: url.startsWith("agzos://musica") ? "Músicas" : "Vídeos",
+                  url,
+                  kind: "internal",
+                },
+              })
+            : dispatch({
+                type: "tab/open-page",
+                entry: url.startsWith("agzos://imagem")
+                  ? { title: "Agzos Imagem", url, kind: "internal" }
+                  : { title: hostOf(url) ?? url, url, kind: "page" },
+                from,
+              }),
       ),
       desktop.onFullscreen(({ active }) => dispatch({ type: "fullscreen/set", active })),
       desktop.onHotkey((input) => runHotkeyRef.current(input)),

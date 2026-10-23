@@ -192,7 +192,7 @@ describe("4.8 Fase 0: capacidades medidas do runtime", () => {
 });
 
 describe("4.8 Fase 0: flags por bloco", () => {
-  it("os seis blocos do PRD, com o núcleo ligado e o resto desligado (e o PWA do Mac)", () => {
+  it("os seis blocos do PRD, com o núcleo ligado e o resto desligado (e o PWA do Mac, o yt-dlp e o editor)", () => {
     expect(flags.FLAG_DEFAULTS).toEqual({
       devtools: true,
       print_shield: true,
@@ -202,6 +202,7 @@ describe("4.8 Fase 0: flags por bloco", () => {
       kiosk: false,
       pwa_mac_apps: true,
       ytdlp: true,
+      editor: true,
     });
   });
 
@@ -356,6 +357,18 @@ describe("4.8 Fase 1: DevTools encaixado (devtools-dock.cjs)", () => {
     expect(devtools.dockKeyAction(key("c", { control: true, shift: true }))).toBeNull();
     expect(devtools.dockKeyAction(key("m", { control: true, shift: true }))).toBeNull();
     expect(devtools.dockKeyAction({ type: "keyUp", key: "F12" })).toBeNull();
+  });
+
+  it("5.0.3: F5 recarrega a guia inspecionada; Ctrl+F5, Shift+F5 e Ctrl+Shift+R sem cache", () => {
+    const key = (key: string, extra = {}) => ({ type: "keyDown", key, ...extra });
+    expect(devtools.dockKeyAction(key("F5"))).toBe("reload");
+    expect(devtools.dockKeyAction(key("F5", { control: true }))).toBe("reload-hard");
+    expect(devtools.dockKeyAction(key("F5", { shift: true }))).toBe("reload-hard");
+    expect(devtools.dockKeyAction(key("r", { control: true, shift: true }))).toBe("reload-hard");
+    expect(devtools.dockKeyAction(key("r", { meta: true, shift: true }))).toBe("reload-hard");
+    // Ctrl+R sozinho e Alt+F5 ficam com o frontend.
+    expect(devtools.dockKeyAction(key("r", { control: true }))).toBeNull();
+    expect(devtools.dockKeyAction(key("F5", { alt: true }))).toBeNull();
   });
 
   it("ações no frontend usam a API que o Chrome usa (DevToolsAPI)", () => {

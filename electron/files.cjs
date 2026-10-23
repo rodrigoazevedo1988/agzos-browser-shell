@@ -10,6 +10,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL, fileURLToPath } = require("node:url");
+const { mediaPageUrlOf } = require("./media-library.cjs");
 
 const FILE_SCHEME = "agzos-file";
 /** Leitura de texto: acima disso só o começo do arquivo. */
@@ -111,6 +112,10 @@ function pathOfFileUrl(value, token) {
 
 /** URL para abrir um caminho numa guia. */
 function urlForPath(file, token, options) {
+  // 5.1: vídeo e áudio abrem nas páginas da biblioteca (agzos://videos, agzos://musica).
+  // `mediaPages: false` mantém o file:// (guia que carrega o arquivo dentro de si).
+  const media = options?.mediaPages === false ? null : mediaPageUrlOf(file);
+  if (media) return media;
   if (fileKind(file, options) === "native") return pathToFileURL(file).toString();
   return fileUrlOf(file, token);
 }

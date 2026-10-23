@@ -1,0 +1,339 @@
+/* agzos://editor (5.0.3): cores próprias (o app não expõe tokens para páginas internas). */
+.ed-root {
+  --ed-bg: #fbfaf8;
+  --ed-fg: #1f1d1b;
+  --ed-muted: #6b6762;
+  --ed-line: #e3dfd9;
+  --ed-panel: #f3f0eb;
+  --ed-accent: #d43420;
+  --ed-editor-bg: #ffffff;
+  --ed-hover: #e9e4dd;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ed-bg);
+  color: var(--ed-fg);
+  font:
+    13px/1.4 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  position: relative;
+}
+.ed-root.ed-dark {
+  --ed-bg: #1e1e1e;
+  --ed-fg: #d4d4d4;
+  --ed-muted: #9d9d9d;
+  --ed-line: #333333;
+  --ed-panel: #252526;
+  --ed-editor-bg: #1e1e1e;
+  --ed-hover: #2a2d2e;
+}
+.ed-root * {
+  box-sizing: border-box;
+}
+.ed-root button,
+.ed-root select {
+  font: inherit;
+  color: inherit;
+}
+.ed-root button {
+  cursor: pointer;
+}
+.ed-root button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ed-root :focus-visible {
+  outline: 2px solid var(--ed-accent);
+  outline-offset: -2px;
+}
+
+.ed-menubar {
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px;
+  background: var(--ed-panel);
+  border-bottom: 1px solid var(--ed-line);
+  user-select: none;
+  flex: none;
+}
+.ed-menu {
+  position: relative;
+}
+.ed-menu-button {
+  background: none;
+  border: 0;
+  padding: 4px 9px;
+  border-radius: 4px;
+}
+.ed-menu-button:hover,
+.ed-menu-button[data-open] {
+  background: var(--ed-hover);
+}
+.ed-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  min-width: 260px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--ed-panel);
+  border: 1px solid var(--ed-line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.ed-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 4px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+.ed-item:hover:not(:disabled) {
+  background: var(--ed-accent);
+  color: #fff;
+}
+.ed-item:hover:not(:disabled) kbd {
+  color: #fff;
+}
+.ed-check {
+  width: 14px;
+  color: var(--ed-accent);
+  text-align: center;
+}
+.ed-item:hover .ed-check {
+  color: #fff;
+}
+.ed-label {
+  flex: 1;
+}
+.ed-item kbd {
+  color: var(--ed-muted);
+  font:
+    11px ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+}
+.ed-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--ed-line);
+}
+
+.ed-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  flex: none;
+  background: var(--ed-panel);
+  border-bottom: 1px solid var(--ed-line);
+  min-height: 32px;
+}
+.ed-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0 6px 0 12px;
+  background: transparent;
+  cursor: pointer;
+  border-right: 1px solid var(--ed-line);
+  white-space: nowrap;
+}
+.ed-tab[data-active] {
+  background: var(--ed-editor-bg);
+  box-shadow: inset 0 2px 0 var(--ed-accent);
+}
+.ed-tab:not([data-active]):hover {
+  background: var(--ed-hover);
+}
+.ed-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ed-dirty {
+  color: var(--ed-accent);
+  font-size: 10px;
+}
+.ed-tab-close,
+.ed-tab-new {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  color: var(--ed-muted);
+  font-size: 16px;
+}
+.ed-tab-close:hover,
+.ed-tab-new:hover {
+  background: var(--ed-hover);
+  color: var(--ed-fg);
+}
+.ed-tab-new {
+  align-self: center;
+  margin: 0 6px;
+}
+
+.ed-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex: none;
+  background: #fff4d6;
+  color: #5a4300;
+  border-bottom: 1px solid #e9d18a;
+}
+.ed-root.ed-dark .ed-banner {
+  background: #3a3120;
+  color: #f3dfa6;
+  border-color: #5b4d2a;
+}
+.ed-banner button {
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+.ed-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.ed-editor {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.ed-editor[hidden] {
+  display: none;
+}
+.ed-view-split .ed-editor,
+.ed-view-split .ed-preview {
+  flex: 1 1 50%;
+}
+.ed-preview {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px 22px;
+  background: var(--ed-editor-bg);
+  border-left: 1px solid var(--ed-line);
+  color: var(--ed-fg);
+}
+.ed-view-preview .ed-preview {
+  flex: 1;
+}
+.ed-loading {
+  margin: auto;
+  color: var(--ed-muted);
+}
+
+.ed-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 2px 10px;
+  min-height: 24px;
+  background: var(--ed-panel);
+  border-top: 1px solid var(--ed-line);
+  color: var(--ed-muted);
+  font-size: 12px;
+}
+.ed-status select {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 1px 2px;
+  max-width: 170px;
+}
+.ed-status button {
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.ed-status button:hover {
+  background: var(--ed-hover);
+}
+.ed-pos {
+  white-space: nowrap;
+}
+
+.ed-spacer {
+  flex: 1;
+}
+.ed-mode {
+  color: var(--ed-muted);
+}
+
+.ed-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+.ed-dialog {
+  width: min(420px, calc(100% - 32px));
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: var(--ed-panel);
+  border: 1px solid var(--ed-line);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+.ed-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.ed-dialog p {
+  margin: 0 0 16px;
+  color: var(--ed-muted);
+}
+.ed-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ed-dialog-actions button {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--ed-line);
+  background: transparent;
+}
+.ed-dialog-actions .ed-primary {
+  background: var(--ed-accent);
+  border-color: var(--ed-accent);
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .ed-view-split .ed-editor,
+  .ed-view-split .ed-preview {
+    flex: 1 1 100%;
+  }
+  .ed-view-split .ed-preview {
+    display: none;
+  }
+  .ed-status {
+    flex-wrap: wrap;
+  }
+}

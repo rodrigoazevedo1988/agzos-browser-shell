@@ -54,12 +54,14 @@ function context(state: BrowserState = initialState, desktop = false) {
     eyedropper: vi.fn(),
     toggleColors: vi.fn(),
     openPdfTools: vi.fn(),
+    openImagem: vi.fn(),
     togglePageTheme: vi.fn(),
     translatePage: vi.fn(),
     devtools: vi.fn(),
     devtoolsEnabled: () => true,
     devtoolsSide: vi.fn(),
     openYtdlp: vi.fn(),
+    openEditor: vi.fn(),
   };
   const ctx: CommandContext = {
     state,
@@ -158,6 +160,17 @@ describe("atalhos", () => {
     expect(
       commandForKey({ key: "F5", ctrl: false, meta: false, shift: true, alt: false })?.id,
     ).toBe("tab.reload-hard");
+  });
+
+  it("5.0.3: Ctrl+F5 recarrega sem cache; F5 sozinho segue normal", () => {
+    expect(
+      commandForKey({ key: "F5", ctrl: true, meta: false, shift: false, alt: false })?.id,
+    ).toBe("tab.reload-hard");
+    expect(
+      commandForKey({ key: "F5", ctrl: false, meta: false, shift: false, alt: false })?.id,
+    ).toBe("tab.reload");
+    const hard = commands.find((command) => command.id === "tab.reload-hard")!;
+    expect(hard.label).toBe("Recarregar ignorando o cache");
   });
 
   it("nenhum atalho aparece duas vezes", () => {

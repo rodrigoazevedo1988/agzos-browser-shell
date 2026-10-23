@@ -16,6 +16,7 @@ import { TranslatePagePanel } from "@/features/translate/page-panel";
 import { YtdlpMenu } from "@/features/ytdlp/menu";
 
 import { CommandPalette } from "../ui/command-palette";
+import { ReloadMenu } from "../ui/reload-menu";
 import { FolderMenu } from "../ui/folder-dropdown";
 import { GroupEditor } from "../ui/group-editor";
 import { SideAppsMenu } from "../ui/side-bar";
@@ -53,7 +54,9 @@ export type PanelSpec =
   | { kind: "translate"; key?: string; props: ComponentProps<typeof TranslatePagePanel> }
   | { kind: "translation"; key?: string; props: ComponentProps<typeof TranslationBubble> }
   /** 5.0: yt-dlp (qualidade do vídeo ou instalação do binário). */
-  | { kind: "ytdlp"; key?: string; props: ComponentProps<typeof YtdlpMenu> };
+  | { kind: "ytdlp"; key?: string; props: ComponentProps<typeof YtdlpMenu> }
+  /** 5.0.3: Recarregar com o DevTools aberto (normal, sem cache, esvaziar o cache). */
+  | { kind: "reload"; key?: string; props: ComponentProps<typeof ReloadMenu> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -100,5 +103,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <TranslationBubble key={key} {...spec.props} />;
     case "ytdlp":
       return <YtdlpMenu key={key} {...spec.props} />;
+    case "reload":
+      return <ReloadMenu key={key} {...spec.props} />;
   }
 }

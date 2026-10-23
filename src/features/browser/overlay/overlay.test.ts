@@ -108,6 +108,7 @@ describe("chrome-overlay.cjs", () => {
         "extmenu",
         "tools",
         "colors",
+        "reload",
         "translate",
         "translation",
         "ytdlp",

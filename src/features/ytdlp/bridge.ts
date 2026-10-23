@@ -12,6 +12,11 @@ export type YtdlpStatus = {
   ffmpeg: boolean;
   installing: boolean;
   jobs: number;
+  /** Versão do binário (AAAA.MM.DD), quando dá para ler. */
+  version: string | null;
+  /** Binário escolhido ou do PATH com mais de 60 dias: a casca oferece o do Agzos. */
+  stale: boolean;
+  ageDays: number | null;
 };
 
 export type YtdlpResult = {
@@ -26,7 +31,9 @@ export type YtdlpOpenPayload = { tabId: number; url: string; private: boolean };
 
 export type DesktopYtdlp = {
   ytdlpStatus(): Promise<YtdlpStatus | null>;
-  ytdlpInstall(): Promise<YtdlpResult>;
+  ytdlpInstall(options?: { prefer?: boolean }): Promise<YtdlpResult>;
+  /** Diagnóstico copiável de um download do yt-dlp (versão, sistema, tentativas, últimas linhas). */
+  ytdlpDetails(id: number): Promise<string | null>;
   ytdlpPick(): Promise<YtdlpResult>;
   ytdlpStart(payload: {
     url: string;

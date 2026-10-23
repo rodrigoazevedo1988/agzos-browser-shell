@@ -33,6 +33,9 @@ const pageTheme = require("./page-theme.cjs");
 const colorTools = require("./color-tools.cjs");
 const pageCapture = require("./page-capture.cjs");
 const { createPdfTools, safeFileName: safePdfName } = require("./pdf-tools.cjs");
+// 5.0.3: Agzos Imagem (electron/image-studio.cjs): grants de imagem e o menu da página.
+const imageStudio = require("./image-studio.cjs");
+let imageStudioService = null;
 const {
   defaultTypeFolders,
   exportDownloads,
@@ -103,6 +106,8 @@ const { SESSION_ID_RE, orphanPartitionDirs, sessionIdsOf } = require("./session-
 const { createPortsService } = require("./ports-service.cjs");
 const { createTunnels, findCloudflared, looksLikeCloudflared } = require("./tunnel.cjs");
 const ytdlp = require("./ytdlp.cjs");
+// 5.0.3: respostas de vídeo/áudio por guia (plano B do yt-dlp), alimentadas pelo onHeadersReceived.
+const ytdlpMedia = ytdlp.createMediaLog();
 const { INSPECTOR_WORLD, inspectorSource } = require("./inspector.cjs");
 const { READER_WORLD, cleanArticle, readerProbeSource, readerSource } = require("./reader.cjs");
 const { createTranslateService, registerTranslateIpc } = require("./translate-service.cjs");
@@ -146,6 +151,12 @@ const {
   urlsOfArgv,
   viewableUrl,
 } = require("./files.cjs");
+// 5.0.3: editor de texto e código (agzos://editor): leitura, gravação com allowlist por janela.
+const editorFiles = require("./editor-files.cjs");
+const editor = editorFiles.createEditorService();
+// 5.1: biblioteca de vídeo/áudio (agzos-media://). O esquema precisa ser declarado antes do ready.
+const media = require("./media-library.cjs");
+media.registerMediaScheme(require("electron").protocol);
 const {
   createPwaStore,
   icnsFromPngs,
@@ -315,6 +326,11 @@ const devtoolsDocks = createDevtoolsDocks({
   },
   // F12 / Ctrl+Shift+I / Ctrl+Shift+J com o foco no próprio DevTools.
   onKey: (contents, action) => {
+    // 5.0.3: F5 / Ctrl+F5 / Ctrl+Shift+R com o foco no DevTools recarregam a guia inspecionada.
+    if (action === "reload" || action === "reload-hard") {
+      void reloadTabContents(contents, { ignoreCache: action === "reload-hard" });
+      return;
+    }
     const where = tabOfContents.get(contents.id);
     if (where) send(where.ctx, "agzos:devtools-request", { id: where.id, action });
   },
@@ -527,6 +543,8 @@ app.on("session-created", (ses) => {
   ses.webRequest.onHeadersReceived((details, callback) => {
     rememberAcceptedHints(details);
     rememberPdfFrame(details);
+    // 5.0.3: só registra o que é mídia (extensão ou content-type); não altera a resposta.
+    ytdlpMedia.noteResponse(details);
     callback({});
   });
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -961,6 +979,31 @@ async function copyPixelColor(contents, ctx, x, y) {
   }
 }
 
+/**
+ * 5.0.3: o que a página toca (plano B do yt-dlp): <video>/<audio> lidos no mundo isolado 4136
+ * e as respostas de mídia da sessão. Só leitura; a página não é alterada.
+ */
+function ytdlpPageMedia(contents) {
+  if (!contents || contents.isDestroyed()) return Promise.resolve([]);
+  return Promise.resolve(
+    contents.executeJavaScriptInIsolatedWorld(
+      ytdlp.MEDIA_WORLD_ID,
+      [{ code: ytdlp.MEDIA_PROBE_SOURCE }],
+      false,
+    ),
+  )
+    .catch(() => [])
+    .then((dom) => {
+      const fromDom = Array.isArray(dom)
+        ? dom.map((item) => ({ url: item?.url, playing: item?.playing, source: "dom" }))
+        : [];
+      const fromNet = ytdlpMedia
+        .list(contents.id)
+        .map((item) => ({ url: item.url, kind: item.kind, at: item.at, source: "net" }));
+      return [...fromDom, ...fromNet];
+    });
+}
+
 /** 5.0: o que baixar no clique direito: o vídeo (endereço direto ou a própria página) ou o link. */
 function ytdlpTargetOf(contents, params) {
   if (params.mediaType === "video") {
@@ -978,6 +1021,7 @@ function buildPageContextMenu(contents, params) {
     { label: "Voltar", enabled: canBack, click: () => contents.navigationHistory.goBack() },
     { label: "Avançar", enabled: canForward, click: () => contents.navigationHistory.goForward() },
     { label: "Recarregar", click: () => contents.reload() },
+    { label: "Recarregar ignorando o cache", click: () => contents.reloadIgnoringCache() },
     { type: "separator" },
     {
       label: "Perguntar ao DuckDuckGo",
@@ -1070,6 +1114,11 @@ function buildPageContextMenu(contents, params) {
         click: () => void saveLoadedImage(contents, params.srcURL),
       },
       { label: "Copiar imagem", click: () => contents.copyImageAt(params.x, params.y) },
+      // 5.0.3: a imagem baixa pela session da guia e abre no Agzos Imagem.
+      {
+        label: "Editar imagem no Agzos",
+        click: () => void imageStudioService?.editUrl(contents, params.srcURL),
+      },
     );
   }
 
@@ -1290,6 +1339,7 @@ function buildTabContextMenu(ctx, context) {
   items.push(
     { type: "separator" },
     action("tab.reload", "Recarregar", { accelerator: "CmdOrCtrl+R" }),
+    action("tab.reload-hard", "Recarregar ignorando o cache"),
     {
       label: "Copiar endereço",
       enabled: Boolean(url),
@@ -1776,6 +1826,8 @@ const FORWARDED_SHORTCUTS = new Set([
   // 4.9.7: captura da página inteira.
   "mod+alt+shift+f",
   "mod+alt+r",
+  // 5.0.3: Agzos Imagem.
+  "mod+alt+i",
   "mod+shift+m",
   "mod+tab",
   "mod+shift+tab",
@@ -1808,6 +1860,7 @@ const FORWARDED_SHORTCUTS = new Set([
   "mod+0",
   "f5",
   "shift+f5",
+  "mod+f5",
   "f11",
   // 4.8: DevTools (F12, Ctrl+Shift+I) e Console (Ctrl+Shift+J).
   "f12",
@@ -2176,7 +2229,8 @@ const primingContents = new WeakSet();
 
 async function loadWithScriptlets(contents, target) {
   // 4.1.1: arquivo que o Chromium não mostra (código, binário) vai pelo agzos-file.
-  const url = viewableUrl(target, fileToken());
+  // 5.1: mediaPages false: a guia carrega o file:// (vídeo nativo); a biblioteca é da casca.
+  const url = viewableUrl(target, fileToken(), { mediaPages: false });
   // Guia nova de um site com scriptlets (ex.: YouTube, inclusive ao restaurar a sessão):
   // o CDP de uma guia que nunca navegou não garante o registro a tempo da primeira carga,
   // e numa SPA isso deixaria a sessão inteira sem os scriptlets. Então a guia passa antes
@@ -2524,9 +2578,22 @@ function wireView(view) {
   // Link para um arquivo local (listagem de pasta do file://): o mesmo desvio da carga.
   contents.on("will-navigate", (event, url) => {
     if (!url.startsWith("file:")) return;
+    // 5.0.3: link para um texto abre no editor, numa guia nova (a atual segue).
+    const file = editorFileOfUrl(url);
+    const editorUrl = file && ctxNow() ? editorRouteOf(ctxNow(), file) : null;
+    if (editorUrl) {
+      event.preventDefault();
+      send(ctxNow(), "agzos:open-request", { url: editorUrl });
+      return;
+    }
     const target = viewableUrl(url, fileToken());
     if (target === url) return;
     event.preventDefault();
+    // 5.1: vídeo/áudio vira página da biblioteca (agzos://videos|musica), na casca.
+    if (target.startsWith("agzos://")) {
+      if (ctxNow()) send(ctxNow(), "agzos:open-request", { url: target });
+      return;
+    }
     void contents.loadURL(target).catch(() => {});
   });
   contents.on("did-start-navigation", (details) => {
@@ -2927,6 +2994,22 @@ function keyStorePath() {
   return path.join(app.getPath("userData"), "agzos-key.bin");
 }
 
+/**
+ * 5.0.3: recarrega a guia. `emptyCache` esvazia o cache HTTP da sessão da guia antes (o
+ * "Esvaziar o cache e recarregar" do DevTools); `ignoreCache` pula o cache na carga.
+ */
+async function reloadTabContents(contents, { ignoreCache = false, emptyCache = false } = {}) {
+  if (contents.isDestroyed()) return;
+  if (emptyCache) {
+    await contents.session.clearCache().catch(() => {});
+    if (contents.isDestroyed()) return;
+    contents.reloadIgnoringCache();
+    return;
+  }
+  if (ignoreCache) contents.reloadIgnoringCache();
+  else contents.reload();
+}
+
 function tabContents(ctx, id) {
   const contents = ctx?.views.get(id)?.view.webContents;
   return contents && !contents.isDestroyed() ? contents : null;
@@ -3106,6 +3189,26 @@ const ytdlpService = ytdlp.createYtdlpService({
     if (!contents || contents.isDestroyed()) return null;
     return contents.session.cookies.get({});
   },
+  // 5.0.3: prova do Electron como node (uma vez por versão), reprodução do plano B de mídia e a
+  // atualização do binário gerenciado (no máximo uma checagem por dia).
+  probeKey: process.versions.electron,
+  capture: ytdlp.execCapture(require("node:child_process").execFile),
+  latestTag: async () => {
+    const url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
+    const init = {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Agzos-Browser" },
+      cache: "no-store",
+    };
+    const response = await net.fetch(url, init).catch(() => fetch(url, init));
+    if (!response.ok) return null;
+    return ytdlp.tagOf(await response.text());
+  },
+  tabAgentFor: (ctx, tabId) => {
+    const contents = ctx?.views?.get(tabId)?.view?.webContents;
+    if (!contents || contents.isDestroyed()) return null;
+    return { userAgent: contents.getUserAgent(), pageUrl: contents.getURL() };
+  },
+  mediaFor: (ctx, tabId) => ytdlpPageMedia(ctx?.views?.get(tabId)?.view?.webContents),
 });
 
 // 4.5: requisições capturadas para o API Scratchpad, avisadas à janela da guia.
@@ -4664,6 +4767,15 @@ function autofillChanged(result) {
 }
 
 function registerIpc() {
+  // 5.1: media:* e o protocolo agzos-media:// da sessão padrão (a casca).
+  media.installMedia({
+    ipcMain,
+    session,
+    dialog,
+    BrowserWindow,
+    app,
+    allow: (event) => Boolean(ctxOfEvent(event)),
+  });
   // Fonte do motor semântico para o page-preload (sandbox: sem require de arquivo local).
   ipcMain.on("agzos:form-intel-source", (event) => {
     event.returnValue = tabOfContents.has(event.sender.id) ? formIntel.FORM_INTEL_SOURCE : "";
@@ -5485,9 +5597,12 @@ function registerIpc() {
   });
 
   ipcMain.handle("tab:navigate", (event, { id, url }) => {
-    const contents = tabContents(ctxOfEvent(event), id);
+    const ctx = ctxOfEvent(event);
+    const contents = tabContents(ctx, id);
     if (!contents || !isWebUrl(url)) return;
-    if (contents.getURL() === url) return;
+    // 5.0.3: com erro ou guia travada, o mesmo endereço tenta de novo (não é "já está lá").
+    const stuck = ctx.failed.has(id) || ctx.crashed.has(id);
+    if (contents.getURL() === url && !stuck) return;
     void loadWithScriptlets(contents, url);
   });
 
@@ -5501,7 +5616,7 @@ function registerIpc() {
     if (contents?.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
   });
 
-  ipcMain.handle("tab:reload", (event, { id, ignoreCache }) => {
+  ipcMain.handle("tab:reload", async (event, { id, ignoreCache, emptyCache }) => {
     const ctx = ctxOfEvent(event);
     const contents = tabContents(ctx, id);
     if (!contents) return;
@@ -5511,8 +5626,7 @@ function registerIpc() {
       void loadWithScriptlets(contents, failure.url);
       return;
     }
-    if (ignoreCache) contents.reloadIgnoringCache();
-    else contents.reload();
+    await reloadTabContents(contents, { ignoreCache, emptyCache });
   });
 
   ipcMain.handle("tab:zoom", (event, { id, direction }) => {
@@ -5863,6 +5977,60 @@ function registerIpc() {
     openPathsInTabs(ctx, result.filePaths);
     return result.filePaths.length;
   });
+  // 5.0.3: editor de texto (agzos://editor). Gravar só o que a janela abriu ou escolheu.
+  ipcMain.handle("editor:open", async (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return { paths: [] };
+    const result = await dialog.showOpenDialog(ctx.window, {
+      title: "Abrir no editor",
+      properties: ["openFile", "multiSelections"],
+    });
+    if (result.canceled) return { paths: [] };
+    const paths = result.filePaths.slice(0, 20);
+    for (const file of paths) editor.access.allow(ctx, file);
+    return { paths };
+  });
+  ipcMain.handle("editor:read", (event, { file } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? editor.read(ctx, file) : { ok: false, error: "forbidden" };
+  });
+  ipcMain.handle("editor:stat", (event, { file } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? editor.stat(ctx, file) : { ok: false, error: "forbidden" };
+  });
+  ipcMain.handle("editor:save", (event, payload = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return { ok: false, error: "forbidden" };
+    return editor.save(ctx, { ...payload, path: payload.file });
+  });
+  ipcMain.handle("editor:save-as", async (event, payload = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return { ok: false, error: "forbidden" };
+    const name = path
+      .basename(String(payload.name || "sem-titulo.txt"))
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+    const result = await dialog.showSaveDialog(ctx.window, {
+      title: "Salvar como",
+      defaultPath: path.join(app.getPath("documents"), name || "sem-titulo.txt"),
+      filters: [{ name: "Todos os arquivos", extensions: ["*"] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: false, error: "canceled" };
+    editor.access.allow(ctx, result.filePath);
+    const saved = editor.save(ctx, { ...payload, path: result.filePath });
+    return saved.ok ? { ...saved, file: result.filePath } : saved;
+  });
+  ipcMain.handle("editor:watch", (event, { file } = {}) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return false;
+    return editor.watchFile(ctx, file, (changed) =>
+      send(ctx, "agzos:editor-changed", { file: changed }),
+    );
+  });
+  ipcMain.handle("editor:unwatch", (event, { file } = {}) => {
+    const ctx = ctxOfEvent(event);
+    return ctx ? editor.unwatchFile(ctx, file) : false;
+  });
+
   // "Abrir no app do sistema" da página de um arquivo (agzos-file): só o arquivo dela.
   ipcMain.on("agzos:file-open-external", (event) => {
     const file = pathOfFileUrl(event.sender.getURL(), fileToken());
@@ -6099,6 +6267,22 @@ function registerIpc() {
     );
   });
   // 4.7: PDF Tools.
+  imageStudioService = imageStudio.installImageStudio({
+    ipcMain,
+    dialog,
+    fs,
+    isTab: (contents) => tabOfContents.has(contents.id),
+    parentOf: (event) => ctxOfEvent(event)?.window ?? null,
+    openTab: (contents, url) => {
+      const from = tabOfContents.get(contents.id)?.id;
+      send(
+        ownerCtx(contents),
+        "agzos:open-request",
+        Number.isSafeInteger(from) ? { url, from } : { url },
+      );
+    },
+    downloadsDir,
+  });
   ipcMain.handle("pdf:open-dialog", async (event, { maxMb } = {}) => {
     const ctx = ctxOfEvent(event);
     const options = {
@@ -7114,8 +7298,29 @@ function ensureFileProtocol(ses) {
 function openPathsInTabs(ctx, files) {
   for (const file of files.slice(0, 20)) {
     if (typeof file !== "string" || !path.isAbsolute(file)) continue;
-    send(ctx, "agzos:open-request", { url: urlForPath(file, fileToken()) });
+    send(ctx, "agzos:open-request", {
+      url: editorRouteOf(ctx, file) ?? urlForPath(file, fileToken()),
+    });
   }
+}
+
+/** Caminho de um file:// (null para outros esquemas ou URLs inválidas). */
+function editorFileOfUrl(url) {
+  try {
+    return require("node:url").fileURLToPath(url);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 5.0.3: texto e código abrem no editor (agzos://editor?file=), e a janela ganha o direito de
+ * gravar o arquivo. Flag `editor` desligada ou arquivo que não é texto → null (agzos-file).
+ */
+function editorRouteOf(ctx, file) {
+  if (!featureFlags().editor || editorFiles.editorKindOf(file) !== "text") return null;
+  editor.access.allow(ctx, file);
+  return editorFiles.editorUrlOf(file);
 }
 
 /**
@@ -9001,6 +9206,8 @@ function startServices() {
     });
     updater.start({ auto: app.isPackaged });
   }
+  // 5.0.3: o Electron como runtime de JS do yt-dlp só vale depois da prova (sem bloquear o start).
+  if (featureFlags().ytdlp) void ytdlpService.probeRuntime().catch(() => {});
 }
 
 /**
@@ -9232,7 +9439,7 @@ function macMenuTemplate() {
       label: "Visualizar",
       submenu: [
         command("Recarregar", "tab.reload", "Cmd+R"),
-        command("Recarregar sem cache", "tab.reload-hard", "Shift+Cmd+R"),
+        command("Recarregar ignorando o cache", "tab.reload-hard", "Shift+Cmd+R"),
         { type: "separator" },
         command("Tamanho padrão", "zoom.reset", "Cmd+0"),
         command("Aumentar zoom", "zoom.in", "Cmd+Plus"),
@@ -9245,6 +9452,7 @@ function macMenuTemplate() {
         command("Traduzir página", "page.translate"),
         command("Baixar vídeo com yt-dlp", "ytdlp.download"),
         command("Notas desta página", "notes.toggle", "Shift+Cmd+M"),
+        command("Editor de texto", "editor.open"),
         command("Mira de elemento", "page.inspect", "Shift+Cmd+C"),
         command("Ferramentas do desenvolvedor", "devtools.toggle", "Alt+Cmd+I"),
         command("Console JavaScript", "devtools.console", "Alt+Cmd+J"),

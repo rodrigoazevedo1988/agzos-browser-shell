@@ -94,10 +94,13 @@ export function CaptureDialog({
   desktop,
   sources,
   onFullPage,
+  onEdit,
   onClose,
 }: {
   desktop: DesktopBridge | null;
   sources: CaptureSources;
+  /** 5.0.3: manda a imagem (PNG) para o Agzos Imagem. */
+  onEdit?: (png: string) => void;
   /** Pede a página inteira (o diálogo fecha durante a rolagem e volta com ela). */
   onFullPage?: () => void;
   onClose: () => void;
@@ -273,6 +276,10 @@ export function CaptureDialog({
     if (!png || !desktop) return;
     const ok = await desktop.captureCopy(png);
     setStatus(ok ? "Imagem copiada." : "Não foi possível copiar.");
+  };
+  const edit = () => {
+    const png = result();
+    if (png) onEdit?.(png);
   };
   const save = async () => {
     const png = result();
@@ -556,6 +563,11 @@ export function CaptureDialog({
           <Button variant="outline" disabled={!base} onClick={() => void copy()}>
             <Copy /> Copiar
           </Button>
+          {onEdit && desktop && (
+            <Button variant="outline" disabled={!base} onClick={edit}>
+              <Pencil /> Editar no Agzos Imagem
+            </Button>
+          )}
           <Button disabled={!base} onClick={() => void save()}>
             <Download /> Salvar PNG…
           </Button>

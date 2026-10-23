@@ -173,6 +173,10 @@ function dockKeyAction(input) {
   if (key === "f12" && !mod && !input.shift && !input.alt) return "toggle";
   if (mod && input.shift && !input.alt && key === "i") return "toggle";
   if (mod && input.shift && !input.alt && key === "j") return "console";
+  // 5.0.3: recarregar a guia inspecionada, como no Chrome (F5, Ctrl+F5, Ctrl+Shift+R e
+  // Shift+F5 pulam o cache).
+  if (!input.alt && key === "f5") return mod || input.shift ? "reload-hard" : "reload";
+  if (mod && input.shift && !input.alt && key === "r") return "reload-hard";
   return null;
 }
 

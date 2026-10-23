@@ -10,6 +10,9 @@ import {
   withNewSidePanels,
 } from "../side-panels";
 import { parseSoundTick, parseSoundVolume } from "@/features/sounds/sounds";
+import { isMusicUrl } from "@/features/media/audio/model";
+import { isEditorUrl } from "@/features/editor/url";
+import { parsePlaylists, type Playlist } from "@/features/media/audio/playlists";
 import { parseGestures } from "@/features/gestures/gestures";
 import { clampTerminalHeight } from "@/features/terminal/model";
 import { parseTerminalSettings } from "@/features/terminal/config";
@@ -69,7 +72,34 @@ export type Snapshot = {
   notes?: Record<string, PageNote>;
   /** 4.7: ColorTools (histórico e paletas). */
   colors?: ColorLibrary;
+  /**
+   * 5.1: biblioteca de vídeo e áudio. Só a lê/grava a própria biblioteca (media-store); o
+   * snapshot da casca não a carrega, então a gravação dele a mantém (ver store.ts).
+   */
+  media?: MediaLibrary;
 };
+
+export type MediaKind = "video" | "audio";
+export type MediaRecent = {
+  path: string;
+  kind: MediaKind;
+  /** Segundos onde parou. */
+  position: number;
+  /** Duração em segundos (0 = desconhecida). */
+  duration: number;
+  /** Quando foi tocado (ms desde a época). */
+  at: number;
+};
+export type MediaLibrary = {
+  recent: MediaRecent[];
+  favorites: string[];
+  /** Pastas fixadas no seletor de pastas. */
+  folders: string[];
+  /** 5.1: playlists do agzos://musica (validadas em parsePlaylists). */
+  playlists: Playlist[];
+};
+export const MEDIA_RECENT_LIMIT = 60;
+export const MEDIA_PATHS_LIMIT = 200;
 
 export const SNAPSHOT_SECTIONS = [
   "version",
@@ -81,9 +111,16 @@ export const SNAPSHOT_SECTIONS = [
   "dial",
   "notes",
   "colors",
+  "media",
 ] as const;
 
 const INTERNAL_URLS = new Set([HISTORY_URL, BOOKMARKS_URL, SETTINGS_URL, DIAL_URL, SCRATCHPAD_URL]);
+/** agzos://musica aceita ?file=… (arquivo aberto de fora); o resto é igual ao das outras. */
+// 5.1: agzos://videos (com ?file=… quando abre um arquivo de fora). Inline para não importar
+// video/model.ts, que já importa deste arquivo.
+const isVideosUrl = (url: string) => url === "agzos://videos" || url.startsWith("agzos://videos?");
+const isInternalUrl = (url: string) =>
+  INTERNAL_URLS.has(url) || isMusicUrl(url) || isVideosUrl(url) || isEditorUrl(url);
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -99,7 +136,7 @@ function parseEntry(value: unknown): Entry | null {
       ? "home"
       : value["kind"] === "page"
         ? "page"
-        : value["kind"] === "internal" && INTERNAL_URLS.has(value["url"])
+        : value["kind"] === "internal" && isInternalUrl(value["url"])
           ? "internal"
           : null;
   return kind ? { title: value["title"], url: value["url"], kind } : null;
@@ -348,6 +385,58 @@ export function parseSnapshot(value: unknown): Snapshot | null {
     bookmarks: parseBookmarks(value["bookmarks"]),
     notes: parseNotes(value["notes"]),
     colors: parseColorLibrary(value["colors"]),
+    ...(value["media"] === undefined ? {} : { media: parseMedia(value["media"]) }),
+  };
+}
+
+export const emptyMedia = (): MediaLibrary => ({
+  recent: [],
+  favorites: [],
+  folders: [],
+  playlists: [],
+});
+
+/** Caminho absoluto de Windows, Mac ou Linux, sem ser absurdo de tamanho. */
+function isPathLike(value: unknown): value is string {
+  return (
+    isString(value) &&
+    value.length > 0 &&
+    value.length <= 4096 &&
+    (value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\"))
+  );
+}
+
+/** Biblioteca gravada → só o válido (caminhos absolutos, sem repetição, dentro dos limites). */
+export function parseMedia(value: unknown): MediaLibrary {
+  if (!isObject(value)) return emptyMedia();
+  const recent: MediaRecent[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(value["recent"])) {
+    for (const item of value["recent"]) {
+      if (!isObject(item) || !isPathLike(item["path"]) || seen.has(item["path"])) continue;
+      if (item["kind"] !== "video" && item["kind"] !== "audio") continue;
+      const position = Number(item["position"]);
+      const duration = Number(item["duration"]);
+      const at = Number(item["at"]);
+      if (!Number.isFinite(position) || !Number.isFinite(duration) || !Number.isFinite(at))
+        continue;
+      seen.add(item["path"]);
+      recent.push({
+        path: item["path"],
+        kind: item["kind"],
+        position: Math.max(0, position),
+        duration: Math.max(0, duration),
+        at,
+      });
+    }
+  }
+  const paths = (list: unknown) =>
+    Array.isArray(list) ? [...new Set(list.filter(isPathLike))].slice(0, MEDIA_PATHS_LIMIT) : [];
+  return {
+    recent: recent.sort((a, b) => b.at - a.at).slice(0, MEDIA_RECENT_LIMIT),
+    favorites: paths(value["favorites"]),
+    folders: paths(value["folders"]),
+    playlists: parsePlaylists(value["playlists"]),
   };
 }
 

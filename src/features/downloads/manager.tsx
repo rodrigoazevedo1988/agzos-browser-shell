@@ -1,8 +1,10 @@
 import {
   Archive,
+  ClipboardCopy,
   Download,
   File,
   FileDown,
+  FileCode,
   FilePenLine,
   FileText,
   Film,
@@ -42,6 +44,7 @@ import {
 } from "./filters";
 import { formatBytes, progressOf, statusOf } from "./format";
 import { tagColorOf } from "./filters";
+import { EDITOR_NAME } from "@/features/editor/language";
 
 const TYPE_ICONS: Record<DownloadFileType, LucideIcon> = {
   pdf: FileText,
@@ -137,6 +140,18 @@ export function DownloadsManager(props: DownloadsManagerProps) {
         searchRef.current?.select();
         return;
     }
+  };
+
+  /** 5.0.3: diagnóstico de um download do yt-dlp (versão, sistema, tentativas, últimas linhas). */
+  const copyDetails = (record: DownloadRecord) => {
+    if (!desktop) return;
+    void desktop.ytdlpDetails(record.id).then((text) => {
+      if (!text) {
+        props.onNotice("Os detalhes deste download não estão mais disponíveis.");
+        return;
+      }
+      void desktop.clipboardWrite(text).then(() => props.onNotice("Detalhes copiados."));
+    });
   };
 
   const changeDestination = (record: DownloadRecord) => {
@@ -572,6 +587,13 @@ export function DownloadsManager(props: DownloadsManagerProps) {
                       onClick={() => run(record, "restart")}
                     />
                   )}
+                  {done && record.path && EDITOR_NAME.test(record.filename) && (
+                    <IconButton
+                      icon={FileCode}
+                      label={`Abrir ${record.filename} no editor de texto`}
+                      onClick={() => void desktop?.filesOpen(record.path, "tab")}
+                    />
+                  )}
                   {done && type === "pdf" && (
                     <IconButton
                       icon={FilePenLine}
@@ -589,6 +611,13 @@ export function DownloadsManager(props: DownloadsManagerProps) {
                       icon={FolderInput}
                       label={`Mudar destino de ${record.filename}`}
                       onClick={() => changeDestination(record)}
+                    />
+                  )}
+                  {record.source === "ytdlp" && (
+                    <IconButton
+                      icon={ClipboardCopy}
+                      label={`Copiar detalhes de ${record.filename}`}
+                      onClick={() => copyDetails(record)}
                     />
                   )}
                   {!record.private && (
