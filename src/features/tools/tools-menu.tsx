@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef, useState } from "react";
+
 import { TOOLS, shortcutText, type ToolId } from "./tools";
 
 /**
@@ -17,12 +19,22 @@ export function ToolsMenu({
   onRun: (id: ToolId) => void;
   onClose: () => void;
 }) {
+  // 5.0.4: o menu nasce na altura do item da barra lateral; em telas baixas (1366×768 a
+  // 125 %) a parte de baixo ficava fora da janela e a rolagem não chegava nela. Sobe o
+  // menu até caber e limita a altura à janela.
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [fitTop, setFitTop] = useState(top);
+  useLayoutEffect(() => {
+    const height = ref.current?.offsetHeight ?? 0;
+    setFitTop(Math.max(8, Math.min(top, window.innerHeight - height - 8)));
+  }, [top]);
   return (
     <div
+      ref={ref}
       className="app-menu tools-menu"
       role="menu"
       aria-label="Ferramentas"
-      style={{ left, top, right: "auto" }}
+      style={{ left, top: fitTop, right: "auto", maxHeight: "calc(100vh - 16px)" }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
       }}

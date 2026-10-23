@@ -4917,6 +4917,44 @@ test("4.6: ferramentas só na barra lateral, em menu com o visual do app", async
   }
 });
 
+test("5.0.4: tela baixa (1366×768 a 125 %): menu Ferramentas cabe na janela e o play da música tem ícone visível", async () => {
+  const { app, window } = await launch(tempProfile());
+  try {
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]!;
+      win.unmaximize();
+      win.setContentSize(1093, 566);
+    });
+    await expect.poll(() => window.evaluate(() => window.innerHeight)).toBe(566);
+    await window
+      .getByRole("navigation", { name: "Painéis laterais" })
+      .getByRole("button", { name: "Ferramentas" })
+      .click();
+    const menu = (await overlayPage(app)).getByRole("menu", { name: "Ferramentas" });
+    await expect(menu).toBeVisible();
+    const fit = await menu.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, height: window.innerHeight };
+    });
+    expect(fit.top).toBeGreaterThanOrEqual(0);
+    expect(fit.bottom).toBeLessThanOrEqual(fit.height);
+    await menu.getByRole("menuitem").last().scrollIntoViewIfNeeded();
+    await expect(menu.getByRole("menuitem").last()).toBeInViewport();
+    await menu.press("Escape");
+
+    await go(window, "agzos://musica");
+    const play = window.locator(".mx-play").first();
+    await expect(play).toBeVisible();
+    const colors = await play.evaluate((el) => ({
+      button: getComputedStyle(el).backgroundColor,
+      icon: getComputedStyle(el.querySelector("svg")!).color,
+    }));
+    expect(colors.icon).not.toBe(colors.button);
+  } finally {
+    await app.close();
+  }
+});
+
 test("4.6: caderno do modo leitura só aparece em página com artigo", async () => {
   const { app, window } = await launch(tempProfile());
   const reader = window.getByRole("button", { name: "Modo leitura", exact: true });

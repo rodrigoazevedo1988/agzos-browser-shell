@@ -7,6 +7,14 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.4",
+    date: "2026-10-23",
+    items: [
+      "Corrigido: em notebooks de 1366×768 o menu Ferramentas da barra lateral passava da borda de baixo da janela e os últimos itens não apareciam nem rolando. Agora ele sobe até caber e rola até o fim.",
+      "Corrigido: no Agzos Músicas o botão de tocar aparecia todo branco, sem o ícone. As cores dos botões do player (cinza nos ícones, vermelho em aleatório e repetir ligados) voltaram.",
+    ],
+  },
+  {
     version: "5.0.3",
     date: "2026-10-23",
     items: [

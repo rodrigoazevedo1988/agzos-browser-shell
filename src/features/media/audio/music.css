@@ -25,9 +25,11 @@
 .mx-root *::after {
   box-sizing: border-box;
 }
-.mx-root button,
-.mx-root input,
-.mx-root select {
+/* 5.0.4: :where() deixa o reset com peso de elemento; antes ele vencia as cores de cada
+   botão (.mx-play ficava com o ícone branco no círculo branco). */
+:where(.mx-root) button,
+:where(.mx-root) input,
+:where(.mx-root) select {
   font: inherit;
   color: inherit;
 }
