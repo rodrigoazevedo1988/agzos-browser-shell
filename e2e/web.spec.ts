@@ -55,6 +55,22 @@ test("cria e fecha abas pelo botão e pelo teclado", async ({ page }) => {
   await expect(tabs(page)).toHaveCount(1);
 });
 
+test("5.0.5: com 14 abas em 1280 px, o título de cada aba não fixada segue legível", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (let count = 2; count <= 14; count += 1) {
+    await page.keyboard.press("Control+t");
+    await expect(tabs(page)).toHaveCount(count);
+  }
+  const titles = page.locator(".tabs .browser-tab:not(.pinned) .tab-title");
+  await expect(titles).toHaveCount(14);
+  // A largura assenta depois das transições de flex e min-width (cerca de 0,24 s).
+  await expect
+    .poll(() => titles.evaluateAll((els) => Math.min(...els.map((el) => el.clientWidth))))
+    .toBeGreaterThanOrEqual(40);
+});
+
 test("navega pela omnibox, volta e avança", async ({ page }) => {
   await go(page, "github.com");
   await expect(tabs(page).first()).toContainText("github.com");
@@ -107,6 +123,8 @@ test("menu de contexto fixa, duplica e fecha outras", async ({ page }) => {
 
 test("aba fixada pede um segundo clique para fechar", async ({ page }) => {
   await page.keyboard.press("Control+t");
+  // Sem o mouse na aba, o fixar fica transparente e não recebe clique (como no uso real).
+  await tabs(page).last().hover();
   await tabs(page)
     .last()
     .getByLabel(/^Fixar /)
@@ -324,6 +342,7 @@ test("painéis abrem e fecham", async ({ page }) => {
 
 test("Ctrl+W fecha aba fixada direto, como na 1.3", async ({ page }) => {
   await page.keyboard.press("Control+t");
+  await tabs(page).last().hover();
   await tabs(page)
     .last()
     .getByLabel(/^Fixar /)

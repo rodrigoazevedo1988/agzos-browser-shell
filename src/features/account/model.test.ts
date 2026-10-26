@@ -126,18 +126,104 @@ describe("perfis Google (main)", () => {
         ],
       ],
     ]);
-    expect(profiles.parseListAccounts(text)).toEqual({
-      email: "ana@gmail.com",
-      name: "Ana Souza",
-      photo: "https://lh3.googleusercontent.com/a/x=s48-c",
-    });
-    expect(profiles.parseListAccounts('["gaia.l.a.r",[]]')).toBeNull();
-    expect(profiles.parseListAccounts("<html>")).toBeNull();
+    expect(profiles.parseListAccounts(text)).toEqual([
+      {
+        email: "ana@gmail.com",
+        name: "Ana Souza",
+        photo: "https://lh3.googleusercontent.com/a/x=s48-c",
+      },
+    ]);
+    expect(profiles.parseListAccounts('["gaia.l.a.r",[]]')).toEqual([]);
+    expect(profiles.parseListAccounts("<html>")).toEqual([]);
     const evil = JSON.stringify([
       "gaia.l.a.r",
       [["gaia.l.a", 1, "X", "x@y.com", "https://evil.example/p"]],
     ]);
-    expect(profiles.parseListAccounts(evil)?.photo).toBeNull();
+    expect(profiles.parseListAccounts(evil)[0].photo).toBeNull();
+  });
+
+  it("ListAccounts com várias contas: todas, sem repetir e-mail, sem as inválidas", () => {
+    const text = JSON.stringify([
+      "gaia.l.a.r",
+      [
+        ["gaia.l.a", 1, "Ana", "ana@gmail.com", null, 1, 1, 0],
+        ["gaia.l.a", 2, "Bia", "BIA@gmail.com", null, 1, 1, 0],
+        ["gaia.l.a", 3, "Ana de novo", "ana@gmail.com", null, 1, 1, 0],
+        ["gaia.l.a", 4, "Lixo", "não é e-mail", null, 1, 1, 0],
+        "não é lista",
+      ],
+    ]);
+    expect(profiles.parseListAccounts(text).map((item: { email: string }) => item.email)).toEqual([
+      "ana@gmail.com",
+      "bia@gmail.com",
+    ]);
+  });
+
+  it("filtro de cookies: só SID, 1PSID, 3PSID e SAPISID do Google, adição ou remoção", () => {
+    const google = (name: string, domain = ".google.com") => ({ name, domain, removed: true });
+    for (const name of ["SID", "__Secure-1PSID", "__Secure-3PSID", "SAPISID"]) {
+      expect(profiles.isWatchedCookie(google(name))).toBe(true);
+    }
+    expect(profiles.isWatchedCookie(google("SIDCC"))).toBe(false);
+    expect(profiles.isWatchedCookie(google("__Secure-1PSIDCC"))).toBe(false);
+    expect(profiles.isWatchedCookie(google("NID"))).toBe(false);
+    expect(profiles.isWatchedCookie(google("SID", "exemplo.com"))).toBe(false);
+    expect(profiles.isWatchedCookie(null)).toBe(false);
+    expect(profiles.hasSignedInCookie([{ name: "NID" }, { name: "SID" }])).toBe(true);
+    expect(profiles.hasSignedInCookie([{ name: "__Secure-1PSID" }])).toBe(true);
+    expect(profiles.hasSignedInCookie([{ name: "SAPISID" }, { name: "SIDCC" }])).toBe(false);
+    expect(profiles.hasSignedInCookie(undefined)).toBe(false);
+  });
+
+  it("motivo da leitura: sem sessão é signed-out; com sessão e sem conta, read-failed", () => {
+    const [one] = profiles.parseListAccounts(
+      JSON.stringify(["gaia.l.a.r", [["gaia.l.a", 1, "Ana", "ana@gmail.com", null]]]),
+    );
+    expect(profiles.readOutcome({ signedIn: false, accounts: [one] })).toBe("signed-out");
+    expect(profiles.readOutcome({ signedIn: true, accounts: [] })).toBe("read-failed");
+    expect(profiles.readOutcome({ signedIn: true, accounts: [one] })).toBe("ok");
+  });
+
+  it("intervalo mínimo: leitura forçada a cada 10 s; normal só com conta, a cada 60 s", () => {
+    const now = 100_000;
+    // Forçada: espera o que falta desde a última leitura; passou de 10 s, lê já.
+    expect(profiles.readWaitMs({ force: true, now, lastReadAt: now - 4_000 })).toBe(6_000);
+    expect(profiles.readWaitMs({ force: true, now, lastReadAt: now - 10_000 })).toBe(0);
+    expect(profiles.readWaitMs({ force: true, now, lastReadAt: 0 })).toBe(0);
+    // Normal com conta: 60 s. Sem conta: sempre lê.
+    expect(profiles.readWaitMs({ hasEmail: true, now, lastReadAt: now - 1_000 })).toBe(59_000);
+    expect(profiles.readWaitMs({ hasEmail: false, now, lastReadAt: now - 1_000 })).toBe(0);
+  });
+
+  it("escolha da conta: a atual; senão a que acabou de entrar; senão a primeira", () => {
+    const ana = { email: "ana@gmail.com", name: "Ana", photo: null };
+    const bia = { email: "bia@gmail.com", name: "Bia", photo: null };
+    // A atual ainda na lista ganha, mesmo que a outra esteja na frente.
+    expect(
+      profiles.chooseAccount({ accounts: [bia, ana], current: "ana@gmail.com", previous: [] }),
+    ).toBe(ana);
+    // Atual saiu da lista: a que não estava na leitura anterior.
+    expect(
+      profiles.chooseAccount({
+        accounts: [ana, bia],
+        current: "zé@gmail.com",
+        previous: [ana.email],
+      }),
+    ).toBe(bia);
+    // Sem atual e sem novidade: a primeira.
+    expect(
+      profiles.chooseAccount({
+        accounts: [bia, ana],
+        current: "",
+        previous: [ana.email, bia.email],
+      }),
+    ).toBe(bia);
+    expect(profiles.chooseAccount({ accounts: [], current: "ana@gmail.com" })).toBeNull();
+  });
+
+  it("título da janela do perfil: nome, travessão e o app", () => {
+    expect(profiles.profileWindowTitle("Trabalho")).toBe("Trabalho — Agzos Browser");
+    expect(profiles.profileWindowTitle("")).toBe("Conta Google — Agzos Browser");
   });
 
   it("modal do início: só logado, com perfis, fora de PWA e de teste", () => {

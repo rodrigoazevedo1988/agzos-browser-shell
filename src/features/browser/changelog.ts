@@ -7,6 +7,16 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.5",
+    date: "2026-10-26",
+    items: [
+      'Corrigido: o Agzos Key misturava logins de subdomínios do mesmo site (por exemplo, vps.empresa.com com office.empresa.com) e chegava a preencher o código de verificação de outra conta. Cada login agora vale só para o endereço dele; os de outros subdomínios ficam em "Outros logins de…" e pedem confirmação antes de preencher.',
+      "Corrigido: com muitas abas abertas elas mostravam só uma letra do título. Os botões de fixar e fechar aparecem só com o mouse por cima, e o título usa a largura toda da aba.",
+      "Corrigido: o app instalado (PWA) ficava por cima das outras janelas depois de minimizado com um vídeo tocando. O Picture-in-Picture automático ao minimizar agora vem desligado (ligue no menu do app) e, ligado, só entra com som de verdade.",
+      'Melhorado: os perfis Google leem a conta como o Chrome e mostram "Conectando…" enquanto você entra. "Trocar conta" abre o seletor de contas do Google, sair do Google desconecta o perfil, a janela do perfil leva o nome dele e abrir um perfil já aberto não cria outra janela.',
+    ],
+  },
+  {
     version: "5.0.4",
     date: "2026-10-23",
     items: [

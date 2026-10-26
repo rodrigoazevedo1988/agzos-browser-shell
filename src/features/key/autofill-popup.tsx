@@ -1,5 +1,7 @@
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -17,7 +19,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { VaultEntry } from "@/features/browser/types";
-import { searchLogins } from "@/features/browser/vault";
+import { hostOf, searchLogins, siteOf } from "@/features/browser/vault";
 
 import { FormFillCard, type FormFillInfo } from "./form-fill-card";
 import { generatePassword } from "./password";
@@ -38,6 +40,7 @@ export function AutofillPopup({
   status,
   mode = "suggest",
   entries,
+  related = [],
   vault = [],
   capture = null,
   copied,
@@ -60,6 +63,8 @@ export function AutofillPopup({
   mode?: "suggest" | "site";
   /** Logins que servem para o site. */
   entries: VaultEntry[];
+  /** Logins de outro subdomínio do mesmo site: grupo recolhido, com confirmação ao preencher. */
+  related?: VaultEntry[];
   /** Cofre inteiro (logins), para a busca. */
   vault?: VaultEntry[];
   /** O que o usuário já digitou na página (pré-preenche "salvar login"). */
@@ -86,6 +91,10 @@ export function AutofillPopup({
   const [saving, setSaving] = useState(
     mode === "site" && status === "ready" && entries.length === 0,
   );
+  const [relatedOpen, setRelatedOpen] = useState(false);
+  // Login de outro subdomínio escolhido: pede confirmação antes de preencher.
+  const [pending, setPending] = useState<VaultEntry | null>(null);
+  const relatedIds = useMemo(() => new Set(related.map((entry) => entry.id)), [related]);
   const results = useMemo(
     () =>
       query.trim()
@@ -145,66 +154,74 @@ export function AutofillPopup({
     );
   }
 
-  const item = (entry: VaultEntry, linking: boolean) => (
-    <div className="autofill-item" key={entry.id}>
-      <div className="autofill-info">
-        <strong>{entry.username || entry.title}</strong>
-        <small>
-          {linking ? (
-            <>
-              <Link2 aria-hidden="true" /> {entry.title} · vincular a {host}
-            </>
-          ) : (
-            entry.title
-          )}
-        </small>
-        {missed === entry.id && (
-          <small className="autofill-miss" role="status">
-            Não achei campos de login nesta página. Abra a tela de login ou copie o usuário e a
-            senha ao lado.
+  const item = (entry: VaultEntry) => {
+    // Outro subdomínio do site: não ganha a URL daqui e pede confirmação ao preencher.
+    const isRelated = relatedIds.has(entry.id);
+    const linking = !isRelated && !entry.url?.trim();
+    const entryHost = hostOf(entry.url);
+    return (
+      <div className="autofill-item" key={entry.id}>
+        <div className="autofill-info">
+          <strong>{entry.username || entry.title}</strong>
+          <small>
+            {linking ? (
+              <>
+                <Link2 aria-hidden="true" /> {entry.title} · vincular a {host}
+              </>
+            ) : isRelated && entryHost ? (
+              `${entry.title} · ${entryHost}`
+            ) : (
+              entry.title
+            )}
           </small>
-        )}
-        {entry.totpSecret && (
-          <TotpCode
-            secret={entry.totpSecret}
-            onCopy={(code) => onCopy(`afa-${entry.id}`, code)}
-            copied={copied === `afa-${entry.id}`}
-          />
-        )}
-      </div>
-      <div className="autofill-actions">
-        {canFill && (
+          {missed === entry.id && (
+            <small className="autofill-miss" role="status">
+              Não achei campos de login nesta página. Abra a tela de login ou copie o usuário e a
+              senha ao lado.
+            </small>
+          )}
+          {entry.totpSecret && (
+            <TotpCode
+              secret={entry.totpSecret}
+              onCopy={(code) => onCopy(`afa-${entry.id}`, code)}
+              copied={copied === `afa-${entry.id}`}
+            />
+          )}
+        </div>
+        <div className="autofill-actions">
+          {canFill && (
+            <Button
+              size="sm"
+              className="autofill-fill"
+              onClick={() => (isRelated ? setPending(entry) : onFill(entry))}
+              title={linking ? `Preencher e guardar ${host} neste login` : "Preencher login"}
+              aria-label={`Preencher login de ${entry.title}`}
+            >
+              <LogIn /> Preencher
+            </Button>
+          )}
           <Button
-            size="sm"
-            className="autofill-fill"
-            onClick={() => onFill(entry)}
-            title={linking ? `Preencher e guardar ${host} neste login` : "Preencher login"}
-            aria-label={`Preencher login de ${entry.title}`}
+            variant="ghost"
+            size="icon"
+            onClick={() => onCopy(`afu-${entry.id}`, entry.username ?? "")}
+            title="Copiar usuário"
+            aria-label={`Copiar usuário de ${entry.title}`}
           >
-            <LogIn /> Preencher
+            {copied === `afu-${entry.id}` ? <Check /> : <User />}
           </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onCopy(`afu-${entry.id}`, entry.username ?? "")}
-          title="Copiar usuário"
-          aria-label={`Copiar usuário de ${entry.title}`}
-        >
-          {copied === `afu-${entry.id}` ? <Check /> : <User />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onCopy(`afp-${entry.id}`, entry.password ?? "")}
-          title="Copiar senha"
-          aria-label={`Copiar senha de ${entry.title}`}
-        >
-          {copied === `afp-${entry.id}` ? <Check /> : <Copy />}
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onCopy(`afp-${entry.id}`, entry.password ?? "")}
+            title="Copiar senha"
+            aria-label={`Copiar senha de ${entry.title}`}
+          >
+            {copied === `afp-${entry.id}` ? <Check /> : <Copy />}
+          </Button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <aside className="autofill-popup" data-mode={mode} aria-label="Entrar com o Agzos Key">
@@ -221,14 +238,59 @@ export function AutofillPopup({
         />
       ) : (
         <>
+          {pending && (
+            <div
+              className="m-2 flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-sm"
+              role="alertdialog"
+              aria-label="Confirmar preenchimento"
+            >
+              <p className="m-0">
+                Este login é de <strong>{hostOf(pending.url) ?? pending.title}</strong>. Preencher
+                em <strong>{host}</strong>?
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const entry = pending;
+                    setPending(null);
+                    onFill(entry);
+                  }}
+                >
+                  Preencher
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="autofill-list">
             {entries.length === 0 && !query && (
               <p className="autofill-empty">Nenhum login salvo para {host}.</p>
             )}
-            {entries.map((entry) => item(entry, !entry.url?.trim()))}
-            {results.map((entry) => item(entry, !entry.url?.trim()))}
+            {entries.map((entry) => item(entry))}
+            {results.map((entry) => item(entry))}
             {query && results.length === 0 && (
               <p className="autofill-empty">Nada encontrado no cofre.</p>
+            )}
+            {!query && related.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 border-0 border-t border-border bg-transparent px-3 py-2 text-left text-xs font-semibold text-muted-foreground hover:bg-muted"
+                  aria-expanded={relatedOpen}
+                  onClick={() => setRelatedOpen((open) => !open)}
+                >
+                  {relatedOpen ? (
+                    <ChevronDown aria-hidden="true" className="size-3.5" />
+                  ) : (
+                    <ChevronRight aria-hidden="true" className="size-3.5" />
+                  )}
+                  Outros logins de {siteOf(host)} ({related.length})
+                </button>
+                {relatedOpen && related.map((entry) => item(entry))}
+              </>
             )}
           </div>
           <label className="autofill-search">

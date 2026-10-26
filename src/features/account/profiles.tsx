@@ -16,9 +16,9 @@ import { Input } from "@/components/ui/input";
 
 import "./account.css";
 import { ProfileAvatar } from "./avatar";
-import type { AccountBridge, AccountState, GoogleProfile } from "./bridge";
+import type { AccountBridge, AccountState, GoogleProfile, ProfileStatus } from "./bridge";
 import { PROFILE_COLORS } from "./model";
-import { newlyConnected } from "./profiles-model";
+import { cardStateOf, newlyConnected } from "./profiles-model";
 
 type Notice = (text: string) => void;
 
@@ -67,7 +67,13 @@ export function GoogleAccounts({
       ) : (
         <ul className="acct-profiles">
           {state.profiles.map((profile) => (
-            <ProfileCard key={profile.id} bridge={bridge} profile={profile} onNotice={onNotice} />
+            <ProfileCard
+              key={profile.id}
+              bridge={bridge}
+              profile={profile}
+              status={state.profileStatus?.[profile.id]}
+              onNotice={onNotice}
+            />
           ))}
         </ul>
       )}
@@ -86,17 +92,20 @@ export function GoogleAccounts({
 function ProfileCard({
   bridge,
   profile,
+  status,
   onNotice,
 }: {
   bridge: AccountBridge;
   profile: GoogleProfile;
+  status: ProfileStatus | undefined;
   onNotice: Notice;
 }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(profile.label);
   const [removing, setRemoving] = useState(false);
   const [busy, setBusy] = useState(false);
-  const connected = Boolean(profile.email);
+  const card = cardStateOf(profile, status);
+  const connected = card === "connected";
   const lastUsed = profile.lastUsed
     ? new Date(profile.lastUsed).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
     : "";
@@ -111,7 +120,11 @@ function ProfileCard({
       .detectProfile(profile.id)
       .then((result) =>
         onNotice(
-          result.ok ? "Conta detectada." : "Não achamos uma conta Google logada neste perfil.",
+          result.ok
+            ? "Conta detectada."
+            : result.reason === "read-failed"
+              ? "Não deu para ler a conta Google. Tente de novo em instantes."
+              : "Nenhuma conta Google logada neste perfil.",
         ),
       )
       .finally(() => setBusy(false));
@@ -121,6 +134,7 @@ function ProfileCard({
     <li
       className="acct-card acct-profile"
       data-profile={profile.id}
+      data-state={card}
       style={{ "--accent": profile.color } as CSSProperties}
     >
       <div className="acct-profile-top">
@@ -143,18 +157,24 @@ function ProfileCard({
             <>
               <strong>{profile.label}</strong>
               <span className="acct-profile-email" title={profile.email || undefined}>
-                {connected ? profile.email : "Conta ainda não conectada"}
+                {card === "connected" && profile.email}
+                {card === "connecting" && "Entre na conta Google na janela do perfil"}
+                {card === "failed" && "Não deu para ler a conta Google."}
+                {card === "idle" && "Conta ainda não conectada"}
               </span>
             </>
           )}
         </div>
       </div>
       <div className="acct-profile-meta">
-        {connected ? (
+        {card === "connected" && (
           <span className="acct-pill acct-pill-ok">
             <CircleCheck aria-hidden="true" /> Conta conectada
           </span>
-        ) : (
+        )}
+        {card === "connecting" && <span className="acct-pill">Conectando…</span>}
+        {card === "failed" && <span className="acct-pill">Leitura falhou</span>}
+        {card === "idle" && (
           <span className="acct-pill">
             <Mail aria-hidden="true" /> Sem conta Google
           </span>
@@ -209,9 +229,9 @@ function ProfileCard({
           >
             {connected ? "Trocar conta" : "Entrar no Google"}
           </Button>
-          {!connected && (
+          {card === "failed" && (
             <Button type="button" variant="ghost" disabled={busy} onClick={detect}>
-              <RefreshCw /> Detectar
+              <RefreshCw /> Tentar de novo
             </Button>
           )}
           <Button

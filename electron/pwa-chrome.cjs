@@ -133,7 +133,7 @@ function appMenuSpec(state = {}) {
       action: "auto-pip",
       label: "Picture-in-Picture ao minimizar",
       type: "checkbox",
-      checked: state.autoPip !== false,
+      checked: state.autoPip === true,
     },
     { type: "separator" },
     {

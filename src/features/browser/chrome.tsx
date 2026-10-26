@@ -115,7 +115,7 @@ import { defaultHistoryStore } from "./persistence/history-store";
 import { useVault } from "./persistence/use-vault";
 import { usePersistence } from "./persistence/use-persistence";
 import { browserReducer } from "./store/reducer";
-import { loginUrlOf, matchesForUrl, withLoginUrl } from "./vault";
+import { loginUrlOf, matchesForUrl, relatedForUrl, withLoginUrl } from "./vault";
 import {
   activeTabOf,
   currentBookmark,
@@ -532,11 +532,19 @@ export function AgzosBrowser() {
   const autofillHostRef = useRef(currentHostKey);
   autofillHostRef.current = currentHostKey;
 
-  // Credenciais do cofre que servem para o site aberto (base do popup de autofill).
+  // Credenciais do cofre que servem para o site aberto (base do popup de autofill). Só as
+  // exatas: a sugestão, o TOTP e o salvar/atualizar. Outros subdomínios do site vão à parte.
   const vaultMatches = useMemo(
     () =>
       current.kind === "page" && vault.state.unlocked
         ? matchesForUrl(vault.entries, current.url)
+        : [],
+    [current.kind, current.url, vault.entries, vault.state.unlocked],
+  );
+  const vaultRelated = useMemo(
+    () =>
+      current.kind === "page" && vault.state.unlocked
+        ? relatedForUrl(vault.entries, current.url)
         : [],
     [current.kind, current.url, vault.entries, vault.state.unlocked],
   );
@@ -706,7 +714,8 @@ export function AgzosBrowser() {
         setFillMiss(null);
         setAutofillOpen(false);
         setPanel((open) => (open === "login" ? null : open));
-        // Login usado aqui e ainda sem URL no cofre: guarda a URL do site (sincroniza).
+        // Login usado aqui e ainda sem URL no cofre: guarda a URL do site (sincroniza). Login
+        // de outro subdomínio já tem URL, e withLoginUrl nunca troca a de outro site.
         const linked = withLoginUrl(entry, pageUrl);
         if (linked) void vault.add(linked);
         // Tem Authenticator: a barrinha do Key já abre com o código.
@@ -885,6 +894,7 @@ export function AgzosBrowser() {
     host: currentHostKey,
     status: vaultStatus,
     entries: vaultMatches,
+    related: vaultRelated,
     vault: vault.entries,
     copied,
     canFill: desktop !== null,

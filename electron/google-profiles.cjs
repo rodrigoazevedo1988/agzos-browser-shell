@@ -22,6 +22,13 @@ const EMAIL_RE = /^[^\s@<>"]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,24}$/i;
 const AVATAR_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 // Páginas do Google cujo fim indica que o login pode ter mudado.
 const GOOGLE_HOST_RE = /(^|\.)(google\.com|youtube\.com|gmail\.com)$/i;
+// Cookies que dizem se há conta logada. O Google gira SIDCC/__Secure-*PSIDCC e NID em quase
+// toda resposta, então eles ficam fora: só estes (adição e remoção) disparam leitura.
+const SIGNED_IN_COOKIES = ["SID", "__Secure-1PSID"];
+const WATCHED_COOKIES = [...SIGNED_IN_COOKIES, "__Secure-3PSID", "SAPISID"];
+// Leitura forçada: no máximo uma por perfil a cada 10 s. Com conta, a leitura normal vale 60 s.
+const FORCED_READ_GAP_MS = 10_000;
+const CACHED_READ_GAP_MS = 60_000;
 
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -87,30 +94,84 @@ function sortedProfiles(list) {
 /**
  * Resposta do ListAccounts do Google (só leitura, com os cookies do perfil):
  * `["gaia.l.a.r",[["gaia.l.a",1,"Nome","email@gmail.com","https://…foto",…],…]]`.
- * Devolve a primeira conta { email, name, photo } ou null. Nunca avalia o texto.
+ * Devolve todas as contas válidas `{ email, name, photo }`, sem repetir e-mail (lista vazia
+ * se nada presta). Nunca avalia o texto.
  */
 function parseListAccounts(text) {
-  if (typeof text !== "string" || text.length > 200_000) return null;
+  if (typeof text !== "string" || text.length > 200_000) return [];
   let data = null;
   try {
     data = JSON.parse(text.replace(/^\)\]\}'\s*/, ""));
   } catch {
-    return null;
+    return [];
   }
-  const accounts = Array.isArray(data) ? data[1] : null;
-  if (!Array.isArray(accounts)) return null;
-  for (const entry of accounts) {
+  const entries = Array.isArray(data) ? data[1] : null;
+  if (!Array.isArray(entries)) return [];
+  const seen = new Set();
+  const accounts = [];
+  for (const entry of entries) {
     if (!Array.isArray(entry)) continue;
     const email = cleanEmail(entry[3]);
-    if (!email) continue;
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
     const photo =
       typeof entry[4] === "string" &&
       /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\//i.test(entry[4])
         ? entry[4]
         : null;
-    return { email, name: cleanLabel(entry[2]), photo };
+    accounts.push({ email, name: cleanLabel(entry[2]), photo });
   }
-  return null;
+  return accounts;
+}
+
+/** Cookie que muda a conta do perfil (adição ou remoção) e vem de um site do Google? */
+function isWatchedCookie(cookie) {
+  return (
+    isObject(cookie) && WATCHED_COOKIES.includes(cookie.name) && isGoogleCookieDomain(cookie.domain)
+  );
+}
+
+/** Há sessão do Google (SID ou __Secure-1PSID) entre os cookies lidos? */
+function hasSignedInCookie(cookies) {
+  return (
+    Array.isArray(cookies) && cookies.some((cookie) => SIGNED_IN_COOKIES.includes(cookie?.name))
+  );
+}
+
+/**
+ * Resultado de uma leitura: "signed-out" sem sessão (nem pergunta ao Google), "read-failed"
+ * com sessão e sem conta (lista vazia, HTTP ≠ 200, erro) e "ok" com conta.
+ */
+function readOutcome({ signedIn, accounts }) {
+  if (!signedIn) return "signed-out";
+  return Array.isArray(accounts) && accounts.length > 0 ? "ok" : "read-failed";
+}
+
+/**
+ * Quanto esperar (ms) antes de ler a conta do perfil; 0 = ler já. Forçada: 10 s desde a
+ * última leitura. Normal: 60 s só quando o perfil já tem conta (sem conta, lê sempre).
+ */
+function readWaitMs({ force = false, hasEmail = false, now, lastReadAt = 0 }) {
+  const gap = force ? FORCED_READ_GAP_MS : hasEmail ? CACHED_READ_GAP_MS : 0;
+  return Math.max(0, lastReadAt + gap - now);
+}
+
+/**
+ * Conta que o perfil guarda entre as lidas: a atual, se ainda estiver na lista; senão a que
+ * não estava na leitura anterior (acabou de entrar); senão a primeira. Null sem contas.
+ */
+function chooseAccount({ accounts, current = "", previous = [] }) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  if (list.length === 0) return null;
+  const kept = list.find((account) => account.email === current);
+  if (kept) return kept;
+  const seen = new Set(Array.isArray(previous) ? previous : []);
+  return list.find((account) => !seen.has(account.email)) ?? list[0];
+}
+
+/** Título da janela de um perfil: "<nome> — Agzos Browser". */
+function profileWindowTitle(label) {
+  return `${cleanLabel(label) || "Conta Google"} — Agzos Browser`;
 }
 
 /** Pastas de perfis removidos que ainda existem no disco. */
@@ -249,14 +310,20 @@ module.exports = {
   DIR_PREFIX,
   PARTITION_PREFIX,
   PROFILE_ID_RE,
+  chooseAccount,
   createProfileStore,
+  hasSignedInCookie,
   isGoogleCookieDomain,
   isGoogleUrl,
+  isWatchedCookie,
   parseListAccounts,
   parseProfiles,
   partitionOf,
   pickerPrefOf,
+  profileWindowTitle,
   purgeDirs,
+  readOutcome,
+  readWaitMs,
   shouldShowPicker,
   sortedProfiles,
   validProfile,

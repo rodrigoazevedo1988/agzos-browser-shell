@@ -15,6 +15,12 @@ export type GoogleProfile = {
   lastUsed: number;
 };
 
+/** Motivo da última leitura da conta Google do perfil (null = conta lida, ou ainda não lida). */
+export type ProfileReadReason = "signed-out" | "read-failed";
+
+/** Estado de um perfil no main: janela aberta e motivo da última leitura. */
+export type ProfileStatus = { open: boolean; reason: ProfileReadReason | null };
+
 export type AccountState = {
   loggedIn: boolean;
   name: string;
@@ -27,6 +33,8 @@ export type AccountState = {
   profiles: GoogleProfile[];
   /** Perfis guardados mas travados (sem login). */
   lockedProfiles: number;
+  /** Por id de perfil: janela aberta e motivo da última leitura. */
+  profileStatus?: Record<string, ProfileStatus>;
   pickerOnStart: boolean;
 };
 
@@ -82,7 +90,11 @@ export type AccountBridge = {
     patch: { label?: string; color?: string },
   ): Promise<{ ok: boolean; profile?: GoogleProfile }>;
   removeProfile(id: string): Promise<{ ok: boolean } & WithAccount>;
-  detectProfile(id: string): Promise<{ ok: boolean; profile?: GoogleProfile | null }>;
+  detectProfile(id: string): Promise<{
+    ok: boolean;
+    profile?: GoogleProfile | null;
+    reason?: ProfileReadReason | null;
+  }>;
   onState(callback: (state: AccountState) => void): () => void;
 };
 

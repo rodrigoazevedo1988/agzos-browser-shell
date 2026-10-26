@@ -20,6 +20,8 @@ let api: ChildProcess | null = null;
 let apiUrl = "";
 let google: http.Server;
 let googleBase = "";
+// Requisições ao "Google" falso (método e Origin): prova que a leitura sai como a do Chrome.
+const googleHits: string[] = [];
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "agzos-account-e2e-"));
 
 test.beforeAll(async () => {
@@ -52,21 +54,33 @@ test.beforeAll(async () => {
   // responde a conta quando esse cookie chega (prova que veio da partição do perfil).
   google = http.createServer((request, response) => {
     const url = request.url ?? "/";
+    if (url.startsWith("/AccountChooser")) {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><title>Escolha uma conta</title><h1>Escolha uma conta</h1>");
+      return;
+    }
     if (url.startsWith("/signin")) {
       response.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
-        "set-cookie": "SID=perfil-e2e; Path=/; HttpOnly",
+        "set-cookie": "SID=perfil-e2e; Path=/; HttpOnly; Secure; SameSite=None",
       });
       response.end("<!doctype html><title>Fazer login nas Contas do Google</title><h1>Google</h1>");
       return;
     }
     if (url.startsWith("/ListAccounts")) {
+      const origin = request.headers.origin ?? "-";
+      googleHits.push(`${request.method} ${origin}`);
       const signedIn = String(request.headers.cookie ?? "").includes("SID=perfil-e2e");
+      // Como o Google de verdade: a lista só vem no POST com Origin; o GET volta vazio. O
+      // cookie é SameSite=None (o Google é same-site com a Origin dele; aqui é outro site).
+      const fromChrome = request.method === "POST" && origin === "https://www.google.com";
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify([
           "gaia.l.a.r",
-          signedIn ? [["gaia.l.a", 1, "Teste E2E", "teste.e2e@gmail.com", null, 1, 1, 0]] : [],
+          signedIn && fromChrome
+            ? [["gaia.l.a", 1, "Teste E2E", "teste.e2e@gmail.com", null, 1, 1, 0]]
+            : [],
         ]),
       );
       return;
@@ -192,6 +206,30 @@ test("conta Agzos: cria conta, códigos, recupera a senha, perfil Google e modal
       session.defaultSession.cookies.get({ name: "SID" }).then((list) => list.length),
     );
     expect(leaked).toBe(0);
+    expect(googleHits).toContain("POST https://www.google.com");
+    // Título da janela do perfil: "<nome> — Agzos Browser".
+    await expect
+      .poll(() =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().map((win) => win.getTitle()),
+        ),
+      )
+      .toContain("Teste E2E — Agzos Browser");
+
+    // "Trocar conta" com a janela do perfil aberta: o seletor vira guia nova nela, sem janela nova.
+    await card.getByRole("button", { name: "Trocar conta" }).click();
+    await expect
+      .poll(() =>
+        app.evaluate(
+          ({ webContents }, base) =>
+            webContents
+              .getAllWebContents()
+              .some((contents) => contents.getURL() === `${base}/AccountChooser`),
+          googleBase,
+        ),
+      )
+      .toBe(true);
+    expect(shells(app).length).toBe(2);
   } finally {
     await app.close();
   }
@@ -211,7 +249,7 @@ test("conta Agzos: cria conta, códigos, recupera a senha, perfil Google e modal
     await go(window, "agzos://conta");
     await window.getByRole("button", { name: "Sair" }).click();
     await expect.poll(() => shells(app).length, { timeout: 15_000 }).toBe(1);
-    await expect(window.locator(".acct-info")).toContainText("1 conta Google guardada");
+    await expect(window.locator(".acct-info")).toContainText("conta Google guardada");
   } finally {
     await app.close();
   }

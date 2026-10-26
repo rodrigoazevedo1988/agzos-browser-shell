@@ -3364,6 +3364,13 @@ button.download-name:hover {
 .tabs .browser-tab:hover:not(.pinned) {
   flex-shrink: 0;
 }
+/* Não fixadas: 92 px deixam o título legível; a ativa passa de 120 px porque reserva o fechar. */
+.tabs .browser-tab:not(.pinned) {
+  min-width: 92px;
+}
+.tabs .browser-tab:not(.pinned).active {
+  min-width: 120px;
+}
 .browser-tab {
   position: relative;
   animation: tab-in 0.22s var(--ease-out);
@@ -3468,6 +3475,63 @@ button.download-name:hover {
 }
 .tab-close:hover svg {
   transform: rotate(90deg);
+}
+
+/* Barra horizontal: fechar e fixar saem do fluxo nas abas não fixadas, então o título usa a
+   largura toda. Com o mouse ou o foco na aba, os botões voltam por cima do fim do título, que
+   esmaece. A aba ativa mantém o fechar no fluxo e só mostra o fixar com o mouse. */
+.tabs .browser-tab:not(.pinned) {
+  container-type: inline-size;
+}
+.tabs .browser-tab:not(.pinned) .tab-pin,
+.tabs .browser-tab:not(.pinned) .tab-close {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  opacity: 0;
+  pointer-events: none;
+}
+.tabs .browser-tab:not(.pinned) .tab-close {
+  right: 6px;
+}
+.tabs .browser-tab:not(.pinned) .tab-pin {
+  right: 32px;
+}
+.tabs .browser-tab:not(.pinned):not(.active):hover .tab-pin,
+.tabs .browser-tab:not(.pinned):not(.active):focus-within .tab-pin,
+.tabs .browser-tab:not(.pinned):not(.active):hover .tab-close,
+.tabs .browser-tab:not(.pinned):not(.active):focus-within .tab-close,
+.tabs .browser-tab:not(.pinned).active:hover .tab-pin {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tabs .browser-tab:not(.pinned).active .tab-close {
+  position: static;
+  translate: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+.tabs .browser-tab:not(.pinned).active .tab-pin {
+  right: 35px;
+}
+.tabs .browser-tab:not(.pinned):hover .tab-title,
+.tabs .browser-tab:not(.pinned):not(.active):focus-within .tab-title {
+  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+}
+/* Abas estreitas: a consulta mede a caixa de conteúdo (aba menos 21 px de padding), então
+   75 px de conteúdo são uma aba de 96 px. Sem fixar; o fechar só na ativa, e sem botão
+   por cima do título não há o que esmaecer. */
+@container (max-width: 75px) {
+  .tabs .browser-tab:not(.pinned) .tab-pin {
+    display: none;
+  }
+  .tabs .browser-tab:not(.pinned):not(.active) .tab-close {
+    display: none;
+  }
+  .tabs .browser-tab:not(.pinned):hover .tab-title,
+  .tabs .browser-tab:not(.pinned):not(.active):focus-within .tab-title {
+    mask-image: none;
+  }
 }
 
 /* Tachinha: selo no canto do ícone das abas fixadas. */

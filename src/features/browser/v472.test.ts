@@ -49,6 +49,6 @@ describe("4.7.2: atalho do PWA traz a janela do app para a frente", () => {
   it("vale para a janela nova e para a que já estava aberta", () => {
     const open = bodyOf(main, "function openPwaWindowHere(");
     expect(open).toContain("bringPwaForward(current)");
-    expect(open).toContain('win.once("ready-to-show", () => bringPwaForward(win))');
+    expect(open).toMatch(/win\.once\("ready-to-show", \(\) => \{[\s\S]*bringPwaForward\(win\);/);
   });
 });

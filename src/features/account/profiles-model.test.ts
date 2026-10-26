@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 import type { GoogleProfile } from "./bridge";
-import { gridNextIndex, newlyConnected } from "./profiles-model";
+import { cardStateOf, gridNextIndex, newlyConnected } from "./profiles-model";
 
 const require = createRequire(import.meta.url);
 const profiles = require("../../../electron/google-profiles.cjs");
@@ -86,5 +86,24 @@ describe("isGoogleCookieDomain", () => {
     expect(profiles.isGoogleCookieDomain("google.com.evil.example")).toBe(false);
     expect(profiles.isGoogleCookieDomain("example.com")).toBe(false);
     expect(profiles.isGoogleCookieDomain(undefined)).toBe(false);
+  });
+});
+
+describe("cardStateOf", () => {
+  it("conta conectada vence qualquer motivo ou janela", () => {
+    expect(cardStateOf({ email: "ana@example.com" }, { open: true, reason: "read-failed" })).toBe(
+      "connected",
+    );
+  });
+
+  it("janela aberta sem conta é 'conectando'; falha de leitura aparece mesmo com janela", () => {
+    expect(cardStateOf({ email: "" }, { open: true, reason: null })).toBe("connecting");
+    expect(cardStateOf({ email: "" }, { open: true, reason: "read-failed" })).toBe("failed");
+    expect(cardStateOf({ email: "" }, { open: false, reason: "read-failed" })).toBe("failed");
+  });
+
+  it("sem janela e sem falha, ou sem status, é 'sem conta'", () => {
+    expect(cardStateOf({ email: "" }, { open: false, reason: "signed-out" })).toBe("idle");
+    expect(cardStateOf({ email: "" })).toBe("idle");
   });
 });

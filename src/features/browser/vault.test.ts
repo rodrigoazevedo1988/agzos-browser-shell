@@ -9,6 +9,8 @@ import {
   knownCategories,
   loginUrlOf,
   matchesForUrl,
+  matchLevel,
+  relatedForUrl,
   searchLogins,
   siteOf,
   withLoginUrl,
@@ -71,7 +73,7 @@ describe("vault — mesmo site e entradas sem URL (2.2.7)", () => {
     expect(entryMatchesHost(pages, "joao.github.io")).toBe(false);
   });
 
-  it("entrada sem URL casa pelo nome do site e vem depois das com URL", () => {
+  it("entrada sem URL que cita o site no nome fica de fora do popup principal", () => {
     const entries = [
       entry({ id: "nome", title: "Conta Google" }),
       entry({ id: "url", url: "https://accounts.google.com" }),
@@ -79,9 +81,9 @@ describe("vault — mesmo site e entradas sem URL (2.2.7)", () => {
       entry({ id: "nota", title: "Google", type: "secure_note" }),
       entry({ id: "com-url", title: "Google", url: "https://outra.com" }),
     ];
-    expect(
-      matchesForUrl(entries, "https://accounts.google.com/v3/signin").map((m) => m.id),
-    ).toEqual(["url", "nome"]);
+    const url = "https://accounts.google.com/v3/signin";
+    expect(matchesForUrl(entries, url).map((m) => m.id)).toEqual(["url"]);
+    expect(relatedForUrl(entries, url).map((m) => m.id)).toEqual(["nome"]);
   });
 
   it("guarda a URL do login (sem query) só em entrada que não tem URL", () => {
@@ -102,6 +104,62 @@ describe("vault — mesmo site e entradas sem URL (2.2.7)", () => {
     expect(searchLogins(entries, "itau").map((e) => e.id)).toEqual(["a"]);
     expect(searchLogins(entries, "nubank.com").map((e) => e.id)).toEqual(["b"]);
     expect(searchLogins(entries, "casa")).toEqual([]);
+  });
+});
+
+describe("vault — nível de correspondência por host (5.0.5)", () => {
+  it("login de outro subdomínio do mesmo site é related, não exact", () => {
+    const office = entry({ url: "https://office.rsolutionsbr.com" });
+    expect(matchLevel(office, "vps.rsolutionsbr.com")).toBe("related");
+    expect(matchLevel(office, "office.rsolutionsbr.com")).toBe("exact");
+    expect(matchLevel(entry({ url: "https://rsolutionsbr.com" }), "vps.rsolutionsbr.com")).toBe(
+      "exact",
+    );
+    expect(matchLevel(office, "outro.com")).toBeNull();
+  });
+
+  it("vps × office/fs não bate no login exato, mas aparece nos relacionados", () => {
+    const entries = [
+      entry({ id: "office", title: "Agzos Office", url: "https://office.rsolutionsbr.com" }),
+      entry({ id: "fs", title: "Arquivos", url: "https://fs.rsolutionsbr.com" }),
+    ];
+    const url = "https://vps.rsolutionsbr.com/login";
+    expect(matchesForUrl(entries, url)).toEqual([]);
+    expect(relatedForUrl(entries, url).map((m) => m.id)).toEqual(["office", "fs"]);
+  });
+
+  it("gist.github.com × github.com continua exato", () => {
+    const e = entry({ url: "https://github.com" });
+    expect(matchLevel(e, "gist.github.com")).toBe("exact");
+    expect(matchesForUrl([e], "https://gist.github.com/x").map((m) => m.id)).toHaveLength(1);
+    expect(relatedForUrl([e], "https://gist.github.com/x")).toEqual([]);
+  });
+
+  it("mail.google.com × accounts.google.com continua exato (SSO_SITES)", () => {
+    const e = entry({ url: "https://accounts.google.com" });
+    expect(matchLevel(e, "mail.google.com")).toBe("exact");
+    expect(matchesForUrl([e], "https://mail.google.com/").map((m) => m.id)).toHaveLength(1);
+    expect(relatedForUrl([e], "https://mail.google.com/")).toEqual([]);
+  });
+
+  it("irmãos em sites diferentes (a.vercel.app × b.vercel.app) não aparecem em lugar nenhum", () => {
+    const e = entry({ url: "https://a.vercel.app" });
+    expect(matchLevel(e, "b.vercel.app")).toBeNull();
+    expect(matchesForUrl([e], "https://b.vercel.app")).toEqual([]);
+    expect(relatedForUrl([e], "https://b.vercel.app")).toEqual([]);
+  });
+
+  it("relacionados vêm favorita primeiro, depois a mais recente", () => {
+    const entries = [
+      entry({ id: "antiga", url: "https://vps.x.com.br", updatedAt: 1 }),
+      entry({ id: "nova", url: "https://fs.x.com.br", updatedAt: 9 }),
+      entry({ id: "fav", url: "https://office.x.com.br", favorite: true, updatedAt: 2 }),
+    ];
+    expect(relatedForUrl(entries, "https://app.x.com.br").map((m) => m.id)).toEqual([
+      "fav",
+      "nova",
+      "antiga",
+    ]);
   });
 });
 

@@ -98,8 +98,10 @@ describe("4.8.5: barra do app nos PWAs (pwa-chrome.cjs)", () => {
     expect(camera?.submenu?.find((item) => item.checked)?.action).toBe("perm:camera:block");
     const microphone = permissions?.submenu?.find((item) => item.label === "Microfone");
     expect(microphone?.submenu?.find((item) => item.checked)?.action).toBe("perm:microphone:ask");
-    // PiP ao minimizar vem ligado por padrão.
-    expect(spec.find((item) => item.action === "auto-pip")?.checked).toBe(true);
+    // PiP ao minimizar vem desligado por padrão.
+    expect(spec.find((item) => item.action === "auto-pip")?.checked).toBe(false);
+    const on = chrome.appMenuSpec({ name: "YouTube", autoPip: true });
+    expect(on.find((item) => item.action === "auto-pip")?.checked).toBe(true);
   });
 
   it("modo app (sem desinstalar) e DevTools desligado pela flag somem do menu", () => {
@@ -177,10 +179,13 @@ describe("4.8.5: barra do app nos PWAs (pwa-chrome.cjs)", () => {
     expect(html).not.toMatch(/innerHTML\s*=\s*state/);
   });
 
-  it("PiP ao minimizar é gravado no registro do app e vem ligado por padrão", () => {
+  it("PiP ao minimizar é gravado no registro do app e vem desligado por padrão", () => {
     const base = { id: "0123456789abcdef", name: "App", startUrl: "https://app.test/" };
-    expect(pwa.parseApps([base])[0]!.autoPip).toBe(true);
+    expect(pwa.parseApps([base])[0]!.autoPip).toBe(false);
     expect(pwa.parseApps([{ ...base, autoPip: false }])[0]!.autoPip).toBe(false);
+    expect(pwa.parseApps([{ ...base, autoPip: true }])[0]!.autoPip).toBe(true);
+    // Só `true` liga: outro valor salvo não conta como ligado.
+    expect(pwa.parseApps([{ ...base, autoPip: "true" }])[0]!.autoPip).toBe(false);
   });
 
   it("a janela do PWA tem a barra e o site num WebContentsView", () => {

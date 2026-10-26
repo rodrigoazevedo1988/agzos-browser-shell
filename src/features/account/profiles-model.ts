@@ -1,4 +1,20 @@
-import type { GoogleProfile } from "./bridge";
+import type { GoogleProfile, ProfileStatus } from "./bridge";
+
+/**
+ * Estado do cartão de um perfil: conta conectada; "conectando" (janela do perfil aberta sem
+ * conta ainda); "falha" (sessão do Google, mas a conta não pôde ser lida); ou "sem conta".
+ */
+export type CardState = "connected" | "connecting" | "failed" | "idle";
+
+export function cardStateOf(
+  profile: Pick<GoogleProfile, "email">,
+  status?: ProfileStatus,
+): CardState {
+  if (profile.email) return "connected";
+  if (status?.reason === "read-failed") return "failed";
+  if (status?.open) return "connecting";
+  return "idle";
+}
 
 /**
  * Perfis que ganharam e-mail desde a última lista vista (conta conectada num perfil).

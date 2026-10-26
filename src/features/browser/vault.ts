@@ -81,19 +81,38 @@ function plain(text: string): string {
     .trim();
 }
 
+// Domínios de login único: irmãos (mail.google.com × accounts.google.com) são o mesmo login.
+const SSO_SITES = new Set([
+  "google.com",
+  "microsoft.com",
+  "live.com",
+  "microsoftonline.com",
+  "apple.com",
+  "amazon.com",
+]);
+
+/** Quão uma entrada serve para o host aberto: `exact` preenche sozinha, `related` pede confirmação. */
+export type MatchLevel = "exact" | "related";
+
 /**
- * O host da entrada bate com o host do site? Igual, subdomínio ou o mesmo domínio
- * registrável (login em accounts.google.com serve para mail.google.com, como no Chrome).
+ * Quanto a entrada serve para o host aberto. `exact`: host igual, um subdomínio do outro, ou
+ * irmãos de um domínio de login único (SSO_SITES). `related`: outro subdomínio do mesmo site
+ * (vps.x.com × office.x.com) ou entrada sem URL que cita o site no nome. null: não serve.
  */
-export function entryMatchesHost(entry: VaultEntry, host: string): boolean {
+export function matchLevel(entry: VaultEntry, host: string): MatchLevel | null {
   const entryHost = hostOf(entry.url) ?? (entry.url ? null : titleHost(entry.title));
-  if (!entryHost) return false;
-  return (
-    entryHost === host ||
-    host.endsWith(`.${entryHost}`) ||
-    entryHost.endsWith(`.${host}`) ||
-    siteOf(entryHost) === siteOf(host)
-  );
+  if (!entryHost) return entryNamesHost(entry, host) ? "related" : null;
+  if (entryHost === host || host.endsWith(`.${entryHost}`) || entryHost.endsWith(`.${host}`)) {
+    return "exact";
+  }
+  const site = siteOf(host);
+  if (siteOf(entryHost) !== site) return null;
+  return SSO_SITES.has(site) ? "exact" : "related";
+}
+
+/** A entrada serve para o host como login exato (preenche e sugere sozinha). */
+export function entryMatchesHost(entry: VaultEntry, host: string): boolean {
+  return matchLevel(entry, host) === "exact";
 }
 
 /** Título com cara de endereço ("github.com"), não um nome ("Conta Google"). */
@@ -138,25 +157,39 @@ function sameAppScope(entry: VaultEntry, pageApp: string | null): boolean {
   return entryApp === null;
 }
 
-/** Entradas do cofre que servem para o site aberto (para o popup de autofill). */
-export function matchesForUrl(entries: VaultEntry[], url: string | undefined | null): VaultEntry[] {
+/** Entradas do cofre com o nível de correspondência com a URL aberta (sem as apagadas). */
+function levelsForUrl(
+  entries: VaultEntry[],
+  url: string | undefined | null,
+): { entry: VaultEntry; level: MatchLevel }[] {
   const host = hostOf(url);
   if (!host || !/^https?:/i.test(url ?? "https:")) return [];
   const app = appsScriptApp(url);
-  return entries
-    .filter(
-      (entry) =>
-        !entry.deletedAt &&
-        isLogin(entry) &&
-        sameAppScope(entry, app) &&
-        (entryMatchesHost(entry, host) || (!app && entryNamesHost(entry, host))),
-    )
-    .sort(
-      (a, b) =>
-        Number(entryMatchesHost(b, host)) - Number(entryMatchesHost(a, host)) ||
-        (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0) ||
-        b.updatedAt - a.updatedAt,
-    );
+  return entries.flatMap((entry) => {
+    if (entry.deletedAt || !isLogin(entry) || !sameAppScope(entry, app)) return [];
+    const level = matchLevel(entry, host);
+    return level ? [{ entry, level }] : [];
+  });
+}
+
+/** Favorita primeiro, depois a mais recente. */
+const byFavoriteThenRecent = (a: VaultEntry, b: VaultEntry) =>
+  (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0) || b.updatedAt - a.updatedAt;
+
+/** Entradas do cofre que servem para o site aberto (para o popup de autofill e o TOTP). */
+export function matchesForUrl(entries: VaultEntry[], url: string | undefined | null): VaultEntry[] {
+  return levelsForUrl(entries, url)
+    .filter((match) => match.level === "exact")
+    .map((match) => match.entry)
+    .sort(byFavoriteThenRecent);
+}
+
+/** Logins de outros subdomínios do mesmo site (o popup os lista à parte, com confirmação). */
+export function relatedForUrl(entries: VaultEntry[], url: string | undefined | null): VaultEntry[] {
+  return levelsForUrl(entries, url)
+    .filter((match) => match.level === "related")
+    .map((match) => match.entry)
+    .sort(byFavoriteThenRecent);
 }
 
 /** Logins do cofre para a busca do popup (tudo que não é nota/cartão/wi-fi). */

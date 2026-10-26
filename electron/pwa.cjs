@@ -317,8 +317,8 @@ function parseApps(value) {
       shortcuts: isObject(item.shortcuts) ? item.shortcuts : {},
       bounds: isObject(item.bounds) ? item.bounds : null,
       zoom: Number.isFinite(item.zoom) ? Math.max(-8, Math.min(8, item.zoom)) : 0,
-      // 4.8.5: Picture-in-Picture ao minimizar (ligado por padrão).
-      autoPip: item.autoPip !== false,
+      // 4.8.5: Picture-in-Picture ao minimizar (desligado por padrão; só `true` liga).
+      autoPip: item.autoPip === true,
     });
     if (result.length >= MAX_APPS) break;
   }

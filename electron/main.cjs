@@ -2762,7 +2762,9 @@ function createWindow({
     bounds = cascadeBounds(near.window.getNormalBounds(), area);
   }
   const window = new BrowserWindow({
-    title: "Agzos Browser",
+    title: profile
+      ? googleProfiles.profileWindowTitle(profileStore?.get(profile)?.label)
+      : "Agzos Browser",
     width: 1440,
     height: 960,
     ...(bounds ?? {}),
@@ -2785,6 +2787,8 @@ function createWindow({
       sandbox: true,
     },
   });
+  // Janela de perfil: o título é "<nome> — Agzos Browser"; a página da casca não o troca.
+  if (profile) window.webContents.on("page-title-updated", (event) => event.preventDefault());
 
   const session = record ? record.session : initial;
   // Janela de perfil não fica salva: volta pelo modal "Escolha uma conta" (e só com login).
@@ -2926,6 +2930,8 @@ function createWindow({
     }
     for (const [id, entry] of ctx.views) dropView(ctx, id, entry);
     contexts.delete(shellId);
+    // Janela de perfil fechou: o cartão deixa de mostrar "Conectando…".
+    if (ctx.profile) queueMicrotask(broadcastAccount);
     if (lastFocused === ctx) lastFocused = contexts.values().next().value ?? null;
     for (const [id, pending] of pendingPermissions) {
       if (ownerCtx(pending.contents) === ctx || pending.contents?.isDestroyed()) {
@@ -8220,6 +8226,8 @@ function openPwaWindowHere(id, url = null) {
     restore: ({ focus }) => {
       if (win.isDestroyed()) return;
       win.contentView.addChildView(view);
+      // A janela de vídeo é alwaysOnTop: a página volta para uma janela que nunca fica por cima.
+      win.setAlwaysOnTop(false);
       layout();
       if (focus) {
         if (win.isMinimized()) win.restore();
@@ -8286,7 +8294,7 @@ function openPwaWindowHere(id, url = null) {
         void togglePip();
         break;
       case "auto-pip":
-        pwaStore?.update(id, { autoPip: pwaStore?.get(id)?.autoPip === false });
+        pwaStore?.update(id, { autoPip: pwaStore?.get(id)?.autoPip !== true });
         break;
       case "zoom-in":
         setZoom(Math.min(8, contents.getZoomLevel() + 0.5));
@@ -8448,15 +8456,16 @@ function openPwaWindowHere(id, url = null) {
     if (!find.open && !contents.isDestroyed()) contents.focus();
   });
   nativeTheme.on("updated", push);
-  // Picture-in-Picture ao minimizar (ligado por padrão; ⋮ desliga): só com vídeo tocando.
+  // Picture-in-Picture ao minimizar (desligado por padrão; ⋮ liga): só com som e vídeo tocando.
   win.on("minimize", () => {
-    if ((pwaStore?.get(id)?.autoPip ?? true) === false || pipActive) return;
+    if (pwaStore?.get(id)?.autoPip !== true || pipActive) return;
+    if (contents.isDestroyed() || !contents.isCurrentlyAudible()) return;
     void (async () => {
       const playing = await Promise.all(
         liveFrames(contents).map((frame) =>
           frame
             .executeJavaScript(
-              "[...document.querySelectorAll('video')].some((v) => !v.paused && !v.ended && v.readyState > 2)",
+              "[...document.querySelectorAll('video')].some((v) => !v.paused && !v.ended && v.readyState > 2 && !v.muted && v.volume > 0)",
             )
             .catch(() => false),
         ),
@@ -8486,7 +8495,11 @@ function openPwaWindowHere(id, url = null) {
     })();
   });
 
-  win.once("ready-to-show", () => bringPwaForward(win));
+  // Nunca por cima das outras janelas: o PWA só sobe quando é aberto (bringPwaForward).
+  win.once("ready-to-show", () => {
+    if (!win.isDestroyed()) win.setAlwaysOnTop(false);
+    bringPwaForward(win);
+  });
   // Sem tela em branco se a página demorar.
   setTimeout(() => !win.isDestroyed() && !win.isVisible() && bringPwaForward(win), 3000).unref?.();
   let timer = null;
@@ -9526,6 +9539,12 @@ const GOOGLE_SIGNIN_URL =
   "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmyaccount.google.com%2F";
 const GOOGLE_LIST_ACCOUNTS_URL =
   "https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard";
+// "Trocar conta" com a sessão do Google ativa: o seletor de contas, como no Chrome.
+const GOOGLE_ACCOUNT_CHOOSER_URL =
+  "https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fmyaccount.google.com%2F";
+const GOOGLE_ACCOUNT_COOKIE_URL = "https://accounts.google.com";
+// O ListAccounts do Chrome é POST com esta Origin (sem ela o Google não manda a lista).
+const LIST_ACCOUNTS_ORIGIN = "https://www.google.com";
 const NEW_PROFILE_LABEL = "Nova conta Google";
 let accountClient = null;
 let profileStore = null;
@@ -9536,6 +9555,12 @@ let accountWasLoggedIn = false;
 const profileDetectTimers = new Map();
 const profileDetectedAt = new Map();
 const profileCookieWatch = new Set();
+// Motivo da última leitura por perfil ("signed-out" | "read-failed" | null = conta ok).
+const profileReadReasons = new Map();
+// Contas (e-mails) que a última leitura viu: referência para escolher a conta nova.
+const profileAccountsSeen = new Map();
+// "Trocar conta" pedido: a próxima leitura forçada (o login novo) escolhe a conta nova.
+const profileSwitching = new Set();
 
 /** Página de login do Google falsa dos testes (só fora do pacote, só em 127.0.0.1). */
 function testGoogleBase() {
@@ -9576,12 +9601,34 @@ function accountSnapshot() {
     ...state,
     profiles: state.loggedIn ? all : [],
     lockedProfiles: state.loggedIn ? 0 : all.length,
+    profileStatus: profileStatusOf(all),
     pickerOnStart: googleProfiles.pickerPrefOf(database?.getMeta("profilePicker")).showOnStart,
   };
 }
 
+/** Por perfil: se a janela dele está aberta e o motivo da última leitura da conta. */
+function profileStatusOf(list) {
+  const open = new Set([...contexts.values()].map((ctx) => ctx.profile).filter(Boolean));
+  return Object.fromEntries(
+    list.map((profile) => [
+      profile.id,
+      { open: open.has(profile.id), reason: profileReadReasons.get(profile.id) ?? null },
+    ]),
+  );
+}
+
 function broadcastAccount() {
+  syncProfileTitles();
   broadcast("agzos:account", accountSnapshot());
+}
+
+/** Título da janela de cada perfil segue o nome dele (renomear troca na hora). */
+function syncProfileTitles() {
+  for (const ctx of contexts.values()) {
+    if (!ctx.profile || ctx.window.isDestroyed()) continue;
+    const title = googleProfiles.profileWindowTitle(profileStore?.get(ctx.profile)?.label);
+    if (ctx.window.getTitle() !== title) ctx.window.setTitle(title);
+  }
 }
 
 /** Sem login, os perfis travam: as janelas deles fecham (os dados ficam no disco). */
@@ -9605,7 +9652,9 @@ function openProfileWindow(id, { url = null } = {}) {
   if (!profile || !accountService().isLoggedIn()) return false;
   profileStore.update(id, { lastUsed: Date.now() });
   const open = [...contexts.values()].find((ctx) => ctx.profile === id);
-  if (open && !url) {
+  if (open) {
+    // Uma janela por perfil: a página vira uma guia nova nela, e a janela ganha o foco.
+    if (url) send(open, "agzos:open-request", { url });
     if (open.window.isMinimized()) open.window.restore();
     open.window.show();
     open.window.focus();
@@ -9628,6 +9677,11 @@ function signInUrl() {
   return base ? `${base}/signin` : GOOGLE_SIGNIN_URL;
 }
 
+function accountChooserUrl() {
+  const base = testGoogleBase();
+  return base ? `${base}/AccountChooser` : GOOGLE_ACCOUNT_CHOOSER_URL;
+}
+
 /** Depois de navegar no Google (ou mudar um cookie dele), tenta descobrir a conta do perfil. */
 function watchProfileTab(ctx, contents) {
   const id = ctx?.profile;
@@ -9642,15 +9696,16 @@ function watchProfileTab(ctx, contents) {
 
 /**
  * Login no Google muda os cookies da partição do perfil, também quando o fim do fluxo
- * não é uma navegação que o did-navigate pegue (SPA, redirect por JS). Cada cookie do
- * Google reinicia a espera de 1,5 s; só então lê a conta (força a leitura, sem o cache
- * de 60 s, para trocar de conta também). Uma vez por perfil e por execução.
+ * não é uma navegação que o did-navigate pegue (SPA, redirect por JS). Só os cookies que
+ * dizem a conta (SID, __Secure-1PSID, __Secure-3PSID, SAPISID), adição ou remoção,
+ * reiniciam a espera de 1,5 s; então lê a conta à força (sem o cache de 60 s). Uma vez
+ * por perfil e por execução.
  */
 function watchProfileCookies(id, ses) {
   if (profileCookieWatch.has(id) || !ses?.cookies) return;
   profileCookieWatch.add(id);
-  ses.cookies.on("changed", (_event, cookie, _cause, removed) => {
-    if (removed || !googleProfiles.isGoogleCookieDomain(cookie?.domain)) return;
+  ses.cookies.on("changed", (_event, cookie) => {
+    if (!googleProfiles.isWatchedCookie(cookie)) return;
     scheduleProfileDetect(id, 1500, { force: true });
   });
 }
@@ -9667,45 +9722,119 @@ function scheduleProfileDetect(id, delay, options = {}) {
 }
 
 /**
+ * ListAccounts como o Chrome: POST com Origin (o GET sem ela pode vir vazio). O GET
+ * antigo fica de reserva. Devolve as contas e o último status HTTP.
+ */
+async function listGoogleAccounts(ses, url) {
+  let status = 0;
+  for (const init of [
+    { method: "POST", body: " ", headers: { Origin: LIST_ACCOUNTS_ORIGIN } },
+    { method: "GET" },
+  ]) {
+    // Sem checagem de CORS, como o Chrome (que faz a leitura no processo principal): sem
+    // ela, a resposta sem Access-Control-Allow-Origin some com ERR_FAILED.
+    const response = await ses.fetch(url, {
+      ...init,
+      mode: "no-cors",
+      credentials: "include",
+      cache: "no-store",
+    });
+    status = response.status;
+    if (!response.ok) continue;
+    const accounts = googleProfiles.parseListAccounts((await response.text()).slice(0, 200_000));
+    if (accounts.length) return { accounts, status };
+  }
+  return { accounts: [], status };
+}
+
+/**
  * Lê (só leitura) a conta logada no perfil pelo ListAccounts do Google, com os cookies
- * da partição do perfil. Achou: grava e-mail, nome e a foto (recodificada aqui).
+ * da partição do perfil. Sem SID/1PSID o perfil está "signed-out" (e perde e-mail, nome e
+ * foto); com sessão e sem conta lida, "read-failed" (um aviso no console, sem corpo nem
+ * cookies). Achou: grava e-mail, nome e a foto (recodificada aqui).
  */
 async function detectGoogleAccount(id, { force = false } = {}) {
   const profile = profileStore?.get(id);
   const partition = googleProfiles.partitionOf(id);
   if (!profile || !partition) return null;
-  if (!force && profile.email && Date.now() - (profileDetectedAt.get(id) ?? 0) < 60_000) {
+  const now = Date.now();
+  const wait = googleProfiles.readWaitMs({
+    force,
+    hasEmail: Boolean(profile.email),
+    now,
+    lastReadAt: profileDetectedAt.get(id) ?? 0,
+  });
+  if (wait > 0) {
+    // Forçada cedo demais: a leitura sai quando o intervalo passar (a troca não se perde).
+    if (force) scheduleProfileDetect(id, wait, { force: true });
     return profile;
   }
-  profileDetectedAt.set(id, Date.now());
+  profileDetectedAt.set(id, now);
   const ses = session.fromPartition(partition);
   const base = testGoogleBase();
-  let found = null;
-  try {
-    const response = await ses.fetch(base ? `${base}/ListAccounts` : GOOGLE_LIST_ACCOUNTS_URL, {
-      credentials: "include",
-      cache: "no-store",
+  const cookies = await ses.cookies.get({ url: base ?? GOOGLE_ACCOUNT_COOKIE_URL }).catch(() => []);
+  const signedIn = googleProfiles.hasSignedInCookie(cookies);
+  let accounts = [];
+  let status = null;
+  if (signedIn) {
+    try {
+      ({ accounts, status } = await listGoogleAccounts(
+        ses,
+        base ? `${base}/ListAccounts` : GOOGLE_LIST_ACCOUNTS_URL,
+      ));
+    } catch {
+      status = "erro";
+    }
+  }
+  const outcome = googleProfiles.readOutcome({ signedIn, accounts });
+  if (outcome === "read-failed") {
+    console.warn(`Agzos: leitura da conta Google falhou (HTTP ${status}, ${outcome}).`);
+  }
+  const reason = outcome === "ok" ? null : outcome;
+  const reasonChanged = (profileReadReasons.get(id) ?? null) !== reason;
+  profileReadReasons.set(id, reason);
+  let updated = profile;
+  if (outcome === "signed-out") {
+    // Saiu da conta Google: o perfil deixa de mostrar e-mail, nome e foto.
+    profileAccountsSeen.delete(id);
+    if (profile.email || profile.name || profile.avatar) {
+      updated = profileStore.update(id, { email: "", name: "", avatar: null });
+    }
+  } else if (outcome === "ok") {
+    // Trocar conta: a leitura forçada (o login novo) escolhe a conta nova, não a atual.
+    const switching = force && profileSwitching.has(id);
+    const chosen = googleProfiles.chooseAccount({
+      accounts,
+      current: switching ? "" : profile.email,
+      previous: profileAccountsSeen.get(id) ?? [],
     });
-    if (response.ok)
-      found = googleProfiles.parseListAccounts((await response.text()).slice(0, 200_000));
-  } catch {
-    return null;
+    if (switching) profileSwitching.delete(id);
+    profileAccountsSeen.set(
+      id,
+      accounts.map((account) => account.email),
+    );
+    // Igual ao que já está gravado: nada a gravar (a leitura é repetida).
+    const changed = chosen.email !== profile.email || chosen.name !== profile.name;
+    const needAvatar = Boolean(chosen.photo) && (changed || !profile.avatar);
+    const patch = {};
+    if (changed) {
+      patch.email = chosen.email;
+      patch.name = chosen.name;
+      if (
+        !profile.label ||
+        profile.label === NEW_PROFILE_LABEL ||
+        profile.label === profile.email
+      ) {
+        patch.label = chosen.name || chosen.email;
+      }
+    }
+    if (needAvatar) {
+      const avatar = await profileAvatar(ses, chosen.photo);
+      if (avatar) patch.avatar = avatar;
+    }
+    if (Object.keys(patch).length) updated = profileStore.update(id, patch);
   }
-  if (!found) return null;
-  // Igual ao que já está gravado: nada a gravar nem a avisar (a leitura é repetida).
-  const changed = found.email !== profile.email || found.name !== profile.name;
-  const needAvatar = Boolean(found.photo) && (changed || !profile.avatar);
-  if (!changed && !needAvatar) return profile;
-  const patch = { email: found.email, name: found.name };
-  if (!profile.label || profile.label === NEW_PROFILE_LABEL || profile.label === profile.email) {
-    patch.label = found.name || found.email;
-  }
-  if (needAvatar) {
-    const avatar = await profileAvatar(ses, found.photo);
-    if (avatar) patch.avatar = avatar;
-  }
-  const updated = profileStore.update(id, patch);
-  broadcastAccount();
+  if (updated !== profile || reasonChanged) broadcastAccount();
   return updated;
 }
 
@@ -9729,6 +9858,8 @@ async function removeProfile(id) {
   if (!partition || !profileStore?.get(id)) return false;
   closeProfileWindows((profile) => profile === id);
   profileStore.remove(id);
+  for (const map of [profileReadReasons, profileAccountsSeen, profileDetectedAt]) map.delete(id);
+  profileSwitching.delete(id);
   const ses = session.fromPartition(partition);
   await ses.clearStorageData().catch(() => {});
   await ses.clearCache().catch(() => {});
@@ -9870,8 +10001,15 @@ function registerAccountIpc() {
   ipcMain.handle("profiles:open", (_event, { id } = {}) =>
     call(() => ({ ok: openProfileWindow(String(id ?? "")) })),
   );
+  // Com conta, "Trocar conta" abre o seletor do Google (sessão ativa não pula para o login).
   ipcMain.handle("profiles:signin", (_event, { id } = {}) =>
-    call(() => ({ ok: openProfileWindow(String(id ?? ""), { url: signInUrl() }) })),
+    call(() => {
+      const key = String(id ?? "");
+      const switching = Boolean(profileStore?.get(key)?.email);
+      const ok = openProfileWindow(key, { url: switching ? accountChooserUrl() : signInUrl() });
+      if (ok && switching) profileSwitching.add(key);
+      return { ok };
+    }),
   );
   ipcMain.handle("profiles:update", (_event, { id, label, color } = {}) =>
     call(() => {
@@ -9890,11 +10028,17 @@ function registerAccountIpc() {
       return { ok: await removeProfile(String(id ?? "")), account: accountSnapshot() };
     }),
   );
+  // "Tentar de novo" do cartão: o motivo (signed-out / read-failed) mostra o texto certo.
   ipcMain.handle("profiles:detect", (_event, { id } = {}) =>
     call(async () => {
       if (!accountService().isLoggedIn()) return { ok: false };
-      const profile = await detectGoogleAccount(String(id ?? ""), { force: true });
-      return { ok: Boolean(profile?.email), profile };
+      const key = String(id ?? "");
+      const profile = await detectGoogleAccount(key, { force: true });
+      return {
+        ok: Boolean(profile?.email),
+        profile,
+        reason: profileReadReasons.get(key) ?? null,
+      };
     }),
   );
 }

@@ -192,8 +192,8 @@ function LoggedOut({
         <p className="acct-info">
           <Lock aria-hidden="true" />
           {state.lockedProfiles === 1
-            ? "1 conta Google guardada. Entre para usá-la."
-            : `${state.lockedProfiles} contas Google guardadas. Entre para usá-las.`}
+            ? "Entre na sua conta Agzos para usar a conta Google guardada."
+            : `Entre na sua conta Agzos para usar as ${state.lockedProfiles} contas Google guardadas.`}
         </p>
       )}
       <div className="acct-tabs" role="tablist" aria-label="Conta Agzos">
