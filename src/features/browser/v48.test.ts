@@ -203,6 +203,7 @@ describe("4.8 Fase 0: flags por bloco", () => {
       pwa_mac_apps: true,
       ytdlp: true,
       editor: true,
+      cast: true,
     });
   });
 

@@ -92,6 +92,7 @@ import { createDownloadsApi } from "@/features/downloads/api";
 import { PdfHelpPage } from "@/features/pdf/help";
 import { comboLabel, comboOfHotkey } from "./feature-prefs";
 import { useTranslateShell, type TranslatePanelKind } from "@/features/translate/use-translate";
+import { useCastShell, type CastPanelKind } from "@/features/cast/use-cast";
 import { useYtdlpShell, type YtdlpPanelKind } from "@/features/ytdlp/use-ytdlp";
 import { useV47Shell, type PdfRequest } from "./v47-shell";
 import { useV48Shell } from "./v48-shell";
@@ -213,7 +214,8 @@ type Panel =
   | "translate"
   | "translation"
   | "ytdlp"
-  | "reload";
+  | "reload"
+  | "cast";
 
 /** Grant do Agzos Imagem na URL agzos://imagem?grant=… (5.0.3). */
 function imageGrantOf(url: string): string | null {
@@ -1403,6 +1405,17 @@ export function AgzosBrowser() {
     setNotice,
     openSettings: () => openSettingsAt("traducao"),
     openAi: () => setPrefs({ aiOpen: true }),
+  });
+  // 6.0: controle da transmissão para Chromecast da guia ativa.
+  const castShell = useCastShell({
+    desktop,
+    panel,
+    setPanel: (kind: CastPanelKind | null) => {
+      panelRef.current = kind ?? (panelRef.current === "cast" ? null : panelRef.current);
+      setPanel((currentPanel) => kind ?? (currentPanel === "cast" ? null : currentPanel));
+    },
+    activeTabId: activeTab.id,
+    openTabIds: state.tabs.map((tab) => tab.id),
   });
   // 5.0: yt-dlp (botão da barra, popup de qualidade, clique direito na página).
   const ytdlp = useYtdlpShell({
@@ -2607,7 +2620,7 @@ export function AgzosBrowser() {
   const extMenuInfo = extMenu ? extensionList.find((item) => item.dir === extMenu.dir) : null;
   const activeHost = current.kind === "page" ? hostOf(current.url) : null;
   // Tradução e yt-dlp (um por vez) ficam na frente dos painéis da casca.
-  const shellSpec = translate.spec ?? ytdlp.spec;
+  const shellSpec = translate.spec ?? ytdlp.spec ?? castShell.spec;
   const panelSpec: PanelSpec | null = shellSpec
     ? shellSpec
     : panel === "colors" && v47.colorsSpec
@@ -2857,6 +2870,17 @@ export function AgzosBrowser() {
                   onToggle: (anchor) => {
                     if (justDismissed("translate")) return;
                     translate.urlButton?.onToggle(rectOfDom(anchor));
+                  },
+                }
+              : null
+          }
+          cast={
+            castShell.urlButton
+              ? {
+                  ...castShell.urlButton,
+                  onToggle: (anchor) => {
+                    if (justDismissed("cast")) return;
+                    castShell.urlButton?.onToggle(rectOfDom(anchor));
                   },
                 }
               : null

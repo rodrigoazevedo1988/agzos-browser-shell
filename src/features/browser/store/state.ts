@@ -87,6 +87,8 @@ export type Prefs = {
   orientation: TabOrientation;
   railCollapsed: boolean;
   pausedHosts: string[];
+  /** 6.0: sites https que podem usar a ponte de Chromecast (window.agzosCast). */
+  castOrigins: string[];
   /** Barra de favoritos abaixo da barra de endereço. */
   bookmarksBar: boolean;
   /** Sugestões do motor de busca na omnibox (o texto digitado vai para o buscador). */
@@ -171,6 +173,7 @@ export const defaultPrefs: Prefs = {
   orientation: "horizontal",
   railCollapsed: false,
   pausedHosts: [],
+  castOrigins: ["https://flix.rsolutionsbr.com"],
   bookmarksBar: true,
   searchSuggestions: true,
   hibernate: true,

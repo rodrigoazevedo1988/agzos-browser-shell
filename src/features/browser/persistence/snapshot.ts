@@ -284,6 +284,29 @@ export function parseClosedTabs(value: unknown): ClosedTab[] {
 /** Acento padrão até a 4.1.3. */
 const LEGACY_ACCENT = "#D43420";
 
+/** Origens https da ponte de Chromecast; ausente = padrão, inválido some. */
+function parseCastOrigins(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...defaultPrefs.castOrigins];
+  const out: string[] = [];
+  for (const item of value) {
+    if (!isString(item)) continue;
+    try {
+      const url = new URL(item);
+      if (
+        url.protocol === "https:" &&
+        url.origin === item &&
+        /^[a-z0-9.-]+(:\d+)?$/.test(item.slice(8)) &&
+        !out.includes(item)
+      ) {
+        out.push(item);
+      }
+    } catch {
+      // origem inválida: some
+    }
+  }
+  return out.slice(0, 50);
+}
+
 export function parsePrefs(value: unknown): Prefs {
   const raw = isObject(value) ? value : {};
   const bool = (key: keyof Prefs) =>
@@ -328,6 +351,7 @@ export function parsePrefs(value: unknown): Prefs {
     pausedHosts: Array.isArray(raw["pausedHosts"])
       ? [...new Set(raw["pausedHosts"].filter(isString))]
       : [],
+    castOrigins: parseCastOrigins(raw["castOrigins"]),
     // 4.5: o vermelho padrão antigo (#D43420) vira o novo padrão (#D10A11).
     accentColor:
       isString(raw["accentColor"]) && /^#[0-9a-f]{6}$/i.test(raw["accentColor"])

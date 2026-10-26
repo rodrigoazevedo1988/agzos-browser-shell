@@ -1,0 +1,65 @@
+/* 6.0: controle da transmissão (Chromecast). Usa o vidro dos painéis (.key-panel). */
+.key-panel.cast-panel {
+  position: fixed;
+  z-index: 40;
+  width: min(320px, calc(100vw - 16px));
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.cast-card {
+  display: grid;
+  gap: 8px;
+}
+.cast-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cast-head strong,
+.cast-head small {
+  display: block;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cast-head small,
+.cast-note {
+  color: var(--muted-foreground);
+}
+.cast-error {
+  color: var(--destructive, #d10a11);
+  font-size: 12px;
+}
+.cast-time {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.cast-time input,
+.cast-volume input {
+  width: 100%;
+  accent-color: var(--primary, #d10a11);
+}
+.cast-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.cast-volume {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.cast-volume svg {
+  width: 16px;
+  height: 16px;
+}
+.cast-button.on {
+  color: var(--primary, #d10a11);
+}

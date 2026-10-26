@@ -200,6 +200,7 @@ describe("migração da 1.3", () => {
         orientation: "vertical",
         railCollapsed: true,
         pausedHosts: ["x.com"],
+        castOrigins: ["https://flix.rsolutionsbr.com"],
         bookmarksBar: true,
         searchSuggestions: true,
         hibernate: true,

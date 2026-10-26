@@ -7,6 +7,13 @@ export type ChangelogEntry = { version: string; date: string; items: string[] };
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "5.0.6",
+    date: "2026-10-26",
+    items: [
+      "Novo: transmissão nativa para Chromecast e Android TV da sua rede. Sites autorizados, como o Flix, ganham um botão de transmitir que funciona no Agzos Browser. Na primeira vez o navegador pergunta se o site pode transmitir, e enquanto uma guia transmite aparece na barra de endereço um botão para pausar, avançar, ajustar o volume ou parar.",
+    ],
+  },
+  {
     version: "5.0.5",
     date: "2026-10-26",
     items: [

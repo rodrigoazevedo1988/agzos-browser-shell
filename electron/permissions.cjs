@@ -14,6 +14,8 @@ const PERMISSION_TYPES = [
   "geolocation",
   "clipboard-read",
   "midi",
+  // 6.0: ponte de Chromecast (window.agzosCast); não é uma permissão do Chromium.
+  "cast",
 ];
 const KEY_PREFIX = "permission:";
 // Permitidos sem perguntar, como no Chrome.

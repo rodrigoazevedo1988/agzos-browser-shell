@@ -1,6 +1,7 @@
 import type { DesktopV47, DownloadFileType, V47TabEvent } from "./desktop-v47";
 import type { DesktopV48 } from "./desktop-v48";
 import type { DesktopTranslate, TranslateTabEvent } from "@/features/translate/bridge";
+import type { DesktopCast } from "@/features/cast/bridge";
 import type { DesktopYtdlp } from "@/features/ytdlp/bridge";
 import type { DesktopEditor } from "@/features/editor/bridge";
 import type { DesktopFormFill, FormFillTabEvent } from "@/features/key/form-fill";
@@ -11,7 +12,7 @@ import type { TabCard } from "./tab-preview";
 import type { Credential, HistoryUrl, HistoryVisit, KeyState, Tab, VaultEntry } from "./types";
 
 export type PermissionType =
-  "camera" | "microphone" | "notifications" | "geolocation" | "clipboard-read" | "midi";
+  "camera" | "microphone" | "notifications" | "geolocation" | "clipboard-read" | "midi" | "cast";
 export type PermissionValue = "allow" | "block";
 
 /** Resultado das chamadas do Agzos Key: erro tratável (ex.: senha mestra errada). */
@@ -488,6 +489,7 @@ type DesktopExtras = DesktopV47 &
   DesktopTranslate &
   DesktopFormFill &
   DesktopYtdlp &
+  DesktopCast &
   DesktopEditor;
 
 export type DesktopBridge = DesktopExtras & {

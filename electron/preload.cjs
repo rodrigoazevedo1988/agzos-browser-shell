@@ -354,6 +354,11 @@ contextBridge.exposeInMainWorld("agzosDesktop", {
   ytdlpStart: (payload) => ipcRenderer.invoke("ytdlp:start", payload),
   onYtdlpOpen: subscribe("agzos:ytdlp-open"),
   onYtdlpError: subscribe("agzos:ytdlp-error"),
+  // 6.0: transmissão para Chromecast (electron/cast.cjs); a página usa window.agzosCast.
+  castSessions: () => ipcRenderer.invoke("cast:sessions"),
+  castControl: (sessionId, action, value) =>
+    ipcRenderer.invoke("cast:control", { sessionId, action, value }),
+  onCastSessions: subscribe("agzos:cast-sessions"),
 });
 
 // Conta Agzos e contas Google (electron/agzos-account.cjs): o token nunca passa por aqui.

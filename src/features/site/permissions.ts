@@ -7,6 +7,7 @@ export const PERMISSION_LABELS: Record<PermissionType, string> = {
   geolocation: "Localização",
   "clipboard-read": "Ler a área de transferência",
   midi: "Dispositivos MIDI",
+  cast: "Transmitir para a TV (Chromecast)",
 };
 export const PERMISSION_TYPES = Object.keys(PERMISSION_LABELS) as PermissionType[];
 

@@ -10,7 +10,7 @@
 // E os gestos (4.0): deslizar com dois dedos, pinça, botões laterais do mouse e gestos
 // desenhados com o botão direito (regras iguais às de src/features/gestures/gestures.ts).
 
-const { ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 const PANEL = Array.isArray(process.argv) && process.argv.includes("--agzos-surface=panel");
 
@@ -47,6 +47,76 @@ function send(channel, payload) {
     /* o main pode não estar ouvindo nesta janela: ignora */
   }
 }
+
+// --- Chromecast (6.0): window.agzosCast ---------------------------------------------------
+// Ponte pequena para sites da lista (prefs.castOrigins, só https, só o quadro de cima). O
+// main confere tudo de novo a cada chamada (origem, permissão, limite, entradas); aqui só
+// se repassa. A página nunca recebe endereço de rede nem socket: só id, nome e modelo.
+// Contrato completo em docs/cast-bridge.md.
+(function installCastBridge() {
+  if (!TOP || PANEL || location.protocol !== "https:") return;
+  let allowed = false;
+  try {
+    allowed = ipcRenderer.sendSync("agzos:cast-allowed") === true;
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return;
+
+  const call = async (op, args) => {
+    const reply = await ipcRenderer.invoke("agzos:cast", { op, args });
+    if (!reply || reply.ok !== true) {
+      const error = new Error(
+        reply && typeof reply.error === "string" ? reply.error : "cast_error",
+      );
+      error.code = error.message;
+      throw error;
+    }
+    return reply.value;
+  };
+  const deviceCallbacks = new Set();
+  const statusCallbacks = new Set();
+  const fire = (set, value) => {
+    for (const callback of [...set]) {
+      try {
+        callback(value);
+      } catch {
+        /* callback da página quebrou: não derruba os outros */
+      }
+    }
+  };
+  ipcRenderer.on("agzos:cast-devices", (_event, list) => fire(deviceCallbacks, list));
+  ipcRenderer.on("agzos:cast-status", (_event, status) => fire(statusCallbacks, status));
+
+  contextBridge.exposeInMainWorld("agzosCast", {
+    version: 1,
+    getDevices: () => call("devices"),
+    onDevices: (callback) => {
+      if (typeof callback !== "function") throw new TypeError("callback");
+      deviceCallbacks.add(callback);
+      call("subscribe")
+        .then((list) => {
+          if (deviceCallbacks.has(callback)) callback(list);
+        })
+        .catch(() => {});
+      return () => {
+        deviceCallbacks.delete(callback);
+        if (deviceCallbacks.size === 0) call("unsubscribe").catch(() => {});
+      };
+    },
+    load: (request) => call("load", request),
+    control: (sessionId, command) => call("control", { sessionId, command }),
+    onStatus: (callback) => {
+      if (typeof callback !== "function") throw new TypeError("callback");
+      statusCallbacks.add(callback);
+      return () => {
+        statusCallbacks.delete(callback);
+      };
+    },
+    stop: (sessionId) => call("stop", { sessionId }),
+    getSessions: () => call("sessions"),
+  });
+})();
 
 // --- Vídeo em Picture-in-Picture (avisa o main por evento, nunca por sondagem) ---
 

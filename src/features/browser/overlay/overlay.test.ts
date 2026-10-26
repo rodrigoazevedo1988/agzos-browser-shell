@@ -112,6 +112,7 @@ describe("chrome-overlay.cjs", () => {
         "translate",
         "translation",
         "ytdlp",
+        "cast",
       ].sort(),
     );
   });

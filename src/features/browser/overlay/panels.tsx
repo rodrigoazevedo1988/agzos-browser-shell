@@ -13,6 +13,7 @@ import { AppMenu } from "@/features/settings/menu";
 import { SitePanel } from "@/features/site/panel";
 import { TranslationBubble } from "@/features/translate/bubble";
 import { TranslatePagePanel } from "@/features/translate/page-panel";
+import { CastMenu } from "@/features/cast/menu";
 import { YtdlpMenu } from "@/features/ytdlp/menu";
 
 import { CommandPalette } from "../ui/command-palette";
@@ -56,7 +57,8 @@ export type PanelSpec =
   /** 5.0: yt-dlp (qualidade do vídeo ou instalação do binário). */
   | { kind: "ytdlp"; key?: string; props: ComponentProps<typeof YtdlpMenu> }
   /** 5.0.3: Recarregar com o DevTools aberto (normal, sem cache, esvaziar o cache). */
-  | { kind: "reload"; key?: string; props: ComponentProps<typeof ReloadMenu> };
+  | { kind: "reload"; key?: string; props: ComponentProps<typeof ReloadMenu> }
+  | { kind: "cast"; key?: string; props: ComponentProps<typeof CastMenu> };
 
 export type PanelKind = PanelSpec["kind"];
 
@@ -105,5 +107,7 @@ export function PanelView({ spec }: { spec: PanelSpec }) {
       return <YtdlpMenu key={key} {...spec.props} />;
     case "reload":
       return <ReloadMenu key={key} {...spec.props} />;
+    case "cast":
+      return <CastMenu key={key} {...spec.props} />;
   }
 }

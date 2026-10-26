@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpenText,
   Download,
+  Cast,
   FileVideo,
   KeyRound,
   Languages,
@@ -81,6 +82,8 @@ export type ToolbarProps = {
   colors?: { open: boolean; onToggle: (anchor: DOMRect) => void } | null;
   /** 5.0: baixar o vídeo da página com o yt-dlp; destaque nos sites de vídeo conhecidos. */
   ytdlp?: { known: boolean; open: boolean; onToggle: (anchor: DOMRect) => void } | null;
+  /** 6.0: a guia está transmitindo para um Chromecast (abre o controle da transmissão). */
+  cast?: { active: boolean; open: boolean; onToggle: (anchor: DOMRect) => void } | null;
   /** 4.1.1: site com manifesto e service worker: instalar como app (ou abrir o instalado). */
   pwa?: { name: string; installed: boolean; onClick: () => void } | null;
   dark: boolean;
@@ -308,6 +311,21 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(
                 aria-pressed={props.reader.active}
               >
                 <BookOpenText />
+              </button>
+            )}
+            {props.cast && (
+              <button
+                type="button"
+                className={cn("omnibox-action", "cast-button", props.cast.active && "on")}
+                onClick={(event) =>
+                  props.cast?.onToggle(event.currentTarget.getBoundingClientRect())
+                }
+                title="Transmissão para a TV"
+                aria-label="Transmissão para a TV"
+                aria-pressed={props.cast.open}
+                aria-expanded={props.cast.open}
+              >
+                <Cast />
               </button>
             )}
             {props.ytdlp && (

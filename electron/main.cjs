@@ -3164,6 +3164,70 @@ const tunnels = createTunnels({
   },
 });
 
+// 6.0: Chromecast / Android TV (electron/cast.cjs, cast-proto.cjs). A página só vê
+// window.agzosCast (page-preload.cjs); tudo é conferido aqui a cada chamada.
+const cast = require("./cast.cjs");
+const castProto = require("./cast-proto.cjs");
+let castOrigins = castProto.cleanOrigins(undefined);
+const castService = cast.createCastService({
+  dgram: require("node:dgram"),
+  os,
+  tls: require("node:tls"),
+  log: (...args) => console.log(...args),
+});
+const castAsking = new Map(); // "guia|origem" → Promise<boolean> (uma pergunta por vez)
+const castBridge = cast.createCastBridge({
+  service: castService,
+  flagOn: () => featureFlags().cast,
+  origins: () => castOrigins,
+  limiter: castProto.createRateLimiter({ max: 40, windowMs: 5000 }),
+  // Permissão "cast" por site (site_settings). A aba anônima só guarda em memória.
+  ensurePermission: (contents, origin) => {
+    const priv = isPrivateContents(contents);
+    const decision = permissions ? permissions.decide(origin, ["cast"], priv) : null;
+    if (decision !== null) return Promise.resolve(decision);
+    const key = `${contents.id}|${origin}`;
+    if (castAsking.has(key)) return castAsking.get(key);
+    const asking = new Promise((resolve) => {
+      const id = `perm-${++permissionSeq}`;
+      const timer = setTimeout(() => {
+        if (pendingPermissions.delete(id)) resolve(false);
+      }, 60_000);
+      pendingPermissions.set(id, {
+        callback: (allow) => {
+          clearTimeout(timer);
+          resolve(Boolean(allow));
+        },
+        origin,
+        types: ["cast"],
+        isPrivate: priv,
+        contents,
+      });
+      send(ownerCtx(contents), "agzos:permission-request", {
+        id,
+        origin,
+        types: ["cast"],
+        mediaTypes: [],
+      });
+    }).finally(() => castAsking.delete(key));
+    castAsking.set(key, asking);
+    return asking;
+  },
+  // A casca mostra o botão de transmissão da guia que está transmitindo.
+  onSessions: (contents) => {
+    const where = tabOfContents.get(contents.id);
+    if (where) send(where.ctx, "agzos:cast-sessions", castSessionsOfTab(contents.id, where.id));
+  },
+});
+function castSessionsOfTab(contentsId, tabId) {
+  return {
+    tabId,
+    sessions: castService
+      .sessionsOf(contentsId)
+      .map(({ ownerKey: _ownerKey, ...session }) => session),
+  };
+}
+
 // 5.0: yt-dlp (downloads de vídeo). O gerenciador de downloads nasce em startServices; aqui
 // só se chama quando um download começa.
 const ytdlpService = ytdlp.createYtdlpService({
@@ -4888,6 +4952,39 @@ function registerIpc() {
   // PiP avisado pela própria página (ver PIP no page-preload.cjs). Mantém o pipContents
   // sempre certo sem sondar a aba: era essa sondagem, a cada verificação de hibernação, que
   // travava a barra lateral e a navegação.
+  // 6.0: ponte de Chromecast da página (ver castBridge) e controles da casca.
+  ipcMain.on("agzos:cast-allowed", (event) => {
+    event.returnValue = castBridge.allowedSync(event);
+  });
+  ipcMain.handle("agzos:cast", (event, payload) =>
+    typeof payload?.op === "string"
+      ? castBridge.handle(event, payload.op, payload.args)
+      : { ok: false, error: "cast_invalid" },
+  );
+  ipcMain.handle("cast:sessions", (event) => {
+    const ctx = ctxOfEvent(event);
+    if (!ctx) return [];
+    const out = [];
+    for (const [contentsId, where] of tabOfContents) {
+      if (where.ctx !== ctx) continue;
+      const entry = castSessionsOfTab(contentsId, where.id);
+      if (entry.sessions.length) out.push(entry);
+    }
+    return out;
+  });
+  ipcMain.handle("cast:control", async (event, { sessionId, action, value } = {}) => {
+    const ctx = ctxOfEvent(event);
+    const ownerKey = castService.ownerKeyOf(sessionId);
+    const where = ownerKey === null ? null : tabOfContents.get(ownerKey);
+    if (!ctx || !where || where.ctx !== ctx) return { ok: false, error: "cast_no_session" };
+    try {
+      await castService.control(ownerKey, sessionId, { action, value });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error?.code ?? "cast_error" };
+    }
+  });
+
   ipcMain.on("agzos:pip", (event, payload) => {
     if (!payload || typeof payload.active !== "boolean") return;
     if (payload.active) pipContents.add(event.sender);
@@ -9251,6 +9348,7 @@ function applyPrefs(prefs) {
   applyShieldConfig(prefs);
   hibernateConfig = hibernateConfigOf(prefs, HIBERNATE_OVERRIDE);
   gxControl.configure(prefs);
+  castOrigins = castProto.cleanOrigins(prefs?.castOrigins);
 }
 
 function openStateDatabase() {
@@ -10231,6 +10329,8 @@ app.on("before-quit", (event) => {
 app.on("will-quit", () => {
   // 4.5: nenhum túnel sobrevive ao app.
   tunnels.stopAll();
+  // 6.0: some o controle; o que já toca no aparelho continua.
+  castService.shutdown();
   // 5.0: nenhum yt-dlp sobrevive ao app (cancela os downloads em andamento).
   ytdlpService.stopAll();
   // 4.7: temporários do PDF Tools não sobrevivem ao app.

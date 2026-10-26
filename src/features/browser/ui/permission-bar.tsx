@@ -13,6 +13,7 @@ const WHAT: Record<string, string> = {
   geolocation: "saber sua localização",
   "clipboard-read": "ler a área de transferência",
   midi: "usar dispositivos MIDI",
+  cast: "transmitir vídeo para Chromecast e TVs da sua rede",
 };
 
 function describe(types: string[]) {

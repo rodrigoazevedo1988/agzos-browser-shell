@@ -38,6 +38,8 @@ const OVERLAY_KINDS = new Set([
   "ytdlp",
   // 5.0.3: menu do Recarregar com o DevTools aberto.
   "reload",
+  // 6.0: controle da transmissão (Chromecast) da guia.
+  "cast",
 ]);
 const MAX_FNS = 32;
 const NAME = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
