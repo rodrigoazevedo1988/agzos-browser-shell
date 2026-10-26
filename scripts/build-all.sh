@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="5.0.5"
+VERSION="5.0.6"
 # Quantos browser-artifacts-v* manter. Cada um tem ~1,2 GB dos 6 instaladores;
 # o release-browser.sh copia pra browser/vX.Y.Z (que o nginx serve) mas o
 # diretório de build nunca era removido — 44 builds chegaram a ocupar 47 GB.
